@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 企业证书入 keychain 后的正式导出配置（当前 CI 用 Payload 打包出无签名 ipa） -->
+    <key>method</key>
+    <string>enterprise</string>
+    <key>signingStyle</key>
+    <string>manual</string>
+    <key>stripSwiftSymbols</key>
+    <true/>
+    <key>teamID</key>
+    <string>TEAMID_PLACEHOLDER</string>
+</dict>
+</plist>

@@ -1,0 +1,330 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		BF0000000000000000000001 /* ios_shellApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000001 /* ios_shellApp.swift */; };
+		BF0000000000000000000002 /* ShelfView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000002 /* ShelfView.swift */; };
+		BF0000000000000000000003 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000003 /* PlayerView.swift */; };
+		BF0000000000000000000004 /* SharedBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000004 /* SharedBridge.swift */; };
+		BF0000000000000000000005 /* WebViewSniffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000005 /* WebViewSniffer.swift */; };
+		BF0000000000000000000006 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000006 /* WebViewContainer.swift */; };
+		BF0000000000000000000007 /* CookieStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000007 /* CookieStore.swift */; };
+		BF0000000000000000000008 /* Player.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000008 /* Player.swift */; };
+		BF0000000000000000000009 /* BackgroundSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000009 /* BackgroundSession.swift */; };
+		BF000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000A /* Assets.xcassets */; };
+		BF000000000000000000000B /* shared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000B /* shared.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		FE0000000000000000000001 /* ios_shellApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ios_shellApp.swift; sourceTree = "<group>"; };
+		FE0000000000000000000002 /* ShelfView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShelfView.swift; sourceTree = "<group>"; };
+		FE0000000000000000000003 /* PlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerView.swift; sourceTree = "<group>"; };
+		FE0000000000000000000004 /* SharedBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedBridge.swift; sourceTree = "<group>"; };
+		FE0000000000000000000005 /* WebViewSniffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewSniffer.swift; sourceTree = "<group>"; };
+		FE0000000000000000000006 /* WebViewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewContainer.swift; sourceTree = "<group>"; };
+		FE0000000000000000000007 /* CookieStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CookieStore.swift; sourceTree = "<group>"; };
+		FE0000000000000000000008 /* Player.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Player.swift; sourceTree = "<group>"; };
+		FE0000000000000000000009 /* BackgroundSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundSession.swift; sourceTree = "<group>"; };
+		FE000000000000000000000A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		FE000000000000000000000B /* shared.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = shared.framework; path = "../shared/build/bin/iosArm64/ReleaseFramework/shared.framework"; sourceTree = "<group>"; };
+		FE000000000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		FD0000000000000000000001 /* Tingshu.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tingshu.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		EC0000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BF000000000000000000000B /* shared.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		EB0000000000000000000001 /* ios-shell */ = {
+			isa = PBXGroup;
+			children = (
+				FE0000000000000000000001 /* ios_shellApp.swift */,
+				EB0000000000000000000002 /* Views */,
+				EB0000000000000000000003 /* Shared */,
+				EB0000000000000000000004 /* Engine */,
+				FE000000000000000000000C /* Info.plist */,
+				FE000000000000000000000A /* Assets.xcassets */,
+			);
+			path = ios-shell;
+			sourceTree = "<group>";
+		};
+		EB0000000000000000000002 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				FE0000000000000000000002 /* ShelfView.swift */,
+				FE0000000000000000000003 /* PlayerView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		EB0000000000000000000003 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				FE0000000000000000000004 /* SharedBridge.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		EB0000000000000000000004 /* Engine */ = {
+			isa = PBXGroup;
+			children = (
+				EB0000000000000000000005 /* Actual */,
+			);
+			path = Engine;
+			sourceTree = "<group>";
+		};
+		EB0000000000000000000005 /* Actual */ = {
+			isa = PBXGroup;
+			children = (
+				FE0000000000000000000005 /* WebViewSniffer.swift */,
+				FE0000000000000000000006 /* WebViewContainer.swift */,
+				FE0000000000000000000007 /* CookieStore.swift */,
+				FE0000000000000000000008 /* Player.swift */,
+				FE0000000000000000000009 /* BackgroundSession.swift */,
+			);
+			path = Actual;
+			sourceTree = "<group>";
+		};
+		EB0000000000000000000006 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FD0000000000000000000001 /* Tingshu.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		EB0000000000000000000007 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				FE000000000000000000000B /* shared.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		EB0000000000000000000008 /* main */ = {
+			isa = PBXGroup;
+			children = (
+				EB0000000000000000000001 /* ios-shell */,
+				EB0000000000000000000007 /* Frameworks */,
+				EB0000000000000000000006 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AD0000000000000000000001 /* Tingshu */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CC0000000000000000000002 /* Build configuration list for PBXNativeTarget "Tingshu" */;
+			buildPhases = (
+				EC0000000000000000000001 /* Sources */,
+				EC0000000000000000000002 /* Frameworks */,
+				EC0000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Tingshu;
+			productName = Tingshu;
+			productReference = FD0000000000000000000001 /* Tingshu.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AE0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1540;
+				LastUpgradeCheck = 1540;
+				TargetAttributes = {
+					AD0000000000000000000001 = {
+						CreatedOnToolsVersion = 15.4;
+					};
+				};
+			};
+			buildConfigurationList = CC0000000000000000000001 /* Build configuration list for PBXProject */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = zh_CN;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				"zh_CN",
+			);
+			mainGroup = EB0000000000000000000008 /* main */;
+			productRefGroup = EB0000000000000000000006 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AD0000000000000000000001 /* Tingshu */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		EC0000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BF000000000000000000000A /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		EC0000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BF0000000000000000000001 /* ios_shellApp.swift in Sources */,
+				BF0000000000000000000002 /* ShelfView.swift in Sources */,
+				BF0000000000000000000003 /* PlayerView.swift in Sources */,
+				BF0000000000000000000004 /* SharedBridge.swift in Sources */,
+				BF0000000000000000000005 /* WebViewSniffer.swift in Sources */,
+				BF0000000000000000000006 /* WebViewContainer.swift in Sources */,
+				BF0000000000000000000007 /* CookieStore.swift in Sources */,
+				BF0000000000000000000008 /* Player.swift in Sources */,
+				BF0000000000000000000009 /* BackgroundSession.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		CD0000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		CD0000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				COPY_PHASE_STRIP = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				ONLY_ACTIVE_ARCH = NO;
+				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		CD0000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../shared/build/bin/iosArm64/ReleaseFramework",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ios-shell/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dsh.tingshu;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		CD0000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/../shared/build/bin/iosArm64/ReleaseFramework",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = ios-shell/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.dsh.tingshu;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		CC0000000000000000000001 /* Build configuration list for PBXProject */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CD0000000000000000000001 /* Debug */,
+				CD0000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CC0000000000000000000002 /* Build configuration list for PBXNativeTarget "Tingshu" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CD0000000000000000000003 /* Debug */,
+				CD0000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = AE0000000000000000000001 /* Project object */;
+}

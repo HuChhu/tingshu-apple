@@ -1,0 +1,21 @@
+name: ios-whitelist
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: C1 swift import whitelist
+        run: |
+          cd ios
+          chmod +x check-whitelist.sh
+          ./check-whitelist.sh
+      - name: C3 actual touchpoint count (<=5)
+        run: |
+          N=$(ls ios/ios-shell/Engine/Actual/*.swift 2>/dev/null | wc -l)
+          echo "Actual 文件数 = $N"
+          [ "$N" -le 5 ] || { echo "::error::C3 违反 actual 触点 >5"; exit 1; }
+      - name: background audio key present
+        run: |
+          grep -q "UIBackgroundModes" ios/ios-shell/Info.plist || { echo "::error::Info.plist 缺 UIBackgroundModes"; exit 1; }
+          grep -q "audio" ios/ios-shell/Info.plist || { echo "::error::UIBackgroundModes 缺 audio"; exit 1; }

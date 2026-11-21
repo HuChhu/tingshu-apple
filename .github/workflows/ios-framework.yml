@@ -1,0 +1,66 @@
+name: ios-framework
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify-x86_64
+        run: |
+          ARCH=$(uname -m)
+          [ "$ARCH" = "x86_64" ] || { echo "::error::runner 非 x86_64"; exit 1; }
+          echo "arch=$ARCH ok"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: konan-linux-x64-kotlin-2.0.21-iosplatklib-v2
+          restore-keys: konan-linux-x64-kotlin-2.0.21
+      - name: ensure-kn-distro (direct from repo1)
+        run: |
+          if ! ls -d ~/.konan/kotlin-native-prebuilt-linux-x86_64-* >/dev/null 2>&1; then
+            mkdir -p ~/.konan && cd /tmp
+            curl -fsSL -o knl.tar.gz "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.0.21/kotlin-native-prebuilt-2.0.21-linux-x86_64.tar.gz"
+            [ -s knl.tar.gz ] || { echo "::error::linux 发行包下载失败"; exit 1; }
+            tar xzf knl.tar.gz -C ~/.konan/
+          fi
+          ls -d ~/.konan/kotlin-native-prebuilt-linux-x86_64-* | head -1
+      - name: transplant ios_arm64 platform klibs (169 个，macos prebuilt -> linux distro)
+        run: |
+          KN_DIR=$(ls -d ~/.konan/kotlin-native-prebuilt-linux-x86_64-* | head -1)
+          [ -d "$KN_DIR/klib/platform/ios_arm64" ] && { echo "平台库已在（缓存复用）"; exit 0; }
+          cd /tmp
+          curl -fsSL -o knm.tar.gz "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.0.21/kotlin-native-prebuilt-2.0.21-macos-aarch64.tar.gz"
+          tar xzf knm.tar.gz
+          SRC=$(ls -d kotlin-native-prebuilt-macos-aarch64-*/klib/platform/ios_arm64)
+          echo "源: $SRC ($(ls $SRC | wc -l) 个 klib)"
+          cp -R "$SRC" "$KN_DIR/klib/platform/"
+          echo "移植后: $(ls $KN_DIR/klib/platform/ios_arm64 | wc -l) 个 klib"
+      - name: link-framework-on-linux（回归哨兵：预期红=禁令仍在；绿=禁令解除+工件产出）
+        run: |
+          set -o pipefail   # 断言管道自身不许吞码：gradle 真失败也必须红（SKIPPED 假绿之外的第四类）
+          cd shared
+          {
+            echo "kotlin.native.ignoreDisabledTargets=true"
+            echo "kotlin.native.enableKlibsCrossCompilation=true"
+          } >> gradle.properties
+          ./gradlew linkReleaseFrameworkIosArm64 --no-daemon | tee /tmp/link.log   # 任务行级断言见下
+          ! grep -q "linkReleaseFrameworkIosArm64 SKIPPED" /tmp/link.log || { echo "::error::link 被跳过（Apple 链接器仅随 macOS 发行包分发，Linux 无法链接 framework）——本 workflow 为回归哨兵，红=禁令仍在"; exit 1; }
+      - name: verify-and-pack（修正 #30 的 find 误判：目录定位+根文件任意 file）
+        run: |
+          FWDIR=$(find shared/build -type d -name "shared.framework" | head -1)
+          [ -n "$FWDIR" ] || { echo "::error::shared.framework 目录未产出"; exit 1; }
+          echo "framework 目录: $FWDIR"
+          BIN=$(find "$FWDIR" -type f ! -name "*.plist" ! -name "*.h" | head -1)
+          echo "二进制: $BIN"; file "$BIN"
+          file "$BIN" | grep -q "Mach-O" || { echo "::error::非 Mach-O"; exit 1; }
+          tar czf /tmp/shared-framework-linux.tar.gz -C "$(dirname "$FWDIR")" shared.framework
+          du -h /tmp/shared-framework-linux.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shared-framework-linux
+          path: /tmp/shared-framework-linux.tar.gz  # 目录直接打包，绕开 artifact 路径 glob 的坑
+          if-no-files-found: error

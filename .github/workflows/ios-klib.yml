@@ -1,0 +1,61 @@
+# 成功路径四段配方见 docs/CI-RECIPE.md（x86_64 runner / 双开关先注入 / 平台klib移植 / K/N兼容源码）
+# 实证: #14/#15 SUCCESS, 工件=shared/build/classes/kotlin/iosArm64/main/klib/shared-core.klib
+name: ios-klib
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: verify-x86_64
+        run: |
+          ARCH=$(uname -m)
+          [ "$ARCH" = "x86_64" ] || { echo "::error::runner 非 x86_64"; exit 1; }
+          echo "arch=$ARCH ok"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.konan
+          key: konan-linux-x64-kotlin-2.0.21-iosplatklib-v2
+          restore-keys: konan-linux-x64-kotlin-2.0.21
+      - name: ensure-kn-distro (direct from repo1, no gradle side-effects)
+        run: |
+          if ! ls -d ~/.konan/kotlin-native-prebuilt-linux-x86_64-* >/dev/null 2>&1; then
+            mkdir -p ~/.konan
+            cd /tmp
+            curl -fsSL -o knl.tar.gz "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.0.21/kotlin-native-prebuilt-2.0.21-linux-x86_64.tar.gz"
+            [ -s knl.tar.gz ] || { echo "::error::linux 发行包下载失败"; exit 1; }
+            tar xzf knl.tar.gz -C ~/.konan/
+          fi
+          ls -d ~/.konan/kotlin-native-prebuilt-linux-x86_64-* | head -1
+      - name: transplant ios_arm64 platform klibs (macos prebuilt -> linux distro)
+        run: |
+          KN_DIR=$(ls -d ~/.konan/kotlin-native-prebuilt-linux-x86_64-* | head -1)
+          cd /tmp
+          curl -fsSL -o knm.tar.gz "https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-native-prebuilt/2.0.21/kotlin-native-prebuilt-2.0.21-macos-aarch64.tar.gz"
+          tar xzf knm.tar.gz
+          SRC=$(ls -d kotlin-native-prebuilt-macos-aarch64-*/klib/platform/ios_arm64)
+          echo "源: $SRC ($(ls $SRC | wc -l) 个 klib)"
+          cp -R "$SRC" "$KN_DIR/klib/platform/"
+          echo "移植后: $(ls $KN_DIR/klib/platform/ios_arm64 | wc -l) 个 klib"
+      - name: compile-klib
+        run: |
+          cd shared
+          {
+            echo "kotlin.native.ignoreDisabledTargets=true"
+            echo "kotlin.native.enableKlibsCrossCompilation=true"
+          } >> gradle.properties
+          ./gradlew compileKotlinIosArm64 --no-daemon
+          echo "--- klib 产物 ---"
+          find build -name "*.klib" -type f | tee /tmp/klibs.txt
+          [ -s /tmp/klibs.txt ] || { echo "::error::无 klib 产出"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-klib
+          path: |
+            shared/build/classes/kotlin/iosArm64/main/klib/*.klib
+            shared/build/classes/kotlin/iosArm64/main/klib/**
+          if-no-files-found: error

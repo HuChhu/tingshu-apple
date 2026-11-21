@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 全能签(ESign) 重签注入底稿 · devops-ci 2026-11-21
+         后台音频不在此文件：UIBackgroundModes=audio 已在 ios/ios-shell/Info.plist
+         team 前缀由证书决定，重签时把占位符换成实际 TeamID -->
+    <key>application-identifier</key>
+    <string>TEAMID_PLACEHOLDER.com.dsh.tingshu</string>
+    <key>get-task-allow</key>
+    <true/>
+    <key>keychain-access-groups</key>
+    <array>
+        <string>TEAMID_PLACEHOLDER.com.dsh.tingshu</string>
+    </array>
+</dict>
+</plist>

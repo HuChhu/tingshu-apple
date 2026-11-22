@@ -18,7 +18,7 @@ enum BackgroundSession {
             try session.setActive(true)
         } catch {
             #if DEBUG
-            debugPrint("[BackgroundSession] 三件套配置失败: " + String(describing: error)
+            debugPrint("[BackgroundSession] 三件套配置失败: " + String(describing: error))
         #endif
         }
         wireObservers()

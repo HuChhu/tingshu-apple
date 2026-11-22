@@ -17,6 +17,7 @@
 		BF0000000000000000000008 /* Player.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000008 /* Player.swift */; };
 		BF0000000000000000000009 /* BackgroundSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000009 /* BackgroundSession.swift */; };
 		BF000000000000000000000D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000D /* SettingsView.swift */; };
+		BF000000000000000000000E /* LocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000E /* LocalStore.swift */; };
 		BF000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000A /* Assets.xcassets */; };
 		BF000000000000000000000B /* shared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000B /* shared.framework */; };
 		BF000000000000000000000C /* shared.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000B /* shared.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -36,6 +37,7 @@
 		FE000000000000000000000B /* shared.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = shared.framework; path = "../shared/build/bin/iosArm64/ReleaseFramework/shared.framework"; sourceTree = "<group>"; };
 		FE000000000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FE000000000000000000000D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		FE000000000000000000000E /* LocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalStore.swift; sourceTree = "<group>"; };
 		FD0000000000000000000001 /* Tingshu.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tingshu.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -70,6 +72,7 @@
 			children = (
 				FE0000000000000000000001 /* ios_shellApp.swift */,
 				EB0000000000000000000002 /* Views */,
+				EB0000000000000000000005 /* Storage */,
 				EB0000000000000000000003 /* Shared */,
 				EB0000000000000000000004 /* Engine */,
 				FE000000000000000000000C /* Info.plist */,
@@ -86,6 +89,14 @@
 				FE000000000000000000000D /* SettingsView.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		EB0000000000000000000005 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				FE000000000000000000000E /* LocalStore.swift */,
+			);
+			path = Storage;
 			sourceTree = "<group>";
 		};
 		EB0000000000000000000003 /* Shared */ = {
@@ -222,6 +233,7 @@
 				BF0000000000000000000008 /* Player.swift in Sources */,
 				BF0000000000000000000009 /* BackgroundSession.swift in Sources */,
 				BF000000000000000000000D /* SettingsView.swift in Sources */,
+				BF000000000000000000000E /* LocalStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

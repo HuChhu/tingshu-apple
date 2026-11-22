@@ -15,7 +15,7 @@
   - `kotlin-native-prebuilt-2.1.21-macos-aarch64.tar.gz` → **206 存在**
   - `kotlin-native-prebuilt-2.1.21-linux-aarch64.tar.gz` → **404 不存在**
   - → **K/N 官方预编译无 linux-aarch64 host；本机 aarch64 预热属永久不可行，非镜像缓存问题**（阿里镜像同名 404 一致，已排除镜像差异）
-- 工具链交付：Gradle 8.13 腾讯镜像 8 段并行直拉（239s，分段字节校验）→ 合并 → md5 `ea50a70340ae49febcc239359925222d` → 装于 **/opt/gradle-8.13**（供本机 JVM 侧与 CI 镜像配置复用）
+- 工具链交付：Gradle 8.13 腾讯镜像 8 段并行直拉（239s，分段字节校验）→ 合并 → md5 `ea50a70340ae49febcc239359925222d` → 装于 **gradle-8.13**（供本机 JVM 侧与 CI 镜像配置复用）
 - 日志证据：/tmp/kn-preheat.log（lead 2.0.21+8.0）、/tmp/kn-preheat-devops.log（devops-ci 2.1.21+8.13）
 
 ## x86_64 CI 预热方案（落纸，完成口径）

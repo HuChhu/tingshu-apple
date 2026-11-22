@@ -5,7 +5,7 @@
   尾部默认值字段扩展（albumId/trackCount/playCount/isFinished/hint 等）对齐 bridge normalize_album，位置兼容
 - 删除了 dev-core 早前另起的 com.tingshu.core 包树（未提交过，无双实现漂移窗口）
 - engine 实现在 com.local.audiobook.core.engine（七件）+ net SPI（commonMain 引擎注入，actual 触点 0）
-- devops-ci 正在 /opt/gradle-dl 分片下载 gradle-8.13；dev-core 并行走 wrapper（腾讯镜像）构建，
+- devops-ci 正在 gradle-dist 分片下载 gradle-8.13；dev-core 并行走 wrapper（腾讯镜像）构建，
   谁先完成谁先跑，勿重复组装
 - 真实探测记录（≤1rps，网页搜索预算 2/3 已用）：mobile 网关 HTML 错误页 / web riskLevel=5 ×2 /
   category v2/albums 匿名可用（fixtures/ 下四份原件）
@@ -13,8 +13,8 @@
 ## T07 定谳同步（dev-core 收讫，2026-11-21 12:0x）
 - K/N 官方无 linux-aarch64 预编译（repo1 实测 404）→ 本机 iosArm64 永久不可行，framework 只能 CI 出；
   JVM 侧工作不受影响（已证：本机 BUILD SUCCESSFUL + live 跑通）
-- Gradle 8.13 双份就位（devops-ci /opt/gradle-8.13 与 dev-core /opt/gradle-dist，同一分片合并包，md5 已由 devops 验）；
-  后续统一用 /opt/gradle-8.13，/opt/gradle-dist 留作冗余
+- Gradle 8.13 双份就位（devops-ci gradle-8.13 与 dev-core gradle-dist，同一分片合并包，md5 已由 devops 验）；
+  后续统一用 gradle-8.13，gradle-dist 留作冗余
 - ksoup 0.2.0（兼容 Kotlin 2.0.21）→ M2 网页级提取器（第2级 HTML 解析）引入；M1 search 全 JSON 管线未用到
 - task-4 状态：**已完成待验收**（docs/spike-search.md 六节证据 + 执行日志已记）
 

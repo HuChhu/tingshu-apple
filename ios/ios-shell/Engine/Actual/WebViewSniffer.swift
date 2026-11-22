@@ -75,7 +75,7 @@ final class WebViewSniffer: NSObject {
     }
 
     private func teardown() {
-        webView?.stop()
+        webView?.stopLoading()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "tingshuSniffer")
         webView?.navigationDelegate = nil
         webView = nil                            // 解除强引用，单例可复用

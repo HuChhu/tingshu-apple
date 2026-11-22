@@ -6,6 +6,16 @@ import WebKit
 /// 读 HTTPCookieStorage.shared。方向 1：登录/过码后 WebView → 共享存储；
 /// 方向 2：需要 WebView 复用既有登录态时共享存储 → WebView 回灌。
 enum CookieStore {
+    /// host 精确匹配：cookie.domain 为 host 本身，或为以 '.' 开头的父域后缀。
+    /// 不匹配一律不拷（头部纪律同源：宁缺勿滥）。
+    static func domainMatches(_ cookieDomain: String?, _ host: String) -> Bool {
+        guard let cd = cookieDomain?.lowercased(), !host.isEmpty else { return false }
+        let h = host.lowercased()
+        if cd == h { return true }
+        if cd.hasPrefix(".") { return h.hasSuffix(cd) || h == String(cd.dropFirst()) }
+        return false
+    }
+
     /// WebView → 共享存储，按 host 精确过滤（头部纪律同源：不匹配不拷）
     static func copyFromWebView(_ webView: WKWebView, host: String) async {
         let store = webView.configuration.websiteDataStore.httpCookieStore
@@ -20,7 +30,7 @@ enum CookieStore {
     /// 共享存储 → WebView 回灌，按 host 精确过滤
     static func restore(into webView: WKWebView, host: String) async {
         let store = webView.configuration.websiteDataStore.httpCookieStore
-        for cookie in HTTPCookieStorage.shared.cookies ?? [] where __DOMAIN_MATCH__(host, cookie.domain) {
+        for cookie in HTTPCookieStorage.shared.cookies ?? [] where domainMatches(cookie.domain, host) {
             await store.setCookie(cookie)
         }
     }

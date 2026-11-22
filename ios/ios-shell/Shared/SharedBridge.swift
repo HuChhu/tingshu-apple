@@ -85,8 +85,8 @@ enum SharedBridge {
         func cookie(completionHandler: @escaping (String?, Error?) -> Void) {
             completionHandler(nil, nil)
         }
-        func refresh(completionHandler: @escaping (KotlinUnit?, Error?) -> Void) {
-            completionHandler(KotlinUnit(), nil)
+        func refresh(completionHandler: @escaping (Error?) -> Void) {
+            completionHandler(nil)
         }
     }
 
@@ -103,21 +103,22 @@ enum SharedBridge {
     /// 搜索。引擎内部已限速(1/s)+预算(3次/30s)，失败降级返回空书单+hint，不抛。
     static func search(keywords: String, page: Int) async -> SearchResult? {
         await bridge { done in
-            app.search(keywords: keywords, page: Int32(page)) { res, err in done(res, err) }
+            app.search(keywords: keywords, page: Int32(page), completionHandler: { res, err in done(res, err) })
         }
     }
 
     /// 专辑详情 + 曲目。失败返回 nil。
     static func bookDetail(bookUrl: String) async -> BookDetail? {
         await bridge { done in
-            app.bookDetail(bookUrl: bookUrl, loadEpisodes: true, loadFullPages: false) { d, err in done(d, err) }
+            app.bookDetail(bookUrl: bookUrl, loadEpisodes: true, loadFullPages: false,
+                           completionHandler: { d, err in done(d, err) })
         }
     }
 
     /// 取播放地址（级1→级3 提取链）。
     static func extract(url: String) async -> ExtractedAudio? {
         await bridge { done in
-            app.extract(url: url, timeoutMs: 15_000) { a, err in done(a, err) }
+            app.extract(url: url, timeoutMs: 15_000, completionHandler: { a, err in done(a, err) })
         }
     }
 

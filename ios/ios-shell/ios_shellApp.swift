@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct TingshuApp: App {
+struct TingshuRootApp: App {
     var body: some Scene {
         WindowGroup { RootTabView() }
     }

@@ -41,6 +41,28 @@ suspend fun main(args: Array<String>) {
         cookieProvider = cookieProvider,
     )
     when (mode) {
+        "bili" -> runCatching {
+            val b = com.local.audiobook.core.engine.BilibiliSource(
+                fetcher = KtorJsonFetcher(client),
+                throttle = RequestThrottle(minIntervalMs = 1_000, clock = now),
+            )
+            when (args.getOrNull(1) ?: "search") {
+                "search" -> {
+                    val r = b.search(args.getOrElse(2) { "三体" }, 1)
+                    out.println("BILI_SEARCH books=" + r.books.size)
+                    for (x in r.books.take(5)) out.println("  " + x.title.take(40) + " | " + x.author + " | " + x.bookUrl)
+                }
+                "detail" -> {
+                    val d = b.bookDetail(args.getOrElse(2) { "" }, true, false)
+                    out.println("BILI_DETAIL title=" + d.book.title + " eps=" + d.episodes.size)
+                    for (e in d.episodes.take(3)) out.println("  #" + e.index + " " + e.title + " url=" + e.url)
+                }
+                "play" -> {
+                    val a = b.audioExtractor().extract(args.getOrElse(2) { "" })
+                    out.println("BILI_PLAY url=" + a.url)
+                }
+            }
+        }.onFailure { out.println("ERROR " + it::class.simpleName + " " + it.message) }
         "kuwo" -> runCatching {
             val kw = com.local.audiobook.core.engine.KuwoSource(
                 fetcher = KtorJsonFetcher(client),

@@ -26,6 +26,9 @@ kotlin {
         jvmMain.dependencies {
             implementation("io.ktor:ktor-client-cio:3.0.3")
         }
+        iosMain.dependencies {
+            implementation("io.ktor:ktor-client-darwin:3.0.3")
+        }
         jvmTest.dependencies {
             implementation(kotlin("test"))
         }

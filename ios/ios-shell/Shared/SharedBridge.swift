@@ -60,6 +60,7 @@ enum SharedBridge {
         let index: Int32             // 全书序号 1 起，跨页连续
         let durationMs: Int64        // 毫秒；UI 显示需 /1000
         let coverUrl: String
+        let url: String              // 上游给的曲目地址；trackId<=0 时作为 extract 回退输入
     }
     static func row(from e: Episode) -> EpisodeRow {
         EpisodeRow(
@@ -67,18 +68,34 @@ enum SharedBridge {
             trackId: e.trackId,
             index: e.index,
             durationMs: e.durationMs,
-            coverUrl: e.coverUrl
+            coverUrl: e.coverUrl,
+            url: e.url
         )
     }
 
-    // MARK: - 对接点（stub 签名不变；真调用在 Mac 窗口第 2 步换入）
-    /// 周1 对接点：search(keywords, page) → SearchResult。stub 返回空书单。
-    static func searchStub(keywords: String, page: Int) -> [Book] { [] }
+    // MARK: - 真机对接（framework 门面 com.local.audiobook.core.TingshuApp）
+    /// 全局唯一引擎实例。App 生命周期内复用，限速状态与搜索预算随之保留。
+    static let app: TingshuApp = TingshuApp()
 
-    /// 周2 对接点：extract(url, timeoutMs 默认 15s) → ExtractedAudio(url, headers,
-    /// expiresInSeconds)。stub 返回 nil；真调用 = 引擎 extract（类名按 framework 头对拍）。
-    /// headers 已由共享核心按 host 精确匹配过滤，壳侧原样注入、不再加工。
-    static func extractStub(url: String) -> ExtractedAudio? { nil }
+    /// 搜索。引擎内部已限速(1/s)+预算(3次/30s)，失败降级返回空书单+hint，不抛。
+    static func search(keywords: String, page: Int) async -> SearchResult? {
+        try? await app.search(keywords: keywords, page: Int32(page))
+    }
+
+    /// 专辑详情 + 曲目。失败返回 nil，错误文案走 message(for:)。
+    static func bookDetail(bookUrl: String) async -> BookDetail? {
+        try? await app.bookDetail(bookUrl: bookUrl, loadEpisodes: true, loadFullPages: false)
+    }
+
+    /// 取播放地址（级1→级3 提取链）。
+    static func extract(url: String) async -> ExtractedAudio? {
+        try? await app.extract(url: url, timeoutMs: 15_000)
+    }
+
+    /// 解析专辑 ID（/album/{id}、?albumId=、纯数字 ≥4 位）。
+    static func albumId(from bookUrl: String) -> Int64 {
+        app.parseAlbumId(bookUrl: bookUrl)
+    }
 
     /// 播放地址时效展示（M3 最小用例可直接读）
     static func expiresText(from a: ExtractedAudio) -> String? {

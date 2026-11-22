@@ -41,6 +41,43 @@ suspend fun main(args: Array<String>) {
         cookieProvider = cookieProvider,
     )
     when (mode) {
+        "open" -> runCatching {
+            // 免登录源测试：open search <kw> | open detail <albumId>
+            val op = args.getOrNull(1) ?: "search"
+            val openEngine = com.local.audiobook.core.engine.XimalayaOpenSource(
+                fetcher = KtorJsonFetcher(client),
+                throttle = RequestThrottle(minIntervalMs = 1_000, clock = now),
+            )
+            when (op) {
+                "search" -> {
+                    val kw = args.getOrElse(2) { "三体" }
+                    val r = openEngine.search(kw, 1)
+                    out.println("OPEN_SEARCH kw=" + kw + " books=" + r.books.size + " maxPage=" + r.maxPage)
+                    for (b in r.books.take(10)) {
+                        out.println("  [" + b.albumId + "] " + b.title + " | 主播:" + b.author +
+                            " | 播放:" + b.playCount + " | 集数:" + b.trackCount)
+                    }
+                    if (r.books.isEmpty()) out.println("  hint=" + r.hint)
+                }
+                "detail" -> {
+                    val aid = args.getOrElse(2) { "41682166" }
+                    val d = openEngine.bookDetail(aid, loadEpisodes = true, loadFullPages = true)
+                    out.println("OPEN_DETAIL albumId=" + d.book.albumId + " title=" + d.book.title +
+                        " author=" + d.book.author + " trackCount=" + d.book.trackCount +
+                        " episodes=" + d.episodes.size)
+                    for (e in d.episodes.take(5)) {
+                        out.println("  #" + e.index + " " + e.title + " (" + (e.durationMs / 1000) + "s)")
+                        out.println("     url=" + e.url.take(90))
+                    }
+                }
+                "audio" -> {
+                    val u = args.getOrElse(2) { "" }
+                    val a = openEngine.audioExtractor().extract(u)
+                    out.println("OPEN_AUDIO url=" + a.url)
+                    out.println("OPEN_AUDIO headers=" + a.headers)
+                }
+            }
+        }.onFailure { out.println("ERROR " + it::class.simpleName + " " + it.message) }
         "search" -> out.print(render(engine.search(args.getOrElse(1) { "三体" }, args.getOrNull(2)?.toIntOrNull() ?: 1)))
         "discover" -> out.print(render(engine.discover(
             categoryId = args.getOrNull(1)?.toLongOrNull() ?: 3L,

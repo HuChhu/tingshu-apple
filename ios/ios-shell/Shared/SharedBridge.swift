@@ -80,17 +80,12 @@ enum SharedBridge {
 
     // MARK: - 真机对接（framework 门面 com.local.audiobook.core.TingshuApp）
     /// 全局唯一引擎实例。App 生命周期内复用，限速状态与搜索预算随之保留。
-    /// K/N 不保留 Kotlin 默认参数，构造器全参必填：匿名 Provider = 未登录态。
-    private final class AnonymousCookieProvider: NSObject, CookieProvider {
-        func cookie(completionHandler: @escaping (String?, Error?) -> Void) {
-            completionHandler(nil, nil)
-        }
-        func refresh(completionHandler: @escaping (Error?) -> Void) {
-            completionHandler(nil)
-        }
-    }
+    /// 引擎 CookieProvider 的 iOS 实现（定义在 CookieStore.swift，Actual 内不变量=5 文件）。
+    /// 未登录时 cookie() 返回 nil，引擎走匿名预检、不白发请求。
+    static let cookieProvider = XimalayaCookieProvider()
 
-    static let app: TingshuApp = TingshuApp(cookieProvider: AnonymousCookieProvider())
+    /// K/N 不保留 Kotlin 默认参数，构造器全参必填。
+    static let app: TingshuApp = TingshuApp(cookieProvider: cookieProvider)
 
     /// K/N 不生成 Swift async 重载，suspend 函数只暴露 completionHandler 形式。
     /// 这里统一包成 async，让视图层能直接 await，同时不把 NSError 桥接细节散到各处。
@@ -99,6 +94,12 @@ enum SharedBridge {
             body { value, _ in cont.resume(returning: value) }
         }
     }
+
+    /// 当前是否为已登录态（读 HTTPCookieStorage，规则与 Kotlin 侧一致）
+    static var loggedIn: Bool { CookieStore.isLoggedInNow }
+
+    /// 登录完成/登出后调用：清引擎侧 cookie 缓存，使下次请求重新读取
+    static func invalidateSession() { cookieProvider.invalidate() }
 
     /// 搜索。引擎内部已限速(1/s)+预算(3次/30s)，失败降级返回空书单+hint，不抛。
     static func search(keywords: String, page: Int) async -> SearchResult? {

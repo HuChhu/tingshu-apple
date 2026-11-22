@@ -14,6 +14,8 @@ struct RootTabView: View {
                 .tabItem { Label("书架", systemImage: "books.vertical") }
             PlayerView()
                 .tabItem { Label("播放", systemImage: "play.circle") }
+            SettingsView()
+                .tabItem { Label("设置", systemImage: "gearshape") }
         }
     }
 }

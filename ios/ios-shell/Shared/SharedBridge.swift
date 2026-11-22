@@ -79,11 +79,42 @@ enum SharedBridge {
     }
 
     // MARK: - 真机对接（framework 门面 com.local.audiobook.core.TingshuApp）
-    /// 全局唯一引擎实例。App 生命周期内复用，限速状态与搜索预算随之保留。
-    /// 引擎 CookieProvider 的 iOS 实现（定义在 CookieStore.swift，Actual 内不变量=5 文件）。
+    /// 引擎 CookieProvider 的 iOS 实现。
     /// 未登录时 cookie() 返回 nil，引擎走匿名预检、不白发请求。
+    /// 放在本文件是因为壳侧只有这里允许 import shared（CookieProvider 协议来自 framework）。
+    final class XimalayaCookieProvider: NSObject, CookieProvider {
+        private var cached: String?
+        private let lock = NSLock()
+
+        func cookie(completionHandler: @escaping (String?, (any Error)?) -> Void) {
+            lock.lock()
+            if let c = cached { lock.unlock(); completionHandler(c, nil); return }
+            lock.unlock()
+
+            let flat = CookieStore.flatMap()
+            guard CookieStore.isLoggedIn(flat) else {
+                completionHandler(nil, nil)   // 未登录：匿名预检
+                return
+            }
+            let header = flat.sorted { $0.key < $1.key }
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: "; ")
+            lock.lock(); cached = header; lock.unlock()
+            completionHandler(header, nil)
+        }
+
+        func refresh(completionHandler: @escaping ((any Error)?) -> Void) {
+            lock.lock(); cached = nil; lock.unlock()
+            completionHandler(nil)
+        }
+
+        /// 登录完成 / 登出后调用，使下次请求重读 Cookie 存储
+        func invalidate() { lock.lock(); cached = nil; lock.unlock() }
+    }
+
     static let cookieProvider = XimalayaCookieProvider()
 
+    /// 全局唯一引擎实例。App 生命周期内复用，限速状态与搜索预算随之保留。
     /// K/N 不保留 Kotlin 默认参数，构造器全参必填。
     static let app: TingshuApp = TingshuApp(cookieProvider: cookieProvider)
 

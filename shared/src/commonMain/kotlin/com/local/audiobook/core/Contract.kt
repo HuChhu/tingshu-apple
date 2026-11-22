@@ -10,12 +10,80 @@ interface SourceActions {
     val name: String
     val desc: String
     val capabilities: Capabilities
+
     suspend fun search(keywords: String, page: Int): SearchResult
     suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail
     fun audioExtractor(): AudioExtractor
+
+    /**
+     * 登录入口。null = 这个源不需要登录。
+     * 对应 TingShu.getLoginUrl / isLoginDesktop。
+     */
+    fun loginEntry(): LoginEntry? = null
+
+    /**
+     * 搜索验证入口。null = 该源搜索不会被风控拦。
+     * 对应 TingShu.getSearchVerificationUrl / getSearchVerificationUA。
+     */
+    fun searchVerification(): SearchVerification? = null
+
+    /**
+     * 源的可配置项。空 = 无可配置。
+     * 对应 TingShu.getCustomConfigItems。
+     */
+    fun configItems(): List<ConfigItem> = emptyList()
+
+    /**
+     * 当前源的音频地址能否缓存。
+     * 对应 TingShu.isCacheable。地址有时效的源应返回 false。
+     */
+    fun cacheableAudio(): Boolean = capabilities.cacheable
 }
 
-data class Capabilities(val searchable: Boolean, val discoverable: Boolean, val cacheable: Boolean, val needsWebView: Boolean)
+data class Capabilities(
+    val searchable: Boolean,
+    val discoverable: Boolean,
+    val cacheable: Boolean,
+    val needsWebView: Boolean,
+    /** 搜索被风控拦住时，能否通过人工验证恢复（对应 TingShu.isSearchValidated） */
+    val searchVerifiable: Boolean = false,
+    /** 是否需要登录才能用（对应 TingShu.getLoginUrl 非空） */
+    val needsLogin: Boolean = false,
+    /** 章节是否分页加载（对应 TingShu.isMultipleEpisodePages） */
+    val multipleEpisodePages: Boolean = false,
+)
+
+/**
+ * 源的登录入口（对应 TingShu.getLoginUrl / isLoginDesktop）。
+ * 为空表示这个源不需要登录。
+ */
+data class LoginEntry(
+    val url: String,
+    /** true = 用桌面 UA 加载登录页 */
+    val desktop: Boolean = false,
+)
+
+/**
+ * 搜索验证入口（对应 TingShu.getSearchVerificationUrl / getSearchVerificationUA）。
+ * 被风控拦住时，平台层用这个地址拉起 WebView 让用户人工过验证。
+ */
+data class SearchVerification(
+    val url: String,
+    val userAgent: String = "",
+    /** 两次搜索之间的建议延迟，防硬冲（对应 TingShu.getSearchDelayMs） */
+    val delayMs: Long = 0L,
+)
+
+/**
+ * 源的可配置项（对应 TingShu.getCustomConfigItems）。
+ * 让用户能给不同源配不同参数，比如 UA、Cookie、镜像地址。
+ */
+data class ConfigItem(
+    val key: String,
+    val label: String,
+    val defaultValue: String = "",
+    val hint: String = "",
+)
 data class SearchResult(val books: List<Book>, val maxPage: Int, val source: String = "", val page: Int = 1, val hint: String? = null)
 data class Book(
     val sourceId: String, val bookUrl: String, val title: String, val author: String, val coverUrl: String, val intro: String,

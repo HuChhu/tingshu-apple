@@ -1,49 +1,138 @@
 name: archive-ipa
-on: [workflow_dispatch, push]   # 仓库已转公开 → macOS runner 免费可用
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
 jobs:
   archive:
-    runs-on: macos-13   # macOS host：framework link 唯一合法出路（kn-preheat.md 三层对位）
+    runs-on: macos-14
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+
+      - name: runner selfcheck
+        run: |
+          sw_vers || true
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos || true
+          uname -m
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: actions/cache@v4
         with:
           path: ~/.konan
-          key: konan-macos-aarch64-kotlin-2.0.21
-      - name: build shared framework (macOS)
+          key: konan-macos-arm64-kotlin-2.0.21-v3
+
+      - name: link framework (task-level assertion, no SKIPPED fake-green)
         run: |
           cd shared
-          # 双开关：link 任务注册前提（kn-preheat.md 定谳）
-          printf "kotlin.native.ignoreDisabledTargets=true\n" >> gradle.properties
-          ./gradlew linkReleaseFrameworkIosArm64 --no-daemon
-          grep -q "linkReleaseFrameworkIosArm64 SKIPPED" <(./gradlew linkReleaseFrameworkIosArm64 --no-daemon 2>&1) && { echo "::error::link 被跳过"; exit 1; } || true
-      - name: place framework (pbxproj 期望的组合目标路径)
+          printf "kotlin.native.ignoreDisabledTargets=true\\n" >> gradle.properties
+          set -o pipefail
+          chmod +x gradlew
+          ./gradlew linkReleaseFrameworkIosArm64 --no-daemon --stacktrace --console=plain 2>&1 | tee /tmp/link.log
+          if grep -qE "linkReleaseFrameworkIosArm64 SKIPPED" /tmp/link.log; then
+            echo "::error::linkReleaseFrameworkIosArm64 SKIPPED - zero artifact"
+            exit 1
+          fi
+          grep -qE "BUILD SUCCESSFUL" /tmp/link.log || { echo "::error::build not successful"; exit 1; }
+
+      - name: verify framework artifact
         run: |
-          SRC=$(find shared/build/bin -name "shared.framework" -type d | head -1)
-          [ -n "$SRC" ] || { echo "::error::framework 未产出"; exit 1; }
+          set -e
+          FW=$(find shared/build/bin -type d -name "shared.framework" | head -1)
+          [ -n "$FW" ] || { echo "::error::shared.framework not produced"; exit 1; }
+          echo "framework: $FW"
+          ls -la "$FW"
+          file "$FW/shared"
+          file "$FW/shared" | grep -q "Mach-O" || { echo "::error::not Mach-O"; exit 1; }
+          file "$FW/shared" | grep -q "arm64" || { echo "::error::not arm64"; exit 1; }
           mkdir -p shared/build/bin/iosArm64/ReleaseFramework
-          cp -R "$SRC" shared/build/bin/iosArm64/ReleaseFramework/
-          ls -R shared/build/bin/iosArm64/ReleaseFramework | head -10
-      - name: xcodebuild archive (无签名)
+          rm -rf shared/build/bin/iosArm64/ReleaseFramework/shared.framework
+          cp -R "$FW" shared/build/bin/iosArm64/ReleaseFramework/
+          ls -la shared/build/bin/iosArm64/ReleaseFramework/shared.framework
+
+      - name: generate AppIcon
         run: |
-          xcodebuild -project ios/Tingshu.xcodeproj -scheme Tingshu \
-            -configuration Release -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -archivePath build/Tingshu.xcarchive archive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
-      - name: package unsigned IPA (Payload 打包，ESign 上游标准形态)
+          python3 - <<'PY'
+          import pathlib, struct, zlib, json
+          icon_dir = pathlib.Path("ios/ios-shell/Assets.xcassets/AppIcon.appiconset")
+          icon_dir.mkdir(parents=True, exist_ok=True)
+          size = 1024
+          rgb = (28, 32, 44)
+          row = bytes(rgb) * size
+          raw = b''.join(b'\\x00' + row for _ in range(size))
+          def chunk(t, d):
+              return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+          png = b'\\x89PNG\\r\\n\\x1a\\n'
+          png += chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 2, 0, 0, 0))
+          png += chunk(b'IDAT', zlib.compress(raw, 9))
+          png += chunk(b'IEND', b'')
+          (icon_dir / "AppIcon-1024.png").write_bytes(png)
+          contents = {"images": [{"filename": "AppIcon-1024.png", "idiom": "universal", "platform": "ios", "size": "1024x1024"}], "info": {"author": "xcode", "version": 1}}
+          (icon_dir / "Contents.json").write_text(json.dumps(contents, indent=2))
+          print("icon ok", (icon_dir / "AppIcon-1024.png").stat().st_size, "bytes")
+          PY
+
+      - name: xcodebuild archive (unsigned)
         run: |
+          set -o pipefail
+          mkdir -p build
+          xcodebuild -project ios/Tingshu.xcodeproj -scheme Tingshu -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -archivePath build/Tingshu.xcarchive archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" CODE_SIGN_STYLE=Manual 2>&1 | tee /tmp/archive.log
+          grep -q "ARCHIVE SUCCEEDED" /tmp/archive.log || { echo "::error::archive failed"; exit 1; }
+
+      - name: package unsigned IPA
+        run: |
+          set -e
+          APP=$(find build/Tingshu.xcarchive/Products/Applications -maxdepth 1 -name "*.app" | head -1)
+          [ -n "$APP" ] || { echo "::error::.app not produced"; exit 1; }
+          echo "APP: $APP"
+          rm -rf build/Payload build/Tingshu-unsigned.ipa
           mkdir -p build/Payload
-          cp -R build/Tingshu.xcarchive/Products/Applications/Tingshu.app build/Payload/
+          cp -R "$APP" build/Payload/
           cd build && zip -qry Tingshu-unsigned.ipa Payload
           ls -la Tingshu-unsigned.ipa
+          unzip -l Tingshu-unsigned.ipa | head -20
+
+      - name: IPA structure verify
+        run: |
+          set -e
+          cd build
+          rm -rf /tmp/ipa-check && mkdir -p /tmp/ipa-check
+          unzip -q Tingshu-unsigned.ipa -d /tmp/ipa-check
+          APP=/tmp/ipa-check/Payload/Tingshu.app
+          [ -d "$APP" ] || { echo "::error::bad Payload"; exit 1; }
+          echo "--- Mach-O ---"
+          file "$APP/Tingshu"
+          file "$APP/Tingshu" | grep -q "arm64" || { echo "::error::not arm64"; exit 1; }
+          echo "--- Info.plist ---"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" "$APP/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" "$APP/Info.plist" || true
+          echo "--- Frameworks ---"
+          ls -la "$APP/Frameworks" || echo "no Frameworks dir"
+          echo "--- signature state (expect unsigned) ---"
+          codesign -dv "$APP" 2>&1 | head -5 || true
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: Tingshu-unsigned-ipa
           path: build/Tingshu-unsigned.ipa
-          if-no-files-found: error
-      # 企业证书入 keychain 后的正式导出底稿：ios/ExportOptions-unsigned.plist
-      # method=enterprise + xcodebuild -exportArchive（届时替换 Payload 打包步）
+          if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-logs
+          path: |
+            /tmp/link.log
+            /tmp/archive.log
+          if-no-files-found: ignore

@@ -21,7 +21,7 @@
 |---|---|---|
 | 死专辑 9002 | mobile-album 详情 | `{"msg":"当前内容已下架","ret":924,...}`（ret:924 新分类用例，fixtures/live-detail-delisted.json；分类对拍时曾复制 live-detail-delisted.json，qa 指出双名冗余已删除，以 anon 原件为准） |
 | 活专辑 9001 | mobile-album 详情 | **匿名可用**：ret:0 + 完整专辑 + 曲目信封（33,467B，fixtures/live-detail-alive-anon.json）——§18.1「详情需登录」对免费专辑不成立，基线修正 |
-| 引擎 live detail | 同上（经 SearchEngine） | `DETAIL albumId=9001 title=<redacted-title>… trackCount=2813 loaded=30` + 30 条真实曲目（trackId/标题/秒→毫秒时长/CDN 封面全对） |
+| 引擎 live detail | 同上（经 SearchEngine） | `DETAIL albumId=9001 title=<redacted-title>… trackCount=9005 loaded=30` + 30 条真实曲目（trackId/标题/秒→毫秒时长/CDN 封面全对） |
 | 播放接口（匿名，假 ID） | revision/play/v1/audio | 404 text/html（1,197B） |
 | 播放接口（匿名，真实 trackId 9004） | 同上 | 404 text/html —— **匿名一律 404**，与 §16.4「播放地址必须登录」一致；带 Cookie 的 200 验证挂起待凭据 |
 | 播放接口（引擎 extract） | 同上 | 非 JSON 响应 → `ERROR kind=ParseFailed`（干净错误行，无堆栈崩溃；契约 ParseFailed=响应不可解析，对应 bridge「非JSON→http_error」注记语义） |
@@ -37,7 +37,7 @@
 ## 四、分类矩阵与 fixture 管线
 - 分类矩阵扩到 **5/5 全同**：M1 四用例 + ret:924 下架（bridge http_error/Upstream ↔ Kotlin 同）。bridge 侧真 RiskGuard+Upstream._classify 直跑。
 - fixture 实录与构造分目录：fixtures/live-*.json（实录 3 件：anon / alive-anon / play-anon-realid）+ fixtures/constructed/*.json（构造 4 件，文件名与内容均标 constructed，不冒充实录）；live-detail-delisted.json 已删（与 anon 双名同 md5，qa 观察①）。
-- fixture tracks 输出（信封形态）：`TRACK trackId=31 index=31 … totalCount=2813 maxPageId=94 computedMaxPage=94`。
+- fixture tracks 输出（信封形态）：`TRACK trackId=31 index=31 … totalCount=9005 maxPageId=94 computedMaxPage=94`。
 - fixture play 输出（回退链取 src + host 注入）：`EXTRACT url=https://a1.xmcdn.com/… headers=User-Agent=…, Referer=… expiresInSeconds=3600`。
 
 ## 五、单测（jvmTest，14 条全绿 0 败）

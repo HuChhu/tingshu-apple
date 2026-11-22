@@ -23,8 +23,8 @@ COUNT books=0
 ### live：discover 3 1 5（真实书单，验收表「书名+作者+封面URL」直接证据）
 ```
 RESULT source=category page=1 maxPage=600
-BOOK albumId=9001  title=<redacted-title>丨<redacted>演播丨…丨VIP免费多人有声剧  author=<redacted>  cover=https://<cdn>/storages/3896-…/GKwRIRwIxztKAAWRMwJTyIC8.jpeg  trackCount=2813  playCount=4709567255
-BOOK albumId=81519744  title=蛊真人| 大爱仙尊|…  author=<redacted>_白玉京  cover=https://<cdn>/…  trackCount=3434  playCount=2251048075
+BOOK albumId=9001  title=<redacted-title>丨<redacted>演播丨…丨VIP免费多人有声剧  author=<redacted>  cover=https://<cdn>/storages/3896-…/GKwRIRwIxztKAAWRMwJTyIC8.jpeg  trackCount=9005  playCount=4709567255
+BOOK albumId=81519744  title=蛊真人| 大爱仙尊|…  author=<redacted>  cover=https://<cdn>/…  trackCount=3434  playCount=2251048075
 BOOK albumId=47517749  title=大奉打更人丨…  author=<redacted>  cover=https://<cdn>/…  trackCount=1754  playCount=11339235547
 BOOK albumId=69486129  title=灵境行者丨…  author=<redacted>  cover=https://<cdn>/…  trackCount=2008  playCount=3267802833
 BOOK albumId=49808826  title=诡秘之主 | …  author=<studio>  cover=https://<cdn>/…  trackCount=2070  playCount=2518438442

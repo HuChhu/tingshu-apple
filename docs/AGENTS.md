@@ -427,11 +427,11 @@ v2→v3（片头片尾设置保留）、v3 空库、以及 M23 重复执行幂�
 | 组件 | 路径 | 体积 | 说明 |
 |---|---|---|---|
 | JDK 17 完整版 | `/usr/lib/jvm/java-17-openjdk-17.0.20.0.8-1.1.0.2.1.al8.x86_64` | ~300M | 由 `java-17-openjdk-headless` + `java-17-openjdk-devel` 提供；**headless 只有 JRE，没有 javac，必须装 devel** |
-| Android SDK 根 | `/opt/android-sdk` | ~1.0G | 含 cmdline-tools/latest、platform-tools 37.0.1、platforms/android-35、android-36、build-tools/35.0.0 |
+| Android SDK 根 | `<ANDROID_SDK>` | ~1.0G | 含 cmdline-tools/latest、platform-tools 37.0.1、platforms/android-35、android-36、build-tools/35.0.0 |
 | Gradle 缓存 | `~/.gradle` | ~1.7G | wrapper 发行版 + 全部依赖 |
 | 项目 | `audiobook-app` | ~193M | 源码 + build 产物 |
 
-> **注意**：`/opt/android-sdk` 里原本已有别人的 `android-9 / android-14 / android.jar / build-tools.zip`（254M，2026-11-14），
+> **注意**：`<ANDROID_SDK>` 里原本已有别人的 `android-9 / android-14 / android.jar / build-tools.zip`（254M，2026-11-14），
 > **不是本项目的**，清理时别删。
 
 **系统默认 Java 没有改动**：仍是 `1.8.0_502`，alternatives 未触碰。构建时靠 `JAVA_HOME` 环境变量指向 17。
@@ -441,8 +441,8 @@ v2→v3（片头片尾设置保留）、v3 空库、以及 M23 重复执行幂�
 ```bash
 cd audiobook-app
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-17.0.20.0.8-1.1.0.2.1.al8.x86_64
-export ANDROID_HOME=/opt/android-sdk
-export ANDROID_SDK_ROOT=/opt/android-sdk
+export ANDROID_HOME=<ANDROID_SDK>
+export ANDROID_SDK_ROOT=<ANDROID_SDK>
 export http_proxy=http://127.0.0.1:7890     # 必须：GitHub release 直连只有几 KB/s
 export https_proxy=http://127.0.0.1:7890
 ./gradlew assembleDebug --console=plain --no-daemon
@@ -518,9 +518,9 @@ rm -rf audiobook-app
 # 2. Gradle 缓存（1.7G）
 rm -rf ~/.gradle
 # 3. 本项目装的 SDK 组件（保留别人的 android-9/android-14，别全删）
-/opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=/opt/android-sdk \
+<ANDROID_SDK>/cmdline-tools/latest/bin/sdkmanager --sdk_root=<ANDROID_SDK> \
   --uninstall "platforms;android-35" "platforms;android-36" "build-tools;35.0.0" "platform-tools"
-rm -rf /opt/android-sdk/cmdline-tools
+rm -rf <ANDROID_SDK>/cmdline-tools
 # 4. JDK 17（只在没有别的东西用它时）
 dnf remove java-17-openjdk java-17-openjdk-headless java-17-openjdk-devel
 ```

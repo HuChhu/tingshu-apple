@@ -51,7 +51,7 @@ COUNT books=5
 **网页搜索预算今日用尽（3/3，按 risk.py 纪律记 paused，不重试不换参数）**；后续对拍一律走 fixtures 离线管线。
 
 ## 五、构建通道（devops-ci 协同）
-- Gradle 8.13 = devops-ci 分片下载合并包（/opt/gradle-dl/gradle-8.13-bin.zip，unzip -t 通过）→ 解压 /opt/gradle-dist；JDK17；KGP/序列化/coroutines 多数命中本机 Gradle 缓存，Ktor 3.0.3 走阿里云镜像。
+- Gradle 8.13 = devops-ci 分片下载合并包（<gradle-dist>/gradle-8.13-bin.zip，unzip -t 通过）→ 解压 <gradle-dist>；JDK17；KGP/序列化/coroutines 多数命中本机 Gradle 缓存，Ktor 3.0.3 走阿里云镜像。
 - 坑两枚：① 顶层 application 插件与 KMP 不兼容 → 编译任务被跳过（假 BUILD SUCCESSFUL），修法 jvm { withJava() }；② JVM stdout 默认非 UTF-8 → main 内显式 PrintStream(FileDescriptor.out, UTF-8)。
 - actual 触点：0（契约 C3 上限 5）——网络引擎经 commonMain JsonFetcher SPI 注入，jvmMain 仅 KtorJsonFetcher + Main。
 

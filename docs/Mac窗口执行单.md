@@ -4,7 +4,7 @@
 
 ## 0. 准备（5 分钟）
 ```bash
-git clone https://github.com/HuChhu/tingshu-apple.git && cd tingshu-apple
+git clone https://github.com/<owner>/<repo>.git && cd tingshu-apple
 xcode-select -p   # 确认 Xcode
 java -version     # 需 17
 ```

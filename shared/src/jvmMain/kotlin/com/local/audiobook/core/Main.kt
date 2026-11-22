@@ -59,7 +59,7 @@ suspend fun main(args: Array<String>) {
         "extract" -> runCatching {
             val x = engine.audioExtractor().extract(args.getOrElse(1) { "" })
             out.println("EXTRACT url=" + x.url)
-            out.println("EXTRACT headers=" + x.headers.entries.joinToString(", ") { it.key + "=" + it.value })
+            out.println("EXTRACT headerKeys=" + x.headers.keys.joinToString(", "))
             out.println("EXTRACT expiresInSeconds=" + x.expiresInSeconds)
         }.onFailure { out.println("ERROR kind=" + (it as? SourceErrors)?.let { e -> e::class.simpleName } + " reason=" + ((it as? SourceErrors)?.let { e -> e.toString() } ?: it.message)) }
         else -> out.print(usage())
@@ -103,7 +103,7 @@ private fun fixture(file: String, fm: String, page: Int, pageSize: Int) {
             val audioUrl = AlbumNormalizer.str(inner, "src", "url", "playUrl")
             val hs = AudioUrlHeaders.headersFor(audioUrl)
             out.println("EXTRACT url=" + audioUrl)
-            out.println("EXTRACT headers=" + hs.entries.joinToString(", ") { it.key + "=" + it.value })
+            out.println("EXTRACT headerKeys=" + hs.keys.joinToString(", "))
             out.println("EXTRACT expiresInSeconds=" + if (audioUrl.isEmpty()) 0 else 3600)
         }
         "classify" -> {

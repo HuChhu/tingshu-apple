@@ -21,6 +21,7 @@
 		BF000000000000000000000F /* Layout.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000F /* Layout.swift */; };
 		BF0000000000000000000010 /* WebSearchBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000010 /* WebSearchBridge.swift */; };
 		BF0000000000000000000011 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000011 /* BrowseView.swift */; };
+		BF0000000000000000000012 /* LoginEndpoints.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000012 /* LoginEndpoints.swift */; };
 		BF000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000A /* Assets.xcassets */; };
 		BF000000000000000000000B /* shared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000B /* shared.framework */; };
 		BF000000000000000000000C /* shared.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000B /* shared.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -44,6 +45,7 @@
 		FE000000000000000000000F /* Layout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Layout.swift; sourceTree = "<group>"; };
 		FE0000000000000000000010 /* WebSearchBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSearchBridge.swift; sourceTree = "<group>"; };
 		FE0000000000000000000011 /* BrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseView.swift; sourceTree = "<group>"; };
+		FE0000000000000000000012 /* LoginEndpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginEndpoints.swift; sourceTree = "<group>"; };
 		FD0000000000000000000001 /* Tingshu.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tingshu.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -103,6 +105,7 @@
 			children = (
 				FE000000000000000000000E /* LocalStore.swift */,
 				FE000000000000000000000F /* Layout.swift */,
+				FE0000000000000000000012 /* LoginEndpoints.swift */,
 			);
 			path = Storage;
 			sourceTree = "<group>";
@@ -254,6 +257,7 @@
 				BF000000000000000000000F /* Layout.swift in Sources */,
 				BF0000000000000000000010 /* WebSearchBridge.swift in Sources */,
 				BF0000000000000000000011 /* BrowseView.swift in Sources */,
+				BF0000000000000000000012 /* LoginEndpoints.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

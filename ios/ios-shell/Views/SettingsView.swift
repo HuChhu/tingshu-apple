@@ -64,7 +64,7 @@ struct SettingsView: View {
             .navigationTitle("设置")
             .sheet(isPresented: $showLogin) {
                 WebViewContainer(
-                    url: URL(string: "https://passport.ximalaya.com/page/mobile_login")!,
+                    urls: LoginEndpoints.candidates,
                     onLoggedIn: {
                         SharedBridge.invalidateSession()
                         refresh()

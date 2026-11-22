@@ -95,7 +95,8 @@ private struct XimalayaBrowseWebView: UIViewRepresentable {
         }
 
         let q = initialKeyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        if let url = URL(string: "https://www.ximalaya.com/search/album/\(q)") {
+        // 移动端搜索页：在移动 UA 下渲染更完整，且专辑链接同样是 /album/{id}
+        if let url = URL(string: "https://m.ximalaya.com/search?keyword=\(q)") {
             view.load(URLRequest(url: url))
         }
         return view

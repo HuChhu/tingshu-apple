@@ -14,7 +14,7 @@ struct PlayerView: View {
             Image(systemName: icon)
                 .font(.system(size: 72))
                 .foregroundStyle(player.state == .error ? Color.red : Color.accentColor)
-                .symbolEffect(.variableColor.iterative, isActive: player.state == .playing)
+                .opacity(player.state == .playing ? 1.0 : 0.85)
 
             VStack(spacing: 6) {
                 Text(player.nowPlaying.isEmpty ? "未选择曲目" : player.nowPlaying)

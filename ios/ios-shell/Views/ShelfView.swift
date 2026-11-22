@@ -30,7 +30,7 @@ struct ShelfView: View {
             .searchable(text: $keyword, prompt: "书名、作者或专辑链接")
             .onSubmit(of: .search) { Task { await runSearch() } }
             .onAppear { reloadLists() }
-            .onChange(of: mode) { _, _ in reloadLists() }
+            .onChange(of: mode) { _ in reloadLists() }
         }
     }
 
@@ -193,7 +193,7 @@ struct AlbumView: View {
                     Text(errorText).font(.footnote).multilineTextAlignment(.center)
                     if !SharedBridge.loggedIn {
                         Text("提示：未登录时专辑接口返回 status=76，去设置页登录后再试")
-                            .font(.caption2).foregroundStyle(.tertiary).multilineTextAlignment(.center)
+                            .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
                 }.padding()
             } else {

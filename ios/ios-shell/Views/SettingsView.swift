@@ -53,6 +53,13 @@ struct SettingsView: View {
                     LabeledContent("版本", value: Bundle.main.versionText)
                     LabeledContent("引擎", value: "Kotlin Multiplatform")
                 }
+
+                Section("设备") {
+                    LabeledContent("机型", value: DeviceInfo.modelName)
+                    LabeledContent("系统", value: DeviceInfo.systemVersion)
+                    LabeledContent("屏幕", value: DeviceInfo.screenText)
+                    LabeledContent("App 最低要求", value: DeviceInfo.minOS)
+                }
             }
             .navigationTitle("设置")
             .sheet(isPresented: $showLogin) {
@@ -73,6 +80,59 @@ struct SettingsView: View {
     private func refresh() {
         loggedIn = SharedBridge.loggedIn
         cookieNames = CookieStore.flatMap().keys.sorted()
+    }
+}
+
+/// 设备信息：用于确认包跑在什么机器上、系统是不是够新
+enum DeviceInfo {
+    /// 从 utsname 拿真实机型标识（如 iPhone17,1），再翻成市场名
+    static var modelName: String {
+        var sys = utsname()
+        uname(&sys)
+        let id = withUnsafeBytes(of: &sys.machine) { raw -> String in
+            let bytes = raw.prefix(while: { $0 != 0 })
+            return String(decoding: bytes, as: UTF8.self)
+        }
+        return "\(friendlyName(id)) (\(id))"
+    }
+
+    static var systemVersion: String {
+        let v = ProcessInfo.processInfo.operatingSystemVersion
+        return "\(v.majorVersion).\(v.minorVersion).\(v.patchVersion)"
+    }
+
+    /// 屏幕逻辑尺寸与倍率（从 App 主 window 取，避免 UIScreen.main 废弃问题）
+    static var screenText: String {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let screen = scenes.first?.screen
+        let b = screen?.bounds.size ?? CGSize(width: 0, height: 0)
+        let scale = screen?.scale ?? 0
+        return "\(Int(b.width))×\(Int(b.height)) @\(Int(scale))x"
+    }
+
+    /// 装在机器上的系统版本必须 >= 这个值
+    static var minOS: String {
+        (Bundle.main.infoDictionary?["MinimumOSVersion"] as? String) ?? "-"
+    }
+
+    /// 机型标识 → 市场名。只覆盖已知机型，未知时原样显示标识。
+    private static func friendlyName(_ id: String) -> String {
+        let table: [String: String] = [
+            "iPhone17,1": "iPhone 16 Pro",
+            "iPhone17,2": "iPhone 16 Pro Max",
+            "iPhone17,3": "iPhone 16",
+            "iPhone17,4": "iPhone 16 Plus",
+            "iPhone17,5": "iPhone 16e",
+            "iPhone18,1": "iPhone 17 Pro",
+            "iPhone18,2": "iPhone 17 Pro Max",
+            "iPhone18,3": "iPhone 17",
+            "iPhone18,4": "iPhone Air",
+            "iPhone19,1": "iPhone 18 Pro",
+            "iPhone19,2": "iPhone 18 Pro Max",
+            "iPhone19,3": "iPhone 18",
+            "iPhone19,4": "iPhone 18 Plus",
+        ]
+        return table[id] ?? id
     }
 }
 

@@ -15,6 +15,13 @@ struct ShelfView: View {
     enum Mode: String, CaseIterable { case search = "搜索", favorites = "收藏", recent = "最近" }
 
     var body: some View {
+        GeometryReader { geo in
+            shelfBody(width: geo.size.width)
+        }
+    }
+
+    @ViewBuilder
+    private func shelfBody(width: CGFloat) -> some View {
         NavigationStack {
             VStack(spacing: 0) {
                 Picker("", selection: $mode) {
@@ -24,21 +31,21 @@ struct ShelfView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 8)
 
-                content
+                content(width: width)
             }
             .navigationTitle("书架")
             .searchable(text: $keyword, prompt: "书名、作者或专辑链接")
             .onSubmit(of: .search) { Task { await runSearch() } }
             .onAppear { reloadLists() }
-            .onChange(of: mode) { _ in reloadLists() }
+            .onChange(of: mode) { _, _ in reloadLists() }
         }
     }
 
     @ViewBuilder
-    private var content: some View {
+    private func content(width: CGFloat) -> some View {
         switch mode {
         case .search:
-            searchContent
+            searchContent(width: width)
         case .favorites:
             if favorites.isEmpty {
                 placeholder(icon: "heart", title: "还没有收藏", detail: "在专辑页右上角点心形收藏")
@@ -50,7 +57,7 @@ struct ShelfView: View {
                             coverUrl: f.coverUrl, albumId: f.albumId,
                             trackCount: 0, playCount: 0, isFinished: nil))
                     } label: {
-                        favRow(f)
+                        favRow(f, width: width)
                     }
                 }
                 .listStyle(.plain)
@@ -72,7 +79,7 @@ struct ShelfView: View {
     }
 
     @ViewBuilder
-    private var searchContent: some View {
+    private func searchContent(width: CGFloat) -> some View {
         if loading {
             Spacer(); ProgressView("搜索中…"); Spacer()
         } else if let errorText {
@@ -86,16 +93,16 @@ struct ShelfView: View {
                 ForEach(cards, id: \.bookUrl) { card in
                     NavigationLink {
                         AlbumView(card: card)
-                    } label: { row(card) }
+                    } label: { row(card, width: width) }
                 }
             }
             .listStyle(.plain)
         }
     }
 
-    private func row(_ c: SharedBridge.BookCard) -> some View {
+    private func row(_ c: SharedBridge.BookCard, width: CGFloat) -> some View {
         HStack(spacing: 12) {
-            cover(c.coverUrl, w: 56, h: 56)
+            cover(c.coverUrl, w: Layout.coverSize(width), h: Layout.coverSize(width))
             VStack(alignment: .leading, spacing: 4) {
                 Text(c.title).font(.headline).lineLimit(2)
                 Text(c.author).font(.subheadline).foregroundStyle(.secondary)
@@ -110,9 +117,9 @@ struct ShelfView: View {
         .padding(.vertical, 4)
     }
 
-    private func favRow(_ f: LocalStore.Favorite) -> some View {
+    private func favRow(_ f: LocalStore.Favorite, width: CGFloat) -> some View {
         HStack(spacing: 12) {
-            cover(f.coverUrl, w: 44, h: 44)
+            cover(f.coverUrl, w: Layout.coverSize(width) * 0.8, h: Layout.coverSize(width) * 0.8)
             VStack(alignment: .leading, spacing: 2) {
                 Text(f.title).font(.subheadline).lineLimit(2)
                 Text(f.author).font(.caption).foregroundStyle(.secondary)

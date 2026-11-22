@@ -8,13 +8,20 @@ struct PlayerView: View {
     @State private var dragValue: Double?
 
     var body: some View {
+        GeometryReader { geo in
+            content(width: geo.size.width)
+        }
+    }
+
+    @ViewBuilder
+    private func content(width: CGFloat) -> some View {
         VStack(spacing: 20) {
             Spacer(minLength: 8)
 
             Image(systemName: icon)
-                .font(.system(size: 72))
+                .font(.system(size: Layout.heroIcon(width)))
                 .foregroundStyle(player.state == .error ? Color.red : Color.accentColor)
-                .opacity(player.state == .playing ? 1.0 : 0.85)
+                .symbolEffect(.variableColor.iterative, isActive: player.state == .playing)
 
             VStack(spacing: 6) {
                 Text(player.nowPlaying.isEmpty ? "未选择曲目" : player.nowPlaying)
@@ -68,7 +75,7 @@ struct PlayerView: View {
                     if player.state == .playing { player.pause() } else { player.resume() }
                 } label: {
                     Image(systemName: player.state == .playing ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 64))
+                        .font(.system(size: Layout.mainButton(width)))
                 }
                 .disabled(player.state == .stopped || player.state == .error || player.state == .loading)
 

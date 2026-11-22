@@ -1,0 +1,15 @@
+{
+  "ret": 0,
+  "data": {
+    "albums": [
+      {
+        "albumId": 9001,
+        "albumTitle": "构造测试专辑",
+        "albumUserNickName": "构造主播",
+        "albumTrackCount": 30,
+        "albumPlayCount": 0,
+        "albumCoverPath": "constructed/cover.jpg"
+      }
+    ]
+  }
+}

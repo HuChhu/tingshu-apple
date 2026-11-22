@@ -19,7 +19,7 @@ enum BackgroundSession {
         } catch {
             #if DEBUG
             debugPrint("[BackgroundSession] 三件套配置失败: " + String(describing: error)
-        #endif)
+        #endif
         }
         wireObservers()
     }

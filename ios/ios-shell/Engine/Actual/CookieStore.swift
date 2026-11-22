@@ -12,7 +12,7 @@ enum CookieStore {
         let cookies = await withCheckedContinuation { (c: CheckedContinuation<[HTTPCookie], Never>) in
             store.getAllCookies { c.resume(returning: $0) }
         }
-        for cookie in cookies where cookie.domain.hasSuffix(host) {
+        for cookie in cookies where domainMatches(cookie.domain, host) {
             HTTPCookieStorage.shared.setCookie(cookie)
         }
     }
@@ -20,7 +20,7 @@ enum CookieStore {
     /// 共享存储 → WebView 回灌，按 host 精确过滤
     static func restore(into webView: WKWebView, host: String) async {
         let store = webView.configuration.websiteDataStore.httpCookieStore
-        for cookie in HTTPCookieStorage.shared.cookies ?? [] where cookie.domain.hasSuffix(host) {
+        for cookie in HTTPCookieStorage.shared.cookies ?? [] where __DOMAIN_MATCH__(host, cookie.domain) {
             await store.setCookie(cookie)
         }
     }

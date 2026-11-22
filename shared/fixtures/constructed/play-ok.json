@@ -1,7 +1,7 @@
 {
   "ret": 200,
   "data": {
-    "src": "https://a1.xmcdn.com/constructed/test-track.mp3",
+    "src": "https://cdn.example.com/constructed/test-track.mp3",
     "url": "https://backup.example.com/t.mp3",
     "playUrl": "https://third.example.com/t.mp3"
   }

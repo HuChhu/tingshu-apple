@@ -2,7 +2,7 @@ name: archive-ipa
 on: [workflow_dispatch, push]   # 仓库已转公开 → macOS runner 免费可用
 jobs:
   archive:
-    runs-on: macos-14   # macOS host：framework link 唯一合法出路（kn-preheat.md 三层对位）
+    runs-on: macos-13   # macOS host：framework link 唯一合法出路（kn-preheat.md 三层对位）
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4

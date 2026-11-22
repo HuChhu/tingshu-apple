@@ -54,10 +54,14 @@ jobs:
           file "$FW/shared"
           file "$FW/shared" | grep -q "Mach-O" || { echo "::error::not Mach-O"; exit 1; }
           file "$FW/shared" | grep -q "arm64" || { echo "::error::not arm64"; exit 1; }
-          mkdir -p shared/build/bin/iosArm64/ReleaseFramework
-          rm -rf shared/build/bin/iosArm64/ReleaseFramework/shared.framework
-          cp -R "$FW" shared/build/bin/iosArm64/ReleaseFramework/
-          ls -la shared/build/bin/iosArm64/ReleaseFramework/shared.framework
+          # K/N 实际输出目录为小写 releaseFramework；pbxproj 指向 ReleaseFramework。
+          # 直接创建大写目录并整目录复制（含 Headers/Modules/Info.plist/二进制）。
+          DEST=shared/build/bin/iosArm64/ReleaseFramework
+          rm -rf "$DEST"
+          mkdir -p "$DEST"
+          cp -R "$FW"/. "$DEST"/shared.framework/
+          ls -la "$DEST/shared.framework"
+          file "$DEST/shared.framework/shared" | grep -q "arm64" || { echo "::error::copied framework not arm64"; exit 1; }
 
       - name: generate AppIcon
         run: |

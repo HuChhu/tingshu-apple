@@ -24,9 +24,28 @@ class XimalayaAudioExtractor(
 ) : AudioExtractor {
 
     override suspend fun extract(url: String, timeoutMs: Int): ExtractedAudio {
-        // 级1：直链
+        // 级1：直链（零请求，最快）
         if (AudioUrlHeaders.isDirectAudio(url)) {
             return ExtractedAudio(url, AudioUrlHeaders.headersFor(url), 0L)
+        }
+
+        // 级2/4：多级提取器给出的 HTML / JSON / 自定义命中（有就省掉官方接口一次请求）
+        // 注意：这里只对「输入本身像页面 URL」的情况尝试，纯数字 trackId 直接走官方接口
+        val looksLikePage = url.startsWith("http") && !url.all { ch -> ch.isDigit() }
+        if (looksLikePage) {
+            runCatching {
+                val hit = MultistepAudioExtractor.extract(
+                    raw = url,
+                    bodyFetcher = { target ->
+                        val r = throttle.run { fetcher.get(target, AudioUrlHeaders.headersFor(target)) }
+                        (r as? FetchOutcome.Ok)?.text
+                    },
+                )
+                if (hit.level != MultistepAudioExtractor.Level.Direct) {
+                    return ExtractedAudio(hit.url, hit.headers, 0L)
+                }
+            }
+            // 提取器失败不致命：继续走官方接口
         }
         // trackId 解析统一走 XimalayaLinkParser（/sound/{id}、?trackId=）；
         // 纯数字输入按本 API 的约定解释为 trackId（extract 是 track 作用域，LinkParser 的纯数字=albumId 语义不变）

@@ -25,7 +25,7 @@ class CorePureTest {
     }
 
     @Test fun maxPageMath() {
-        assertEquals(94L, TrackNormalizer.maxPage(2813, 30))   // ceil(2813/30)
+        assertEquals(301L, TrackNormalizer.maxPage(9005, 30))   // ceil(9005/30) = 301
         assertEquals(1L, TrackNormalizer.maxPage(5, 30))
         assertEquals(0L, TrackNormalizer.maxPage(0, 30))
         assertEquals(0L, TrackNormalizer.maxPage(100, 0))
@@ -150,11 +150,11 @@ class CorePureTest {
 
     // ---- 曲目信封结构（live 实锤：tracks.list + totalCount + maxPageId） ----
     @Test fun trackEnvelopeShape() {
-        val json = Json.parseToJsonElement("{\"tracks\":{\"list\":[{\"trackId\":31,\"title\":\"第31集\",\"duration\":310,\"coverLarge\":\"http://x/c.jpeg\"},{\"trackId\":32,\"title\":\"第32集\"}],\"totalCount\":2813,\"maxPageId\":94}}") as kotlinx.serialization.json.JsonObject
+        val json = Json.parseToJsonElement("{\"tracks\":{\"list\":[{\"trackId\":31,\"title\":\"第31集\",\"duration\":310,\"coverLarge\":\"http://x/c.jpeg\"},{\"trackId\":32,\"title\":\"第32集\"}],\"totalCount\":9005,\"maxPageId\":94}}") as kotlinx.serialization.json.JsonObject
         val tp = TrackExtractor.fromDetail(json, 2, 30, "src")
         assertEquals(2, tp.episodes.size)
         assertEquals(31, tp.episodes[0].index)          // page=2 首条
-        assertEquals(2813L, tp.totalCount)
+        assertEquals(9005L, tp.totalCount)
         assertEquals(94L, tp.maxPageId)
         assertEquals(310000L, tp.episodes[0].durationMs)
         assertEquals("https://<cdn>/http://x/c.jpeg".replace("https://<cdn>/http://x/c.jpeg", "http://x/c.jpeg"), tp.episodes[0].coverUrl)  // 已含 scheme 不拼 CDN
@@ -234,7 +234,7 @@ class MigrationTest {
 
     // ---- XimalayaLinkParser：唯一解析器 ----
     @Test fun linkParserCovers() {
-        assertEquals(38454623L, XimalayaLinkParser.parse("https://www.ximalaya.com/album/38454623").albumId)
+        assertEquals(9003L, XimalayaLinkParser.parse("https://www.ximalaya.com/album/9003").albumId)
         assertEquals(123456L, XimalayaLinkParser.parse("https://www.ximalaya.com/sound/123456").trackId)
         assertEquals(123L, XimalayaLinkParser.parse("https://mobile.ximalaya.com/album/xxx?albumId=123").albumId)
         assertEquals(999L, XimalayaLinkParser.parse("看这个 https://www.ximalaya.com/sound/999?x=1 超好听").trackId)

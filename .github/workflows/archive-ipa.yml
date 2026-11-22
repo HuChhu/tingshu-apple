@@ -56,12 +56,18 @@ jobs:
           file "$FW/shared" | grep -q "arm64" || { echo "::error::not arm64"; exit 1; }
           # K/N 实际输出目录为小写 releaseFramework；pbxproj 指向 ReleaseFramework。
           # 直接创建大写目录并整目录复制（含 Headers/Modules/Info.plist/二进制）。
-          DEST=shared/build/bin/iosArm64/ReleaseFramework
-          rm -rf "$DEST"
-          mkdir -p "$DEST"
-          cp -R "$FW"/. "$DEST"/shared.framework/
-          ls -la "$DEST/shared.framework"
-          file "$DEST/shared.framework/shared" | grep -q "arm64" || { echo "::error::copied framework not arm64"; exit 1; }
+          # macOS 默认大小写不敏感：ReleaseFramework 与 releaseFramework 是同一目录，
+          # rm -rf 会连同源目录一起删掉。改为整目录 cp 到临时名再改回大写目录名。
+          cd shared/build/bin/iosArm64
+          ls -la
+          rm -rf _fwtmp
+          cp -R releaseFramework/shared.framework _fwtmp
+          rm -rf releaseFramework
+          mkdir -p ReleaseFramework
+          mv _fwtmp ReleaseFramework/shared.framework
+          cd - >/dev/null
+          ls -la shared/build/bin/iosArm64/ReleaseFramework/shared.framework
+          file shared/build/bin/iosArm64/ReleaseFramework/shared.framework/shared | grep -q "arm64" || { echo "::error::copied framework not arm64"; exit 1; }
 
       - name: generate AppIcon
         run: |

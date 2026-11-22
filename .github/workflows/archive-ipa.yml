@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   archive:
@@ -128,6 +128,22 @@ jobs:
           ls -la "$APP/Frameworks" || echo "no Frameworks dir"
           echo "--- signature state (expect unsigned) ---"
           codesign -dv "$APP" 2>&1 | head -5 || true
+
+      - name: publish to release (stable download URL)
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="build-${{ github.run_number }}"
+          MD5=$(md5 -q build/Tingshu-unsigned.ipa 2>/dev/null || md5sum build/Tingshu-unsigned.ipa | awk '{print $1}')
+          SIZE=$(stat -f%z build/Tingshu-unsigned.ipa 2>/dev/null || stat -c%s build/Tingshu-unsigned.ipa)
+          echo "md5=$MD5 size=$SIZE"
+          gh release create "$TAG" build/Tingshu-unsigned.ipa \
+            --repo "${{ github.repository }}" \
+            --title "Tingshu unsigned IPA $TAG" \
+            --notes "commit ${{ github.sha }} | md5 $MD5 | $SIZE bytes | ESign 自签" \
+            --latest
 
       - uses: actions/upload-artifact@v4
         if: always()

@@ -69,6 +69,17 @@ jobs:
           ls -la shared/build/bin/iosArm64/ReleaseFramework/shared.framework
           file shared/build/bin/iosArm64/ReleaseFramework/shared.framework/shared | grep -q "arm64" || { echo "::error::copied framework not arm64"; exit 1; }
 
+      - name: dump framework symbols (for Swift name reconciliation)
+        run: |
+          set -e
+          H=shared/build/bin/iosArm64/ReleaseFramework/shared.framework/Headers/shared.h
+          [ -f "$H" ] || { echo "::warning::header not found"; exit 0; }
+          echo "=== SourceErrors related symbols ==="
+          grep -n -E "SourceErrors" "$H" | head -40 || true
+          echo "=== interface names ==="
+          grep -n -E "^__attribute__|@interface .*SourceErrors" "$H" | head -20 || true
+          mkdir -p /tmp/hdr && cp "$H" /tmp/hdr/shared.h
+
       - name: verify AppIcon present
         run: |
           set -e
@@ -124,6 +135,13 @@ jobs:
           name: Tingshu-unsigned-ipa
           path: build/Tingshu-unsigned.ipa
           if-no-files-found: warn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shared-header
+          path: /tmp/hdr/shared.h
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v4
         if: always()

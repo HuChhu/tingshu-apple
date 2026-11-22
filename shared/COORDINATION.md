@@ -34,7 +34,7 @@
 ## 目录真身声明（2026-11-22 lead 定谳，架构席 ③）
 - **唯一真身 = `shared-core`**（真实目录）
 - `shared` = **symlink → shared-core**，仅由 audiobook-app 的 `includeBuild("../shared")` 消费；不是第二个工程，禁止在此 symlink 内独立改文件（会写到真身，但认知上易误判）
-- 远端 `HuChhu/tingshu-apple/shared` = 真实目录（CI 用）
+- 远端 `<owner>/<repo>/shared` = 真实目录（CI 用）
 - 漂移防线：`搬一个删一个` + 禁双实现 grep 闸 + 三处（shared-core / tingshu-apple/shared / iOS framework）由 CI 与人工双查
 
 ## fixtures 双名清理（2026-11-22 · qa 观察项①归档 · 三仓库实测定谳）

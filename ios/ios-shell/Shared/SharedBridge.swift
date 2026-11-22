@@ -80,24 +80,48 @@ enum SharedBridge {
 
     // MARK: - 真机对接（framework 门面 com.local.audiobook.core.TingshuApp）
     /// 全局唯一引擎实例。App 生命周期内复用，限速状态与搜索预算随之保留。
-    static let app: TingshuApp = TingshuApp()
+    /// K/N 不保留 Kotlin 默认参数，构造器全参必填：匿名 Provider = 未登录态。
+    private final class AnonymousCookieProvider: NSObject, CookieProvider {
+        func cookie(completionHandler: @escaping (String?, Error?) -> Void) {
+            completionHandler(nil, nil)
+        }
+        func refresh(completionHandler: @escaping (KotlinUnit?, Error?) -> Void) {
+            completionHandler(KotlinUnit(), nil)
+        }
+    }
+
+    static let app: TingshuApp = TingshuApp(cookieProvider: AnonymousCookieProvider())
+
+    /// K/N 不生成 Swift async 重载，suspend 函数只暴露 completionHandler 形式。
+    /// 这里统一包成 async，让视图层能直接 await，同时不把 NSError 桥接细节散到各处。
+    private static func bridge<T>(_ body: (@escaping (T?, Error?) -> Void) -> Void) async -> T? {
+        await withCheckedContinuation { (cont: CheckedContinuation<T?, Never>) in
+            body { value, _ in cont.resume(returning: value) }
+        }
+    }
 
     /// 搜索。引擎内部已限速(1/s)+预算(3次/30s)，失败降级返回空书单+hint，不抛。
     static func search(keywords: String, page: Int) async -> SearchResult? {
-        try? await app.search(keywords: keywords, page: Int32(page))
+        await bridge { done in
+            app.search(keywords: keywords, page: Int32(page)) { res, err in done(res, err) }
+        }
     }
 
-    /// 专辑详情 + 曲目。失败返回 nil，错误文案走 message(for:)。
+    /// 专辑详情 + 曲目。失败返回 nil。
     static func bookDetail(bookUrl: String) async -> BookDetail? {
-        try? await app.bookDetail(bookUrl: bookUrl, loadEpisodes: true, loadFullPages: false)
+        await bridge { done in
+            app.bookDetail(bookUrl: bookUrl, loadEpisodes: true, loadFullPages: false) { d, err in done(d, err) }
+        }
     }
 
     /// 取播放地址（级1→级3 提取链）。
     static func extract(url: String) async -> ExtractedAudio? {
-        try? await app.extract(url: url, timeoutMs: 15_000)
+        await bridge { done in
+            app.extract(url: url, timeoutMs: 15_000) { a, err in done(a, err) }
+        }
     }
 
-    /// 解析专辑 ID（/album/{id}、?albumId=、纯数字 ≥4 位）。
+    /// 解析专辑 ID（/album/{id}、?albumId=、纯数字 ≥4 位）。同步函数，K/N 直接导出。
     static func albumId(from bookUrl: String) -> Int64 {
         app.parseAlbumId(bookUrl: bookUrl)
     }

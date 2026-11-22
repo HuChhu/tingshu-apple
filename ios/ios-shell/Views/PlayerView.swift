@@ -10,7 +10,7 @@ struct PlayerView: View {
         VStack(spacing: 24) {
             Image(systemName: icon)
                 .font(.system(size: 64))
-                .foregroundStyle(player.state == .error ? .red : .tint)
+                .foregroundStyle(player.state == .error ? Color.red : Color.accentColor)
 
             Text(player.nowPlaying.isEmpty ? "未选择曲目" : player.nowPlaying)
                 .font(.headline)

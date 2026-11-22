@@ -126,7 +126,7 @@ private struct XimalayaBrowseWebView: UIViewRepresentable {
         }
 
         /// 拦截专辑链接：阻止默认跳转，把 albumId 和标题回传 Swift
-        static let pickScript = """
+        static let pickScript = #"""
         (function(){
           if (window.__tingshuPickInstalled) return;
           window.__tingshuPickInstalled = true;
@@ -147,6 +147,6 @@ private struct XimalayaBrowseWebView: UIViewRepresentable {
             } catch(err){}
           }, true);
         })();
-        """
+        """#
     }
 }

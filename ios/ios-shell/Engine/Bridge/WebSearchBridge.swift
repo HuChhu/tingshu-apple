@@ -105,7 +105,7 @@ final class WebSearchBridge: NSObject {
     /// 喜马拉雅搜索结果页结构随版本变化，所以这里做多路兜底：
     ///   ① 先找 __NUXT__ / window.__INITIAL_STATE__ 里的数据
     ///   ② 再退回 DOM 解析（a[href*="/album/"] 卡片）
-    static let extractScript = """
+    static let extractScript = #"""
     (function(){
       if (window.__tingshuSearchInstalled) return;
       window.__tingshuSearchInstalled = true;
@@ -219,7 +219,7 @@ final class WebSearchBridge: NSObject {
         }, 400);
       }
     })();
-    """
+    """#
 }
 
 extension WebSearchBridge: WKScriptMessageHandler {

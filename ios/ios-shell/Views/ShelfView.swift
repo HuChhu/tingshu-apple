@@ -1,5 +1,4 @@
 import SwiftUI
-import shared
 
 /// 书架页：搜索 → 结果列表 → 点进专辑 → 曲目 → 播放。
 /// 引擎纪律：搜索已限速 1/s、网页端点预算 3 次/30s，降级时展示引擎给的 hint，壳不再加工。
@@ -154,7 +153,7 @@ struct AlbumView: View {
             errorText = "专辑加载失败（可能已下架或需要登录）"
             return
         }
-        episodes = (detail.episodes as? [Episode])?.map(SharedBridge.row(from:)) ?? []
+        episodes = SharedBridge.rows(from: detail)
         if episodes.isEmpty { errorText = "该专辑暂无曲目" }
     }
 }

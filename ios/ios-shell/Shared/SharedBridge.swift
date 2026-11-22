@@ -73,6 +73,11 @@ enum SharedBridge {
         )
     }
 
+    /// 曲目列表转换（供壳内视图调用，避免视图层直接 import shared）
+    static func rows(from detail: BookDetail) -> [EpisodeRow] {
+        (detail.episodes as? [Episode])?.map(row(from:)) ?? []
+    }
+
     // MARK: - 真机对接（framework 门面 com.local.audiobook.core.TingshuApp）
     /// 全局唯一引擎实例。App 生命周期内复用，限速状态与搜索预算随之保留。
     static let app: TingshuApp = TingshuApp()

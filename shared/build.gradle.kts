@@ -49,3 +49,18 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
+
+
+// 本地冒烟用：可执行 fat jar（jvm CLI 依赖 kotlinx/ktor，普通 jvmJar 不含运行期依赖）
+val fatJar = tasks.register<Jar>("fatJar") {
+    archiveClassifier.set("all")
+    group = "build"
+    manifest { attributes["Main-Class"] = "com.local.audiobook.core.MainKt" }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    val jvmCompilation = kotlin.jvm().compilations.getByName("main")
+    dependsOn(jvmCompilation.compileTaskProvider)
+    from(jvmCompilation.output.allOutputs)
+    val runtimeCp = configurations.getByName("jvmRuntimeClasspath")
+    dependsOn(runtimeCp)
+    from(runtimeCp.map { if (it.isDirectory) it else zipTree(it) })
+}

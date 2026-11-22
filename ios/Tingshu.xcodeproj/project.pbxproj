@@ -72,7 +72,7 @@
 			children = (
 				FE0000000000000000000001 /* ios_shellApp.swift */,
 				EB0000000000000000000002 /* Views */,
-				EB0000000000000000000005 /* Storage */,
+				EB0000000000000000000009 /* Storage */,
 				EB0000000000000000000003 /* Shared */,
 				EB0000000000000000000004 /* Engine */,
 				FE000000000000000000000C /* Info.plist */,
@@ -91,7 +91,7 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
-		EB0000000000000000000005 /* Storage */ = {
+		EB0000000000000000000009 /* Storage */ = {
 			isa = PBXGroup;
 			children = (
 				FE000000000000000000000E /* LocalStore.swift */,

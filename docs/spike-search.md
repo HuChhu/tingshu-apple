@@ -8,17 +8,17 @@
 | 项 | 要求 | 结果 |
 |---|---|---|
 | 产物 | KMP 骨架 JVM 侧 + search 命令行 | shared-core（KMP 2.0.21 / Gradle 8.13 / JDK17 / jvm+withJava()），main 三模式：search / discover / fixture |
-| 验收方式 | 运行 main 输出真实书名+作者+封面 URL | ✅ discover 路线打印真实书单（下附样例）；search 路线按 bridge 基线降级（环境性：搜索端点 riskLevel=5，§16.4/18.1 既有结论） |
+| 验收方式 | 运行 main 输出真实书名+作者+封面 URL | ✅ discover 路线打印真实书单（下附样例）；search 路线按 bridge 基线降级（环境性：搜索端点 riskLevel=<n>，§16.4/18.1 既有结论） |
 | 证据路径 | docs/spike-search.md | 本文件 + fixtures/ 原始响应 |
 
 ## 二、命令行输出样例（UTF-8 实录）
 ### live：search 三体（降级路径完整走通）
 ```
 RESULT source=none page=1 maxPage=0
-HINT 网页搜索失败（risk, riskLevel=5）→ RateLimited；搜索降级：在喜马拉雅 App 内搜索后，复制分享链接或专辑 ID 到 App 直达
+HINT 网页搜索失败（risk, riskLevel=<n>）→ RateLimited；搜索降级：在喜马拉雅 App 内搜索后，复制分享链接或专辑 ID 到 App 直达
 COUNT books=0
 ```
-行为链 = bridge api.py search 语义：移动端路线（网关 HTML 错误页，非 JSON → 该路线放弃且不重试）→ 网页路线（预算闸门放行）→ ErrorClassifier 判 risk（riskLevel=5≥3）→ WebSearchBudget 记账 → 降级 + hint。与 §16.4 基线响应逐字节同型。
+行为链 = bridge api.py search 语义：移动端路线（网关 HTML 错误页，非 JSON → 该路线放弃且不重试）→ 网页路线（预算闸门放行）→ ErrorClassifier 判 risk（riskLevel=<n>≥3）→ WebSearchBudget 记账 → 降级 + hint。与 §16.4 基线响应逐字节同型。
 
 ### live：discover 3 1 5（真实书单，验收表「书名+作者+封面URL」直接证据）
 ```
@@ -38,15 +38,15 @@ COUNT books=5
    author/cover/trackCount/playCount 差异 = 已文档化的扩展键（类目端点 albumUserNickName/albumCoverPath/albumTrackCount/albumPlayCount，bridge 归一函数写于类目端点接入前，无此四键）。
    处置：Kotlin 侧按同 _pick 语义补键、既有键优先级不变；**M2 待办：四键回写 bridge normalize_album**（§19.7.4 同步纪律方向：引擎→桥）。
 2. 错误分类矩阵 4/4 全同：risk-web.json→risk/RateLimited、need-login.json→need_login/Auth、http-error.json→http_error/Upstream、category.json→ok。bridge 侧走真 RiskGuard+Upstream._classify（状态落 /tmp，未碰桥真数据）。
-3. fixture 清单：risk-web.json / risk-web-kw2.json（riskLevel=5 原件）、category.json（v2/albums 5 本）、gateway-mobile.html（移动端网关 HTML 错误页 336B）、need-login.json / http-error.json（构造对拍用例）。
+3. fixture 清单：risk-web.json / risk-web-kw2.json（riskLevel=<n> 原件）、category.json（v2/albums 5 本）、gateway-mobile.html（移动端网关 HTML 错误页 336B）、need-login.json / http-error.json（构造对拍用例）。
 
 ## 四、上游探测台账（纪律：≤1rps、不硬冲）
 | 时间 | 动作 | 结果 | 预算 |
 |---|---|---|---|
 | 11:42 | mobile search 直探（curl） | HTTP 200 但 336B HTML 网关错误页（非 JSON） | 不计网页预算 |
-| 11:47 | web search 直探 #1（三体） | riskLevel=5 | 1/3 |
-| 11:52 | web search 直探 #2（明朝那些事儿，30s 冷却后） | riskLevel=5 | 2/3 |
-| 12:00 | web search 经引擎 #1（三体） | riskLevel=5 → 降级 hint | 3/3 |
+| 11:47 | web search 直探 #1（三体） | riskLevel=<n> | 1/3 |
+| 11:52 | web search 直探 #2（明朝那些事儿，30s 冷却后） | riskLevel=<n> | 2/3 |
+| 12:00 | web search 经引擎 #1（三体） | riskLevel=<n> → 降级 hint | 3/3 |
 | 11:53 / 12:01 | category v2/albums（匿名端点） | 200，真实数据 | 非搜索端点 |
 **网页搜索预算今日用尽（3/3，按 risk.py 纪律记 paused，不重试不换参数）**；后续对拍一律走 fixtures 离线管线。
 

@@ -7,7 +7,7 @@
 - engine 实现在 com.local.audiobook.core.engine（七件）+ net SPI（commonMain 引擎注入，actual 触点 0）
 - devops-ci 正在 gradle-dist 分片下载 gradle-8.13；dev-core 并行走 wrapper（腾讯镜像）构建，
   谁先完成谁先跑，勿重复组装
-- 真实探测记录（≤1rps，网页搜索预算 2/3 已用）：mobile 网关 HTML 错误页 / web riskLevel=5 ×2 /
+- 真实探测记录（≤1rps，网页搜索预算 2/3 已用）：mobile 网关 HTML 错误页 / web riskLevel=<n> ×2 /
   category v2/albums 匿名可用（fixtures/ 下四份原件）
 
 ## T07 定谳同步（dev-core 收讫，2026-11-21 12:0x）

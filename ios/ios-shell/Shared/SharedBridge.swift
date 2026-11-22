@@ -139,6 +139,32 @@ enum SharedBridge {
         }
     }
 
+    /// 浏览器搜索：走 WKWebView 打开喜马拉雅搜索页，抓结构化结果。
+    /// 引擎直连会撞风控（riskLevel=5）与 webtk 缺失，这条路绕开这两个门。
+    /// 返回空数组表示页面里没找到结果。
+    static func browserSearch(keyword: String, page: Int = 1) async -> [BookCard] {
+        do {
+            let raw = try await WebSearchBridge.shared.search(keyword: keyword, page: page)
+            return raw.compactMap { dict -> BookCard? in
+                guard let id = dict["albumId"] as? String, !id.isEmpty,
+                      let title = dict["title"] as? String, !title.isEmpty else { return nil }
+                let cover = (dict["cover"] as? String) ?? ""
+                return BookCard(
+                    bookUrl: "/album/\(id)",
+                    title: title,
+                    author: (dict["author"] as? String) ?? "",
+                    coverUrl: cover.hasPrefix("//") ? "https:" + cover : cover,
+                    albumId: Int64(id) ?? 0,
+                    trackCount: Int64((dict["trackCount"] as? NSNumber)?.int64Value ?? 0),
+                    playCount: Int64((dict["playCount"] as? NSNumber)?.int64Value ?? 0),
+                    isFinished: (dict["isFinished"] as? Bool) ?? false
+                )
+            }
+        } catch {
+            return []
+        }
+    }
+
     /// 专辑详情 + 曲目。失败返回 nil。
     static func bookDetail(bookUrl: String) async -> BookDetail? {
         await bridge { done in

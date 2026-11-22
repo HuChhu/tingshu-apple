@@ -9,7 +9,8 @@ import java.nio.file.Path
 // JVM spike 凭据来源（lead 拍板）：读桥持会话的 cookie 文件（与 bridge upstream._load_cookies 同构的扁平 {name:value}）。
 // 纪律：路径走环境变量 BRIDGE_COOKIE_FILE（默认桥标准路径）；cookie 值绝不打日志、不进 git/文档。
 class BridgeCookieProvider(
-    private val filePath: String = System.getenv("BRIDGE_COOKIE_FILE") ?: "<bridge-path>/data/cookies.json",
+    private val filePath: String = System.getenv("BRIDGE_COOKIE_FILE") ?: "",
+    // 无默认路径：必须显式注入 BRIDGE_COOKIE_FILE（防部署拓扑入库）
 ) : CookieProvider {
 
     private var cache: String? = null

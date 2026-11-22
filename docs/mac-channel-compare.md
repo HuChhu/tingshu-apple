@@ -1,5 +1,5 @@
 # macOS 构建通道（T06 终定 2026-11-21）
-**终定：GitHub Actions 为主通道**（用户提供 token，私有仓 HuChhu/tingshu-apple）
+**终定：GitHub Actions 为主通道**（用户提供 token，私有仓 <owner>/<repo>）
 - jvm-tests.yml：ubuntu-latest + JDK17 → shared jvmTest（每次 push）
 - ios-framework.yml：macos-14 runner → K/N linkReleaseFrameworkIosArm64（官方 macos-aarch64 可用）+ cache ~/.konan + 上传 framework 工件 + 无签名 xcodebuild 编译检查
 - 云 Mac（~$20/月）：备用，真机调试需要时再开

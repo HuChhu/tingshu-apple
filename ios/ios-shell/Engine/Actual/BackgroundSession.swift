@@ -17,7 +17,9 @@ enum BackgroundSession {
             try session.setCategory(.playback, mode: .default, options: [])
             try session.setActive(true)
         } catch {
-            debugPrint("[BackgroundSession] 三件套配置失败: " + String(describing: error))
+            #if DEBUG
+            debugPrint("[BackgroundSession] 三件套配置失败: " + String(describing: error)
+        #endif)
         }
         wireObservers()
     }

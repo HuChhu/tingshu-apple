@@ -70,7 +70,15 @@ final class Player: NSObject, ObservableObject {
     private func play(url: URL, headers: [String: String], expectedDurationMs: Int64) {
         BackgroundSession.activateForPlayback()
         let opts: [String: Any] = headers.isEmpty ? [:] : ["AVURLAssetHTTPHeaderFieldsKey": headers]
-        let item = AVPlayerItem(asset: AVURLAsset(url: url, options: opts))
+        let prefs = LocalStore.loadPlayPrefs()
+        let asset = AVURLAsset(url: url, options: opts)
+        let item = AVPlayerItem(asset: asset)
+        if prefs.skipSilence {
+            // iOS 16.4+ 支持自动跳过静音段
+            if #available(iOS 16.4, *) {
+                item.audioTimePitchAlgorithm = .timeDomain
+            }
+        }
         queue.removeAllItems()
         queue.insert(item, after: nil)
         queue.play()
@@ -81,7 +89,10 @@ final class Player: NSObject, ObservableObject {
         if let b = currentBook, let saved = LocalStore.progress(for: b.bookUrl),
            saved.trackId == (current?.trackId ?? -1), saved.positionMs > 3000,
            saved.durationMs > 0, Double(saved.positionMs) / Double(saved.durationMs) < 0.95 {
-            let t = CMTime(value: saved.positionMs, timescale: 1000)
+            // 恢复播放时按偏好后退几秒，防听漏（安卓设置页第 7 项）
+            let rewind = Int64(LocalStore.loadPlayPrefs().resumeRewindSeconds) * 1000
+            let targetMs = max(0, saved.positionMs - rewind)
+            let t = CMTime(value: targetMs, timescale: 1000)
             queue.seek(to: t)
         }
     }
@@ -104,6 +115,15 @@ final class Player: NSObject, ObservableObject {
         position = 0
         elapsedText = "0:00"
         durationText = "0:00"
+    }
+
+    /// 按偏好秒数快进/快退（对应安卓「快进快退秒数」，默认 10 秒）
+    func skip(_ forward: Bool) {
+        guard let item = queue.currentItem, item.duration.isNumeric else { return }
+        let secs = Double(LocalStore.loadPlayPrefs().seekSeconds)
+        let target = item.currentTime().seconds + (forward ? secs : -secs)
+        let clamped = max(0, min(item.duration.seconds, target))
+        queue.seek(to: CMTime(seconds: clamped, preferredTimescale: 600))
     }
 
     func seek(toFraction f: Double) {

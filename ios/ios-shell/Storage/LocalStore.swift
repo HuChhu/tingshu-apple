@@ -121,6 +121,37 @@ enum LocalStore {
         }
     }
 
+    // MARK: - 播放偏好（对应安卓设置页第 7/8 项）
+
+    struct PlayPrefs: Codable {
+        /// 快进快退秒数（安卓默认 10，重启生效）
+        var seekSeconds: Int = 10
+        /// 恢复播放时后退几秒，0=关闭（安卓默认 0）
+        var resumeRewindSeconds: Int = 0
+        /// 进入播放页自动播放（安卓默认关）
+        var autoPlayOnOpen: Bool = false
+        /// 跳过无声部分（安卓默认关）
+        var skipSilence: Bool = false
+        /// 忽略其它 App 音频焦点（普通模式：接电话仍暂停）
+        var ignoreAudioFocus: Bool = false
+    }
+
+    private static let playPrefsKey = "dsh.tingshu.playPrefs"
+
+    static func loadPlayPrefs() -> PlayPrefs {
+        guard let data = UserDefaults.standard.data(forKey: playPrefsKey),
+              let p = try? decoder.decode(PlayPrefs.self, from: data) else {
+            return PlayPrefs()
+        }
+        return p
+    }
+
+    static func savePlayPrefs(_ p: PlayPrefs) {
+        if let data = try? encoder.encode(p) {
+            UserDefaults.standard.set(data, forKey: playPrefsKey)
+        }
+    }
+
     private static func persist<T: Encodable>(_ value: T, _ key: String) {
         if let data = try? encoder.encode(value) {
             UserDefaults.standard.set(data, forKey: key)

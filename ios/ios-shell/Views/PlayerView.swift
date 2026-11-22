@@ -65,9 +65,9 @@ struct PlayerView: View {
 
             HStack(spacing: 28) {
                 Button {
-                    player.seek(toFraction: max(0, (dragValue ?? player.position) - 0.05))
+                    player.skip(false)
                 } label: {
-                    Image(systemName: "gobackward.15").font(.title2)
+                    Image(systemName: "gobackward.\(seekSecs)").font(.title2)
                 }
                 .disabled(player.state == .stopped)
 
@@ -80,9 +80,9 @@ struct PlayerView: View {
                 .disabled(player.state == .stopped || player.state == .error || player.state == .loading)
 
                 Button {
-                    player.stop()
+                    player.skip(true)
                 } label: {
-                    Image(systemName: "stop.circle").font(.title2)
+                    Image(systemName: "goforward.\(seekSecs)").font(.title2)
                 }
                 .disabled(player.state == .stopped)
             }
@@ -92,6 +92,11 @@ struct PlayerView: View {
         }
         .padding(.top, 24)
         .navigationTitle("播放")
+    }
+
+    /// 从设置读取快进快退秒数（对应安卓设置页第 8 项）
+    private var seekSecs: Int {
+        LocalStore.loadPlayPrefs().seekSeconds
     }
 
     private var icon: String {

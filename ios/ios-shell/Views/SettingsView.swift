@@ -6,6 +6,8 @@ struct SettingsView: View {
     @State private var loggedIn = SharedBridge.loggedIn
     @State private var showLogin = false
     @State private var cookieNames: [String] = []
+    @State private var prefs = LocalStore.loadPlayPrefs()
+    @State private var cacheRefresh = false
 
     var body: some View {
         NavigationStack {
@@ -39,6 +41,41 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                         Text("只显示字段名，不显示值。")
                             .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("播放设置") {
+                    Picker("快进快退秒数", selection: Binding(
+                        get: { prefs.seekSeconds },
+                        set: { prefs.seekSeconds = $0; LocalStore.savePlayPrefs(prefs) }
+                    )) {
+                        ForEach([5, 10, 15, 30], id: \.self) { Text("\($0) 秒").tag($0) }
+                    }
+
+                    Picker("恢复播放后退", selection: Binding(
+                        get: { prefs.resumeRewindSeconds },
+                        set: { prefs.resumeRewindSeconds = $0; LocalStore.savePlayPrefs(prefs) }
+                    )) {
+                        Text("关闭").tag(0)
+                        ForEach([3, 5, 10], id: \.self) { Text("后退 \($0) 秒").tag($0) }
+                    }
+
+                    Toggle("进入播放页自动播放", isOn: Binding(
+                        get: { prefs.autoPlayOnOpen },
+                        set: { prefs.autoPlayOnOpen = $0; LocalStore.savePlayPrefs(prefs) }
+                    ))
+
+                    Toggle("跳过无声部分", isOn: Binding(
+                        get: { prefs.skipSilence },
+                        set: { prefs.skipSilence = $0; LocalStore.savePlayPrefs(prefs) }
+                    ))
+                }
+
+                Section("缓存") {
+                    LabeledContent("已用空间", value: AudioCache.humanSize(AudioCache.totalBytes()))
+                    Button("清除所有音频缓存", role: .destructive) {
+                        AudioCache.clearAll()
+                        cacheRefresh.toggle()
                     }
                 }
 

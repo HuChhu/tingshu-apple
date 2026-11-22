@@ -87,12 +87,12 @@ enum SharedBridge {
 
     // MARK: - 错误族 → 壳侧文案（is 链匹配；RateLimited = 不硬冲语义）
     static func message(for error: SourceErrors) -> String {
-        if error is SourceErrorsNotFound { return "没有找到该资源" }
-        if error is SourceErrorsParseFailed { return "解析失败" }
-        if error is SourceErrorsRateLimited { return "触发限流，稍后再试，不硬冲" }
-        if let e = error as? SourceErrorsNetwork { return "网络异常：" + e.reason }  // v1.1: cause→reason
-        if error is SourceErrorsAuth { return "登录态失效，请重新登录" }
-        if error is SourceErrorsUpstream { return "上游服务异常" }
+        if error is SourceErrors.NotFound { return "没有找到该资源" }
+        if error is SourceErrors.ParseFailed { return "解析失败" }
+        if error is SourceErrors.RateLimited { return "触发限流，稍后再试，不硬冲" }
+        if let e = error as? SourceErrors.Network { return "网络异常：" + e.reason }  // v1.1: cause→reason
+        if error is SourceErrors.Auth { return "登录态失效，请重新登录" }
+        if error is SourceErrors.Upstream { return "上游服务异常" }
         return "未知错误"
     }
 }

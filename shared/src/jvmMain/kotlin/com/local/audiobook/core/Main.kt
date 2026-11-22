@@ -41,6 +41,29 @@ suspend fun main(args: Array<String>) {
         cookieProvider = cookieProvider,
     )
     when (mode) {
+        "kuwo" -> runCatching {
+            val kw = com.local.audiobook.core.engine.KuwoSource(
+                fetcher = KtorJsonFetcher(client),
+                throttle = RequestThrottle(minIntervalMs = 1_000, clock = now),
+            )
+            val op = args.getOrNull(1) ?: "search"
+            when (op) {
+                "search" -> {
+                    val r = kw.search(args.getOrElse(2) { "三体" }, 1)
+                    out.println("KUWO_SEARCH books=" + r.books.size)
+                    for (b in r.books.take(5)) out.println("  [" + b.albumId + "] " + b.title + " | " + b.author + " | 集数:" + b.trackCount)
+                }
+                "detail" -> {
+                    val d = kw.bookDetail(args.getOrElse(2) { "98108239" }, true, false)
+                    out.println("KUWO_DETAIL title=" + d.book.title + " author=" + d.book.author + " eps=" + d.episodes.size)
+                    for (e in d.episodes.take(3)) out.println("  #" + e.index + " " + e.title + " (" + e.durationMs/1000 + "s) rid=" + e.trackId)
+                }
+                "play" -> {
+                    val a = kw.audioExtractor().extract(args.getOrElse(2) { "" })
+                    out.println("KUWO_PLAY url=" + a.url)
+                }
+            }
+        }.onFailure { out.println("ERROR " + it::class.simpleName + " " + it.message) }
         "open" -> runCatching {
             // 免登录源测试：open search <kw> | open detail <albumId>
             val op = args.getOrNull(1) ?: "search"

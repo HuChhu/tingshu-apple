@@ -11,6 +11,9 @@ import Foundation
 ///   https://www.ximalaya.com/login 200，PC 版登录页
 enum LoginEndpoints {
     static let candidates: [URL] = [
+        // 真实登录页（实测：m.ximalaya.com/login 会 302 到这里）
+        // 直接加载可省一跳，且这是唯一渲染出完整表单的地址
+        URL(string: "https://passport.ximalaya.com/page/m/login")!,
         URL(string: "https://m.ximalaya.com/login")!,
         URL(string: "https://www.ximalaya.com/login")!,
     ]

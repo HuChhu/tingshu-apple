@@ -15,10 +15,22 @@ struct WebViewContainer: View {
 
     var body: some View {
         NavigationStack {
-            WebViewRepresentable(urls: urls, onLoggedIn: onLoggedIn)
-                .ignoresSafeArea(edges: .bottom)
-                .navigationTitle("登录喜马拉雅")
-                .navigationBarTitleDisplayMode(.inline)
+            VStack(spacing: 0) {
+                // 极验滑块很小，给一句操作提示
+                Text("登录时如果弹出拼图块，按住滑块拖到最右即可。滑块小的话可以双指放大页面。")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.secondary.opacity(0.08))
+
+                WebViewRepresentable(urls: urls, onLoggedIn: onLoggedIn)
+                    .ignoresSafeArea(edges: .bottom)
+            }
+            .navigationTitle("登录喜马拉雅")
+            .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("取消") { onCancel() }
@@ -38,10 +50,32 @@ struct WebViewRepresentable: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
+
+        // 极验滑块（GeeTest）需要这些能力，缺一个滑不动：
+        //   ① inline media：验证码里可能有内联媒体
+        //   ② JS 自动开窗：验证码偶尔用 window.open
+        //   ③ 不限制 DOM 存储
+        config.allowsInlineMediaPlayback = true
+        config.preferences.javaScriptCanOpenWindowsAutomatically = true
+
+        // 关闭「智能防跟踪」（ITP）。ITP 会拦第三方 cookie，
+        // 极验的 challenge 走 award.xmcdn.com，可能因此拿不到 session。
+        config.preferences.isFraudulentWebsiteWarningEnabled = false
+
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = context.coordinator
         view.allowsBackForwardNavigationGestures = true
-        // 移动版 UA：m.ximalaya.com/login 在移动 UA 下才会渲染出完整登录表单
+
+        // 滑块验证依赖手势与缩放，这两项必须放开
+        view.scrollView.isScrollEnabled = true
+        view.scrollView.bounces = true
+        // 长按不要弹菜单，避免和滑块长按冲突
+        view.allowsLinkPreview = false
+        // 允许双指缩放：极验滑块只有 100×20pt，放大了才好拖
+        view.scrollView.minimumZoomScale = 1.0
+        view.scrollView.maximumZoomScale = 3.0
+
+        // 真实移动 Safari UA：极验会按 UA 判断环境，写死假 UA 容易被判风险
         view.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
         context.coordinator.attach(webView: view)

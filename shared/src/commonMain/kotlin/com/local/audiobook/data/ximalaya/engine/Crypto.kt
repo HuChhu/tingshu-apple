@@ -25,6 +25,59 @@ object Crypto {
     fun hmacSha1Hex(input: String, key: String): String =
         hmacSha1(input.encodeToByteArray(), key.encodeToByteArray()).toHex()
 
+    /**
+     * HMAC-MD5，输出小写 hex。
+     *
+     * 【用途】蜻蜓 FM 的音频地址签名（反编译 QingTingFM$getAudioUrlExtractor$1 得到）
+     *
+     * 【RFC 2104 标准结构】
+     *   blockSize = 64（MD5 的块大小）
+     *   K' = key 长度 > 64 ? md5(key) : key，右侧补 0 到 64 字节
+     *   ipad = 0x36 重复 64 次
+     *   opad = 0x5C 重复 64 次
+     *   HMAC = md5( (K' xor opad) || md5( (K' xor ipad) || message ) )
+     */
+    fun hmacMd5Hex(input: String, key: String): String =
+        hmacMd5(input.encodeToByteArray(), key.encodeToByteArray()).toHexLE()
+
+    /** HMAC-MD5 内部实现，结构完全对照上面已验证的 hmacSha1 */
+    private fun hmacMd5(message: ByteArray, key: ByteArray): IntArray {
+        var k = key
+        if (k.size > 64) k = md5WordsToBytes(md5Digest(k))
+        val block = ByteArray(64)
+        k.copyInto(block)
+        val inner = ByteArray(64 + message.size)
+        val outer = ByteArray(64 + 16)
+        for (i in 0 until 64) {
+            inner[i] = (block[i].toInt() xor 0x36).toByte()
+            outer[i] = (block[i].toInt() xor 0x5c).toByte()
+        }
+        message.copyInto(inner, 64)
+        md5WordsToBytes(md5Digest(inner)).copyInto(outer, 64)
+        return md5Digest(outer)
+    }
+
+    /** md5 的字节版入口（现有 md5 接收字节返回 IntArray，这里起别名便于阅读） */
+    private fun md5Digest(message: ByteArray): IntArray = md5(message)
+
+    /**
+     * IntArray → ByteArray，**小端**逐字展开。
+     * 依据：md5Hex() 用 toHexLE()（小端）才能和 Python 对齐，
+     * 说明 md5() 内部字是小端序。hmacSha1 用的 wordsToBytes 是大端，
+     * 那是 sha1 的字序差异，不能直接复用给 md5。
+     */
+    private fun md5WordsToBytes(words: IntArray): ByteArray {
+        val out = ByteArray(words.size * 4)
+        for (i in words.indices) {
+            val v = words[i]
+            out[i * 4] = (v and 0xFF).toByte()
+            out[i * 4 + 1] = ((v ushr 8) and 0xFF).toByte()
+            out[i * 4 + 2] = ((v ushr 16) and 0xFF).toByte()
+            out[i * 4 + 3] = ((v ushr 24) and 0xFF).toByte()
+        }
+        return out
+    }
+
     // ---------- MD5（RFC 1321） ----------
 
     private val MD5_K = intArrayOf(

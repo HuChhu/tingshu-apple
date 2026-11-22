@@ -41,6 +41,23 @@ suspend fun main(args: Array<String>) {
         cookieProvider = cookieProvider,
     )
     when (mode) {
+        "netease" -> runCatching {
+            val n = com.local.audiobook.core.engine.NeteaseSource(
+                fetcher = KtorJsonFetcher(client),
+                throttle = RequestThrottle(minIntervalMs = 1_000, clock = now),
+            )
+            when (args.getOrNull(1) ?: "search") {
+                "search" -> {
+                    val r = n.search(args.getOrElse(2) { "三体" }, 1)
+                    out.println("NE_SEARCH books=" + r.books.size)
+                    for (x in r.books.take(5)) out.println("  " + x.title.take(40) + " | " + x.author)
+                }
+                "play" -> {
+                    val a = n.audioExtractor().extract(args.getOrElse(2) { "" })
+                    out.println("NE_PLAY url=" + a.url)
+                }
+            }
+        }.onFailure { out.println("ERROR " + it::class.simpleName + " " + it.message) }
         "bili" -> runCatching {
             val b = com.local.audiobook.core.engine.BilibiliSource(
                 fetcher = KtorJsonFetcher(client),

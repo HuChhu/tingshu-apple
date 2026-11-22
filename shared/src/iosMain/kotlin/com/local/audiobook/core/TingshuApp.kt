@@ -1,7 +1,9 @@
 package com.local.audiobook.core
 
+import com.local.audiobook.core.engine.KuwoSource
 import com.local.audiobook.core.engine.SearchEngine
 import com.local.audiobook.core.engine.WebSearchBudget
+import com.local.audiobook.core.engine.XimalayaOpenSource
 import com.local.audiobook.core.net.IosJsonFetcher
 import com.local.audiobook.data.ximalaya.RequestThrottle
 import io.ktor.client.HttpClient
@@ -48,6 +50,52 @@ class TingshuApp(
     /** 取播放地址（级1→级3 提取链）。失败抛 SourceErrors。 */
     suspend fun extract(url: String, timeoutMs: Int = 15_000): ExtractedAudio =
         engine.audioExtractor().extract(url, timeoutMs)
+
+    // ---------- 免登录源（不需要登录，直接可用） ----------
+
+    private val xmOpen: XimalayaOpenSource = XimalayaOpenSource(
+        fetcher = IosJsonFetcher(client),
+        throttle = RequestThrottle(minIntervalMs = 1_000L, clock = { PlatformClock.nowMs() }),
+    )
+
+    private val kuwo: KuwoSource = KuwoSource(
+        fetcher = IosJsonFetcher(client),
+        throttle = RequestThrottle(minIntervalMs = 1_000L, clock = { PlatformClock.nowMs() }),
+    )
+
+    /** 可用源列表（名字 + id），UI 用来做源选择 */
+    fun availableSources(): List<Pair<String, String>> = listOf(
+        "喜马拉雅（免登录）" to "ximalaya-open",
+        "酷我听书" to "kuwo",
+        "喜马拉雅（登录版）" to "ximalaya",
+    )
+
+    /** 免登录源搜索。sourceId 见 availableSources()。 */
+    suspend fun searchBySource(sourceId: String, keywords: String, page: Int): SearchResult = try {
+        when (sourceId) {
+            "kuwo" -> kuwo.search(keywords, page)
+            "ximalaya-open" -> xmOpen.search(keywords, page)
+            else -> engine.search(keywords, page)
+        }
+    } catch (e: SourceErrors) {
+        SearchResult(books = emptyList(), maxPage = 0, source = "error", page = page, hint = describe(e))
+    }
+
+    /** 免登录源详情。 */
+    suspend fun detailBySource(sourceId: String, bookUrl: String, loadEpisodes: Boolean = true): BookDetail =
+        when (sourceId) {
+            "kuwo" -> kuwo.bookDetail(bookUrl, loadEpisodes, false)
+            "ximalaya-open" -> xmOpen.bookDetail(bookUrl, loadEpisodes, false)
+            else -> engine.bookDetail(bookUrl, loadEpisodes, false)
+        }
+
+    /** 免登录源取播放地址。 */
+    suspend fun audioBySource(sourceId: String, url: String): ExtractedAudio =
+        when (sourceId) {
+            "kuwo" -> kuwo.audioExtractor().extract(url)
+            "ximalaya-open" -> xmOpen.audioExtractor().extract(url)
+            else -> engine.audioExtractor().extract(url)
+        }
 
     /** 解析专辑 ID（/album/{id}、?albumId=、纯数字 ≥4 位）。 */
     fun parseAlbumId(bookUrl: String): Long = engine.parseAlbumId(bookUrl) ?: 0L

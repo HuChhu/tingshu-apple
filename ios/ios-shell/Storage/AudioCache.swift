@@ -122,10 +122,10 @@ enum AudioCache {
     static func trimBook(bookUrl: String, keep: Int) {
         let d = dir(for: bookUrl)
         guard let files = try? FileManager.default.contentsOfDirectory(
-            at: d, includingPropertiesForKeys: [.modificationDateKey]) else { return }
+            at: d, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
         let sorted = files.sorted {
-            let a = (try? $0.resourceValues(forKeys: [.modificationDateKey]).modificationDate) ?? .distantPast
-            let b = (try? $1.resourceValues(forKeys: [.modificationDateKey]).modificationDate) ?? .distantPast
+            let a = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let b = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
             return a > b   // 新的在前
         }
         for old in sorted.dropFirst(keep) {
@@ -149,7 +149,7 @@ enum AudioCache {
         }
         files.sort { $0.1 < $1.1 }   // 最老的在前
 
-        var current = files.reduce(Int64(0)) { $0 + $2.2 }
+        var current = files.reduce(Int64(0)) { acc, item in acc + item.2 }
         for (url, _, size) in files {
             if current <= limit { break }
             try? FileManager.default.removeItem(at: url)

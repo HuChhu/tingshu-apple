@@ -115,6 +115,7 @@ class TingshuApp(
         is SourceErrors.RateLimited -> "触发限流，稍后再试，不硬冲"
         is SourceErrors.Network -> "网络异常：" + e.reason
         is SourceErrors.Auth -> "登录态失效，请重新登录"
+        is SourceErrors.Vip -> e.reason
         is SourceErrors.Upstream -> "上游服务异常（HTTP " + e.status + "）"
     }
 }

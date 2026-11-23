@@ -568,7 +568,13 @@ class TemplateTingSite(
         return when {
             h.isEmpty() -> base.trimEnd('/')
             h.startsWith("http://") || h.startsWith("https://") -> h
-            h.startsWith("//") -> "https:" + h
+            // P1-4：协议相对地址（//cdn.com/...）不能一律强制 https。
+            // 有的 CDN 只支持 http（如 aj006 的音频站），强转会 404。
+            // 按 base 的协议继承：base 是 http 就用 http，是 https 就用 https。
+            h.startsWith("//") -> {
+                val scheme = if (base.startsWith("http://")) "http:" else "https:"
+                scheme + h
+            }
             h.startsWith("?") -> base.trimEnd('/') + "/" + h
             h.startsWith("/") -> base.trimEnd('/') + h
             else -> base.trimEnd('/') + "/" + h

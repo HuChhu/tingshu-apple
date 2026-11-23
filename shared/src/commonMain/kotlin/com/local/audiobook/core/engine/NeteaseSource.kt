@@ -15,6 +15,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -149,7 +150,7 @@ class NeteaseSource(
     }
 
     private fun JsonElement.asObj(): JsonObject? = runCatching { jsonObject }.getOrNull()
-    private fun JsonElement.asStr(): String? = (this as? JsonPrimitive)?.content
+    private fun JsonElement.asStr(): String? = (this as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
 
     companion object {
         const val META = "https://api.qijieya.cn/meting/"

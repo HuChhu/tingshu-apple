@@ -19,10 +19,6 @@ import UIKit
 final class Player: NSObject, ObservableObject {
     var currentSourceId: String = "ximalaya-open"
 
-    /// 全屏播放页是否展开（迷你条点击 / 历史记录点击时置 true；
-    /// RootTabView 用 fullScreenCover 绑它，播放页自己关的时候写回 false）
-    var showFullScreen: Bool = false
-
     static let shared = Player()
 
     enum PlayerState: String {

@@ -169,7 +169,7 @@ final class Player: NSObject, ObservableObject {
     private var remoteHandlers: [MPRemoteCommand: (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus] = [:]
     
     @objc private func handleRemoteCommand(_ event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
-        guard let cmd = event.command else { return .commandFailed }
+        let cmd = event.command
         return remoteHandlers[cmd]?(event) ?? .commandFailed
     }
 

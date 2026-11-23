@@ -72,7 +72,6 @@ enum LocalStore {
             albumId = try c.decode(Int64.self, forKey: .albumId)
             addedAt = try c.decode(Date.self, forKey: .addedAt)
             sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
-            episodeUrl = try c.decodeIfPresent(String.self, forKey: .episodeUrl) ?? ""
         }
         init(bookUrl: String, title: String, author: String, coverUrl: String, albumId: Int64, addedAt: Date, sourceId: String) {
             self.bookUrl = bookUrl; self.title = title; self.author = author
@@ -134,6 +133,7 @@ enum LocalStore {
             episodeTitle = try c.decode(String.self, forKey: .episodeTitle)
             playedAt = try c.decode(Date.self, forKey: .playedAt)
             sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
+            episodeUrl = try c.decodeIfPresent(String.self, forKey: .episodeUrl) ?? ""
         }
         init(bookUrl: String, bookTitle: String, trackId: Int64, episodeTitle: String, playedAt: Date, sourceId: String, episodeUrl: String = "") {
             self.bookUrl = bookUrl; self.bookTitle = bookTitle

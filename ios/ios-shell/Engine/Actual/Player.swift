@@ -345,10 +345,23 @@ final class Player: NSObject, ObservableObject {
     private func startItem(url: URL, headers: [String: String], ep: SharedBridge.EpisodeRow) {
         requestingEpisode = false
         BackgroundSession.activateForPlayback()
+        
+        // 缓存优先：已缓存的集直接播本地文件（离线可用）
+        if let cached = cachedURL(for: url), FileManager.default.fileExists(atPath: cached.path) {
+            let item = AVPlayerItem(url: cached)
+            startItemWithLocalFile(item, ep: ep)
+            return
+        }
+        
         let opts: [String: Any] = headers.isEmpty ? [:] : ["AVURLAssetHTTPHeaderFieldsKey": headers]
         let prefs = LocalStore.loadPlayPrefs()
         let asset = AVURLAsset(url: url, options: opts)
         let item = AVPlayerItem(asset: asset)
+        
+        // 边播边缓存：起播后异步下载
+        if prefs.autoCache {
+            cacheInBackground(url: url, headers: headers)
+        }
         if prefs.skipSilence {
             // iOS 16.4+ 支持自动跳过静音段
             if #available(iOS 16.4, *) {

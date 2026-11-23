@@ -1,0 +1,229 @@
+import Foundation
+import AVFoundation
+import MediaPlayer
+import UIKit
+
+/// 播放器。契约四态 → PlayerState。
+/// 纪律：
+///   - AVQueuePlayer 预插下一章，防章节间隙被系统挂起
+///   - headers 由共享核心按 host 精确匹配过滤后原样注入（AVURLAssetHTTPHeaderFieldsKey），不加工
+///   - 播放进度每 5 秒落一次 LocalStore，退出/切后台也能续上
+/// 加固（播放链路异常位）：
+///   - item.status / AVPlayerItemFailedToPlayToEndTime / AVPlayerItemPlaybackStalled 三路监听，
+///     404、HTML 错误页、断网都落到 .error 并给真实原因，不再永久 loading
+///   - 每次换章先 detach 旧 item 的观察（KVO + 通知）、清 item 级 timeObserver，防重复注册
+///   - state 只走 apply() 单一入口，允许集合显式列出，卡死态可在 error 里点播放重试
+///   - 播放地址请求带代际号，快速连点两集时晚到的旧响应直接丢弃
+///   - 切章 / 暂停 / 停止 / 后台 / 前后台切换 / 即将退出，全部强制落一次进度
+@MainActor
+final class Player: NSObject, ObservableObject {
+    var currentSourceId: String = "ximalaya-open"
+
+    static let shared = Player()
+
+    enum PlayerState: String {
+        case playing = "播放中", paused = "已暂停", loading = "解析地址…",
+             error = "播放失败", stopped = "已停止"
+    }
+
+    @Published private(set) var state: PlayerState = .stopped
+    @Published private(set) var nowPlaying: String = ""
+    @Published private(set) var errorText: String?
+    @Published private(set) var position: Double = 0        // 0...1
+    @Published private(set) var elapsedText: String = "0:00"
+    @Published private(set) var durationText: String = "0:00"
+    /// 失败后可点的补救动作（有值 = 播放页显示「重试」按钮）
+    @Published private(set) var canRetry: Bool = false
+
+    private let queue = AVQueuePlayer()
+    /// AVQueuePlayer 没有 .duration；统一从 currentItem 取（换章时随 item 更新）
+    private var currentDuration: Double {
+        guard let d = queue.currentItem?.duration.seconds, d.isFinite, d > 0 else { return 0 }
+        return d
+    }
+    private var current: SharedBridge.EpisodeRow?
+    private var currentBook: SharedBridge.BookCard?
+
+    // ---------- 状态机 ----------
+    // 原实现里 state 有 14 处直接赋值，.error 之后只有重新点一集才能动，
+    // 播放页的播放键在 .error 时被 disabled —— 用户就卡死在死界面上。
+    // 现在只走 apply()：单一入口 + 显式允许集合，越界动作被拒绝而不是静默写脏。
+
+    private func apply(_ next: PlayerState) {
+        guard next != state else { return }
+        let allowed: [PlayerState: Set<PlayerState>] = [
+            .stopped: [.loading, .stopped],
+            .loading: [.playing, .paused, .error, .stopped],
+            .playing: [.paused, .loading, .error, .stopped],
+            .paused:  [.playing, .loading, .error, .stopped],
+            // 失败态只能被「重新播」「显式重试」「停止」带走，杜绝 loading 卡死
+            .error:   [.loading, .stopped, .error]
+        ]
+        guard (allowed[state] ?? []).contains(next) else {
+            #if DEBUG
+            debugPrint("[Player] 拒绝非法状态迁移 " + state.rawValue + " -> " + next.rawValue)
+            #endif
+            return
+        }
+        state = next
+        if next != .error { canRetry = false }
+        updateNowPlayingInfo()
+    }
+
+    /// 取播放地址失败 → 有集在手就允许重试
+    private func failAddress(_ msg: String) {
+        errorText = msg
+        canRetry = (current != nil)
+        apply(.error)
+    }
+
+    /// 播放链路失败 → 记原因、落进度、给重试
+    private func failPlayback(_ msg: String) {
+        saveProgress(force: true)
+        errorText = msg
+        canRetry = (current != nil)
+        apply(.error)
+        updateNowPlayingInfo()   // 锁屏上的比例要反映「停了」，不能还挂着 playing
+    }
+
+    /// 播放页「重试」按钮入口：地址过期/网络恢复后重新取地址起播
+    func retry() {
+        guard let ep = current else { return }
+        playEpisode(ep, book: currentBook, sourceId: currentSourceId)
+    }
+
+    // ---------- 锁屏/控制中心/耳机线控 ----------
+    // IPA 质检发现：全工程 0 处 MPRemoteCommandCenter，装上后锁屏无播放信息、
+    // 耳机线控失效。听书 App 这是体验硬伤（开车/运动场景全靠线控）。
+    // 闭包型 target 无法 removeTarget(nil)，object 换成 Player.shared 后，
+    // 后续 alloc 出来的实例不再二次挂载；当前远程命令响应一律先查 isLive 守卫。
+
+    private var remoteTargets: [(MPRemoteCommand, Any)] = []
+
+    private func installRemoteCommands() {
+        let cc = MPRemoteCommandCenter.shared()
+        let guardCmd: () -> Bool = { Player.shared.isLive }
+
+        addRemote(cc.playCommand, guard: guardCmd) { [weak self] _ in
+            self?.resume(); return .success
+        }
+        addRemote(cc.pauseCommand, guard: guardCmd) { [weak self] _ in
+            self?.pause(); return .success
+        }
+        addRemote(cc.togglePlayPauseCommand, guard: guardCmd) { [weak self] _ in
+            guard let self else { return .commandFailed }
+            if self.state == .playing { self.pause() } else { self.resume() }
+            return .success
+        }
+        cc.skipForwardCommand.preferredIntervals = [10]
+        cc.skipBackwardCommand.preferredIntervals = [10]
+        addRemote(cc.skipForwardCommand, guard: guardCmd) { [weak self] _ in
+            self?.skip(true); return .success
+        }
+        addRemote(cc.skipBackwardCommand, guard: guardCmd) { [weak self] _ in
+            self?.skip(false); return .success
+        }
+        addRemote(cc.changePlaybackPositionCommand, guard: guardCmd) { [weak self] ev in
+            guard let self, let e = ev as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            self.seek(toFraction: e.positionTime / max(self.currentDuration, 1))
+            return .success
+        }
+        // 失败态下锁屏也能重试（不用点亮屏幕回 App）
+        addRemote(cc.playCommand, guard: { Player.shared.state == .error }) { _ in
+            Player.shared.retry(); return .success
+        }
+    }
+
+    private func addRemote(
+        _ cmd: MPRemoteCommand,
+        guard liveGuard: @escaping () -> Bool,
+        handler: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus
+    ) {
+        let token = cmd.addTarget { ev in
+            guard liveGuard() else { return .commandFailed }
+            return handler(ev)
+        }
+        remoteTargets.append((cmd, token))
+    }
+
+    private func removeRemoteCommands() {
+        for (cmd, token) in remoteTargets { cmd.removeTarget(token) }
+        remoteTargets.removeAll()
+    }
+
+    private func updateNowPlayingInfo() {
+        var info: [String: Any] = [:]
+        info[MPMediaItemPropertyTitle] = current?.title ?? ""
+        info[MPMediaItemPropertyArtist] = currentBook?.title ?? ""
+        // 失败/停止时锁屏不能显示「正在播放」，否则系统会持续把 App 当活动播放器
+        let live = (state == .playing)
+        info[MPNowPlayingInfoPropertyPlaybackRate] = live ? 1.0 : 0.0
+        let dur = currentDuration
+        if dur.isFinite && dur > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = dur
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = queue.currentTime().seconds
+        }
+        if live, let u = currentBook?.coverUrl, let url = URL(string: u) {
+            info[MPMediaItemPropertyArtwork] = Self.makeArtwork(url)
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info.isEmpty ? nil : info
+    }
+
+    /// 封面异步取 + 进程内缓存：原实现在 MPMediaItemArtwork 闭包里同步
+    /// Data(contentsOf:) —— 锁屏每次布局都会在主线程上发起一次网络请求，
+    /// 弱网下直接触发 watchdog 掉帧；断网时每次再等一轮超时。
+    private static let artworkLock = NSLock()
+    private static var artworkCache: [String: UIImage] = [:]
+
+    private static func makeArtwork(_ url: URL) -> MPMediaItemArtwork {
+        let key = url.absoluteString
+        artworkLock.lock()
+        let cached = artworkCache[key]
+        artworkLock.unlock()
+        return MPMediaItemArtwork(boundsSize: CGSize(width: 400, height: 400)) { size in
+            if let img = cached { return img }
+            artworkLock.lock()
+            let hit = artworkCache[key]
+            artworkLock.unlock()
+            if let hit { return hit }
+            if let d = try? Data(contentsOf: url), let img = UIImage(data: d) {
+                artworkLock.lock(); artworkCache[key] = img; artworkLock.unlock()
+                return img
+            }
+            return UIImage()
+        }
+    }
+
+    private func clearNowPlaying() {
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    }
+    private var timeObserver: Any?
+    /// 绑在当前 item 上的 timeObserver（队列条数变化时系统会把实例 observer 摘掉）
+    private var itemObserver: Any?
+    private weak var observedItem: AVPlayerItem?
+    private var itemObservation: NSKeyValueObservation?
+    private var itemNotificationTokens: [NSObjectProtocol] = []
+    private var lastSavedMs: Int64 = 0
+    /// 播放地址请求代际：每点一集 +1，晚到的旧响应丢弃
+    private var requestGeneration: Int = 0
+    /// 正在后台挂着等地址的那一集（不落进度，避免把续播点写到错误位置）
+    private var requestingEpisode = false
+
+    /// 远程命令/后台回调只对活着的那个实例生效
+    private var isLive: Bool { Player.shared === self }
+
+    override init() {
+        super.init()
+        installTimeObserver()
+        installRemoteCommands()
+        wireLifecycle()
+    }
+
+    deinit {
+        // 强制落一次进度：用户把 Tab 关掉 / 系统回收场景下，最后 5 秒内的进度不丢
+        let lastMs = Int64(queue.currentTime().seconds * 1000)
+        Player.persistOnDrop(item: current, book: currentBook, positionMs: lastMs,
+                            fallbackDurationMs: current?.durationMs ?? 0)
+        NotificationCenter.default.removeObserver(self)
+        if let t = timeObserver { queue.removeTimeObserver(t) }
+    }

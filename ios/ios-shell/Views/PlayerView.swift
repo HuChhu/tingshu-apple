@@ -34,8 +34,20 @@ struct PlayerView: View {
             .padding(.horizontal)
 
             if let err = player.errorText {
-                Text(err).font(.footnote).foregroundStyle(.red)
-                    .multilineTextAlignment(.center).padding(.horizontal)
+                VStack(spacing: 10) {
+                    Text(err).font(.footnote).foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                    if player.canRetry {
+                        Button {
+                            player.retry()          // 地址过期 / 网络恢复后原地重试，不用回列表
+                        } label: {
+                            Label("重试这一集", systemImage: "arrow.clockwise")
+                                .font(.footnote)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding(.horizontal)
             }
 
             // 进度条（拖动时用本地值，松手才 seek）
@@ -74,10 +86,10 @@ struct PlayerView: View {
                 Button {
                     if player.state == .playing { player.pause() } else { player.resume() }
                 } label: {
-                    Image(systemName: player.state == .playing ? "pause.circle.fill" : "play.circle.fill")
+                    Image(systemName: mainIcon)
                         .font(.system(size: Layout.mainButton(width)))
                 }
-                .disabled(player.state == .stopped || player.state == .error || player.state == .loading)
+                .disabled(player.state == .stopped || player.state == .loading)
 
                 Button {
                     player.skip(true)
@@ -97,6 +109,16 @@ struct PlayerView: View {
     /// 从设置读取快进快退秒数（对应安卓设置页第 8 项）
     private var seekSecs: Int {
         LocalStore.loadPlayPrefs().seekSeconds
+    }
+
+    /// 主键图标：失败态显示刷新符（点了=重试），加载/缓冲中显示转圈的暂停符
+    private var mainIcon: String {
+        switch player.state {
+        case .playing: return "pause.circle.fill"
+        case .loading: return "hourglass.circle"
+        case .error: return "arrow.clockwise.circle.fill"
+        case .paused, .stopped: return "play.circle.fill"
+        }
     }
 
     private var icon: String {

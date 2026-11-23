@@ -114,13 +114,19 @@ struct WebViewRepresentable: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             Task { @MainActor in
-                await CookieStore.copyAllFromWebView(webView)
-
-                // 1) 已登录 → 直接回调
-                if !fired, CookieStore.isLoggedInNow {
-                    fired = true
-                    onLoggedIn()
-                    return
+                // P1-7：登录成功的 cookie 往往是 SPA 异步写入，
+                // didFinish 时还没落盘。这里轮询同步最多 10 次（约 5 秒），
+                // 每次同步后检查登录态，一旦成功立刻回调。
+                for attempt in 0..<10 {
+                    await CookieStore.copyAllFromWebView(webView)
+                    if !fired, CookieStore.isLoggedInNow {
+                        fired = true
+                        onLoggedIn()
+                        return
+                    }
+                    if attempt < 9 {
+                        try? await Task.sleep(nanoseconds: 500_000_000)
+                    }
                 }
 
                 // 2) 页面无效（tengine 欢迎页 / 404）→ 换下一个地址

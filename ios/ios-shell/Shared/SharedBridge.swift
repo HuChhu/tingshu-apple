@@ -306,4 +306,24 @@ enum SharedBridge {
         registry.categories(sourceId: sourceId).map { (String(describing: $0.first ?? ""), String(describing: $0.second ?? "")) }
     }
 
+
+    // ==================== WebView 嗅探（JS 渲染站兜底） ====================
+
+    /// 引擎拿不到直链时的最后一级：用 WKWebView 打开播放页，
+    /// 五路 hook 抓真实媒体 URL（vbus / ting15 这类 JS 渲染站靠它）。
+    /// 失败返回 nil，不猜地址。
+    static func sniffAudio(pageUrl: String, timeoutMs: Int = 20_000) async -> String? {
+        do {
+            return try await WebViewSniffer.shared.sniff(url: pageUrl, timeoutMs: timeoutMs)
+        } catch {
+            return nil
+        }
+    }
+
+
+    /// 构造一个只有 URL 的 ExtractedAudio（嗅探兜底用）
+    static func makeAudio(url: String) -> ExtractedAudio? {
+        ExtractedAudio(url: url, headers: [:], expiresInSeconds: 0)
+    }
+
 }

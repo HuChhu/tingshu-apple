@@ -29,6 +29,7 @@ enum SharedBridge {
         let trackCount: Int64       // 总集数（书架角标）
         let playCount: Int64        // 播放量（「2887万播放」）
         let isFinished: Bool?       // nil = 上游未给，UI 不渲染
+        var intro: String = ""      // 专辑简介（详情页展示）
     }
 
     static func card(from b: Book) -> BookCard {
@@ -40,7 +41,8 @@ enum SharedBridge {
             albumId: b.albumId,
             trackCount: b.trackCount,
             playCount: b.playCount,
-            isFinished: (b.isFinished as NSNumber?)?.boolValue
+            isFinished: (b.isFinished as NSNumber?)?.boolValue,
+            intro: b.intro
         )
     }
 
@@ -255,12 +257,12 @@ enum SharedBridge {
     static func injectCookie() {
         let cookies = CookieStore.ximalayaCookies()
         guard !cookies.isEmpty else {
-            SourceRegistryFactory().setCookie(nil)
+            SourceRegistryFactory().setCookie(cookie: nil)
             return
         }
         // 拼成 "k=v; k2=v2" 形式
         let header = cookies.map { $0.name + "=" + $0.value }.joined(separator: "; ")
-        SourceRegistryFactory().setCookie(header)
+        SourceRegistryFactory().setCookie(cookie: header)
     }
 
     /// 供设置页显示：引擎当前拿到的 Cookie 长度（0 = 没注入）

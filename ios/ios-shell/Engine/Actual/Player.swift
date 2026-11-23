@@ -281,11 +281,26 @@ final class Player: NSObject, ObservableObject {
         let src = sourceId
         let url = ep.url
         Task { @MainActor in
-            var audio = await SharedBridge.audio(sourceId: src, url: url)
-            
-            // P0-02：引擎拿不到 → WebView 嗅探兜底（JS 渲染站）
-            if audio == nil, url.hasPrefix("http") {
-                if let sniffed = await SharedBridge.sniffAudio(pageUrl: url) {
+            // 集 url 可能是网页详情页（免登录专辑接口不给 playUrl 时）
+            // 先用 trackId 换成 /sound/{id}，再让引擎按 track 解析
+            var input = url
+            if SharedBridge.looksLikeWebPage(input), ep.trackId > 0 {
+                input = "https://www.ximalaya.com/sound/\(ep.trackId)"
+            }
+            var audio = await SharedBridge.audio(sourceId: src, url: input)
+
+            // 引擎拿不到：三种兜底依次试，任何一条成功就能播
+            // ① 登录版引擎按 trackId 直取（Cookie 已注入时通常最快）
+            if audio == nil, ep.trackId > 0 {
+                audio = await SharedBridge.extract(url: String(ep.trackId))
+            }
+            // ② 换免登录源再试一次（登录版被风控时这条常能过）
+            if audio == nil, src != "ximalaya-open" {
+                audio = await SharedBridge.audio(sourceId: "ximalaya-open", url: input)
+            }
+            // ③ WebView 嗅探（前端渲染的站、直链藏在 JS 里的站）
+            if audio == nil, input.hasPrefix("http") {
+                if let sniffed = await SharedBridge.sniffAudio(pageUrl: input) {
                     audio = SharedBridge.makeAudio(url: sniffed)
                 }
             }

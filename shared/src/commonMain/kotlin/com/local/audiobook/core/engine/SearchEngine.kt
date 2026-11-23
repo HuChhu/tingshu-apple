@@ -59,17 +59,19 @@ class SearchEngine(
 
     // ---------- 动作一：search（M1 已验收，行为不变） ----------
     override suspend fun search(keywords: String, page: Int): SearchResult {
-        val mobile = throttle.run {
-            fetcher.get(SearchRoutes.mobileSearch(keywords, page, 20), headersOf(SearchRoutes.MOBILE_UA, "https://m.ximalaya.com/"))
+        // 【实机修复 2026-11-24】第一路原来是 mobile.ximalaya.com 的
+        // mobile-search-search-words-mobile：实测该端点已废，稳定返回 HTML 小站页
+        // （"Search 的小站"），每次搜索都白跑一次还被算进限速。
+        // 直接换成 search.ximalaya.com/front/v1 —— 同一个搜索核心，
+        // 刚实测 200 + 38KB JSON，风控（riskLevel=5）只拦网页 revision 接口，不拦这个。
+        val front = throttle.run {
+            fetcher.get(OpenRoutes.search(keywords, page), OpenRoutes.desktopHeaders())
         }
-        if (mobile is FetchOutcome.Ok) {
-            val json = parse(mobile.text)
-            if (json != null) {
-                val (status, _) = ErrorClassifier.classifyJson((mobile as FetchOutcome.Ok).httpStatus, json)
-                if (status == "ok") {
-                    val books = AlbumExtractor.fromMobile(json, sourceId)
-                    if (books.isNotEmpty()) return SearchResult(books, inferMaxPage(books.size, page), "mobile", page)
-                }
+        if (front is FetchOutcome.Ok) {
+            val fj = parse(front.text)
+            val books = AlbumExtractor.fromSearchFront(fj, sourceId)
+            if (books.isNotEmpty()) {
+                return SearchResult(books, inferMaxPage(books.size, page), "front", page)
             }
         }
 

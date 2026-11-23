@@ -272,8 +272,12 @@ struct ShelfView: View {
         }
 
         // 两条路都跑，按 albumId 去重合并（原来「浏览器失败就整体放弃」，风控时整页空白）
-        let merged = await SharedBridge.searchBoth(keyword: kw, page: 1)
+        var merged = await SharedBridge.searchBoth(keyword: kw, page: 1)
         guard gen == searchGeneration else { return }   // 旧结果直接丢弃
+        if merged.isEmpty {
+            merged = await searchOpenSource(kw)
+            guard gen == searchGeneration else { return }
+        }
         if merged.isEmpty {
             let why = SharedBridge.lastWebSearchError
             hint = why ?? "没搜到结果。换个关键词，或去设置页登录喜马拉雅后再试"
@@ -281,6 +285,15 @@ struct ShelfView: View {
         }
         cards = merged
         hint = nil
+    }
+
+    /// 喜马拉雅登录版两路都被风控时，免登录源走的是 search.ximalaya.com ——
+    /// 实测这个端点不受 riskLevel=5 影响，所以它是真正的兜底。
+    private func searchOpenSource(_ kw: String) async -> [SharedBridge.BookCard] {
+        guard let r = await SharedBridge.search(sourceId: "ximalaya-open", keywords: kw, page: 1) else {
+            return []
+        }
+        return SharedBridge.cards(from: r)
     }
 }
 
@@ -294,7 +307,11 @@ struct AlbumView: View {
     @State private var loading = true
     @State private var errorText: String?
     @State private var favorited = false
+    /// 正在/上次播放的是列表里第几行（-1 = 没有）。
+    /// 原来用 trackId 判：源没给 trackId 时每集都是 0，于是整列变成「已播放」全红 —— 图一的 bug。
+    @State private var playingRow: Int = -1
     @State private var lastPlayedTrackId: Int64 = -1
+    @State private var lastPlayedRow: Int = -1
     /// 占位卡解析后的真实卡（P0-4）
     @State private var resolvedCard: SharedBridge.BookCard?
     /// 详情返回的专辑元信息（封面大图/简介/集数/播放量）
@@ -368,12 +385,14 @@ struct AlbumView: View {
                         if episodes.isEmpty {
                             Text("该专辑暂无曲目").font(.footnote).foregroundStyle(.secondary)
                         } else {
-                            ForEach(episodes, id: \.url) { ep in
+                            ForEach(Array(episodes.enumerated()), id: \.element.url) { idx, ep in
                                 Button {
+                                    playingRow = idx
+                                    lastPlayedRow = idx
                                     lastPlayedTrackId = ep.trackId
                                     Player.shared.playEpisode(ep, book: shown, sourceId: sourceId, episodes: episodes)
                                 } label: {
-                                    episodeRow(ep)
+                                    episodeRow(ep, row: idx)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -492,16 +511,23 @@ struct AlbumView: View {
         }
     }
 
-    private func episodeRow(_ ep: SharedBridge.EpisodeRow) -> some View {
-        HStack(spacing: 10) {
+    private func episodeRow(_ ep: SharedBridge.EpisodeRow, row: Int) -> some View {
+        // 只有一行能被标记：优先「正在播的这一行」，其次「上次播放的那一行」
+        let isCurrent = playingRow == row
+        let isLast = !isCurrent && lastPlayedRow == row
+        return HStack(spacing: 10) {
             Text("\(ep.index)")
                 .font(.caption).foregroundStyle(.secondary)
                 .frame(width: 30, alignment: .trailing)
             VStack(alignment: .leading, spacing: 2) {
                 Text(ep.title)
                     .lineLimit(2)
-                    .foregroundStyle(lastPlayedTrackId == ep.trackId ? Color.accentColor : Color.primary)
-                if lastPlayedTrackId == ep.trackId {
+                    .foregroundStyle(isCurrent || isLast ? Color.accentColor : Color.primary)
+                if isCurrent {
+                    Text("播放中")
+                        .font(.caption2)
+                        .foregroundStyle(Color.accentColor)
+                } else if isLast {
                     Text("上次播放到")
                         .font(.caption2)
                         .foregroundStyle(Color.accentColor)
@@ -527,9 +553,7 @@ struct AlbumView: View {
             errorText = nil
         }
         defer { loading = false }
-        if let saved = LocalStore.progress(for: card.bookUrl) {
-            lastPlayedTrackId = saved.trackId
-        }
+        let saved = LocalStore.progress(for: card.bookUrl)
         guard let d = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl) else {
             let why = SharedBridge.lastDetailError ?? ""
             errorText = why.isEmpty ? "专辑加载失败（该源可能已下架或需要登录）" : why
@@ -542,6 +566,11 @@ struct AlbumView: View {
         detail = SharedBridge.card(from: d.book)
         episodes = SharedBridge.rows(from: d)
         if episodes.isEmpty { errorText = "该专辑暂无曲目" }
+        // 进度只存了 trackId，按它在列表里定位行号；trackId<=0 一律不标
+        if let saved = saved, saved.trackId > 0 {
+            lastPlayedTrackId = saved.trackId
+            lastPlayedRow = episodes.firstIndex(where: { $0.trackId == saved.trackId }) ?? -1
+        }
     }
 
     private func dur(_ ms: Int64) -> String {

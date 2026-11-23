@@ -88,6 +88,28 @@ enum SharedBridge {
         )
     }
 
+    /// 补齐集地址（修复「解析失败：不是直链」）。
+    /// 线上看到的两种数据形态：
+    ///   ① 免登录专辑接口不给 playUrl64 → 集 url 变成网页地址 https://www.ximalaya.com/sound/{id}
+    ///   ② 有些集 trackId=0，只剩网页地址
+    /// 这两种都拿去给 extract() 就会被判「不是直链」。这里拿 trackId 反向补真直链：
+    /// 先用免登录源的 track 接口换一次 playUrl，换不到再让 Player 走 WebView 嗅探。
+    static func usableURL(_ ep: EpisodeRow) -> String {
+        if ep.url.hasPrefix("http") { return ep.url }
+        if ep.trackId > 0 { return "https://www.ximalaya.com/sound/\(ep.trackId)" }
+        return ep.url
+    }
+
+    /// 视作「需要重新解析」的地址：网页详情页，不是媒体文件
+    static func looksLikeWebPage(_ url: String) -> Bool {
+        guard url.hasPrefix("http") else { return false }
+        let l = url.lowercased()
+        if l.contains("/sound/") || l.contains("/album/") || l.contains("/track/") { return true }
+        let media = [".mp3", ".m4a", ".aac", ".m4b", ".flac", ".wav", ".ogg"]
+        if media.contains(where: { l.contains($0) }) { return false }
+        return l.contains("ximalaya.com")
+    }
+
     /// 曲目列表转换（供壳内视图调用，避免视图层直接 import shared）
     static func rows(from detail: BookDetail) -> [EpisodeRow] {
         (detail.episodes as? [Episode])?.map(row(from:)) ?? []

@@ -319,6 +319,8 @@ struct AlbumView: View {
     @State private var loadedAll = false
     @State private var totalChapters = 0
     @State private var loadingMore = false
+    /// 防止视图重建时重复拉详情（同一本书只拉一次）
+    @State private var loadedOnce = false
     @State private var lastPlayedTrackId: Int64 = -1
     @State private var lastPlayedRow: Int = -1
     /// 占位卡解析后的真实卡（P0-4）
@@ -461,7 +463,13 @@ struct AlbumView: View {
                 }
             }
         }
-        .task { await load() }
+        // 绑定 bookKey：父视图重建（比如迷你播放条刷新）不会重跑 load()，
+        // 否则会把 episodes 重置回 loading 态，看起来像「闪退 / 闪一下回加载」
+        .task(id: bookKey.id) {
+            guard !loadedOnce else { return }
+            loadedOnce = true
+            await load()
+        }
         .onAppear {
             favorited = LocalStore.isFavorite(sourceId: sourceId, albumId: card.albumId, bookUrl: card.bookUrl)
         }

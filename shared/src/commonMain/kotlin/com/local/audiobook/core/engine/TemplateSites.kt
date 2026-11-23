@@ -78,8 +78,10 @@ object TemplateSites {
             name = "AiSongLi",
             base = "https://www.aisongli.com",
             bookHrefPattern = "/tingshu/(\\d+)\\.html",
+            // 实测 2026-11-24：/ai/1.html 只剩 12 本，首页有 109 本
             cats = listOf(
-                "首页" to "https://www.aisongli.com/ai/1.html",
+                "首页" to "https://www.aisongli.com/",
+                "分类" to "https://www.aisongli.com/ai/1.html",
             ),
         ),
         SiteConfig(
@@ -328,10 +330,9 @@ object TemplateSites {
             name = "YiTingShu",
             base = "https://www.yitingshu.com",
             bookHrefPattern = "/tingshu/(\\d+)\\.html",
+            // 实测 2026-11-24：/yi/N.html 分类页已经是空页（拿 0 本），首页反而有 120 本。
             cats = listOf(
-                "言情" to "https://www.yitingshu.com/yi/1.html", "武侠" to "https://www.yitingshu.com/yi/2.html",
-                "悬疑" to "https://www.yitingshu.com/yi/3.html", "历史" to "https://www.yitingshu.com/yi/4.html",
-                "军事" to "https://www.yitingshu.com/yi/5.html", "评书" to "https://www.yitingshu.com/yi/6.html",
+                "首页" to "https://www.yitingshu.com/",
             ),
         ),
         SiteConfig(

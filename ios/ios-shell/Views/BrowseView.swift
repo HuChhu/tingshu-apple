@@ -281,7 +281,7 @@ struct EpisodeListView: View {
     }
 
     private func play(_ ep: SharedBridge.EpisodeRow) {
-        Player.shared.playEpisode(ep, book: card, sourceId: sourceId)
+        Player.shared.playEpisode(ep, book: card, sourceId: sourceId, episodes: episodes)
     }
 
     private func fmt(_ ms: Int64) -> String {

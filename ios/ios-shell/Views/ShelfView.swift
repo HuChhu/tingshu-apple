@@ -283,7 +283,7 @@ struct AlbumView: View {
                 List(episodes, id: \.url) { ep in
                     Button {
                         lastPlayedTrackId = ep.trackId
-                        Player.shared.playEpisode(ep, book: card, sourceId: sourceId)
+                        Player.shared.playEpisode(ep, book: card, sourceId: sourceId, episodes: episodes)
                     } label: {
                         HStack {
                             Text("\(ep.index)").font(.caption).foregroundStyle(.secondary).frame(width: 32, alignment: .trailing)

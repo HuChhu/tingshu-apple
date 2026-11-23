@@ -214,6 +214,7 @@ final class Player: NSObject, ObservableObject {
     private var itemObserver: Any?
     private weak var observedItem: AVPlayerItem?
     private var itemObservation: NSKeyValueObservation?
+    private var endObserver: NSObjectProtocol?
     private var itemNotificationTokens: [NSObjectProtocol] = []
     private var lastSavedMs: Int64 = 0
     /// 播放地址请求代际：每点一集 +1，晚到的旧响应丢弃
@@ -260,7 +261,8 @@ final class Player: NSObject, ObservableObject {
     func playEpisode(
         _ ep: SharedBridge.EpisodeRow,
         book: SharedBridge.BookCard? = nil,
-        sourceId: String
+        sourceId: String,
+        episodes: [SharedBridge.EpisodeRow]? = nil
     ) {
         currentSourceId = sourceId
         beginRequest(ep, book: book)
@@ -269,7 +271,16 @@ final class Player: NSObject, ObservableObject {
         let src = sourceId
         let url = ep.url
         Task { @MainActor in
-            guard let audio = await SharedBridge.audio(sourceId: src, url: url) else {
+            var audio = await SharedBridge.audio(sourceId: src, url: url)
+            
+            // P0-02：引擎拿不到 → WebView 嗅探兜底（JS 渲染站）
+            if audio == nil, url.hasPrefix("http") {
+                if let sniffed = await SharedBridge.sniffAudio(pageUrl: url) {
+                    audio = SharedBridge.makeAudio(url: sniffed)
+                }
+            }
+            
+            guard let audio = audio else {
                 guard gen == self.requestGeneration else { return }
                 self.requestingEpisode = false
                 // P0-3：显示真实原因（登录失效/网络异常/触发限流），不再一律「取不到」
@@ -342,6 +353,71 @@ final class Player: NSObject, ObservableObject {
         updateNowPlayingInfo()
     }
 
+
+    // ---------- 音频缓存辅助（P0-00 补定义） ----------
+    
+    private func cachedURL(for url: URL) -> URL? {
+        guard let book = currentBook, let ep = current else { return nil }
+        return AudioCache.cachedFile(bookUrl: book.bookUrl, trackId: ep.trackId)
+    }
+    
+    private func cacheInBackground(url: URL, headers: [String: String]) {
+        guard let book = currentBook, let ep = current else { return }
+        let bookUrl = book.bookUrl
+        let trackId = ep.trackId
+        let ext = url.pathExtension.isEmpty ? "m4a" : url.pathExtension
+        
+        Task.detached(priority: .utility) {
+            var req = URLRequest(url: url)
+            for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+            do {
+                let (data, _) = try await URLSession.shared.data(for: req)
+                let dest = AudioCache.file(bookUrl: bookUrl, trackId: trackId, ext: ext)
+                try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: dest)
+                AudioCache.trimBook(bookUrl: bookUrl, keep: 3)
+            } catch {
+                // 缓存失败不影响播放
+            }
+        }
+    }
+    
+    /// 用本地文件起播（缓存命中时走这里）
+    private func startItemWithLocalFile(_ item: AVPlayerItem, ep: SharedBridge.EpisodeRow) {
+        let prefs = LocalStore.loadPlayPrefs()
+        if prefs.skipSilence, #available(iOS 16.4, *) {
+            item.audioTimePitchAlgorithm = .timeDomain
+        }
+        detachItem()
+        queue.removeAllItems()
+        installTimeObserver()
+        queue.insert(item, after: nil)
+        attachItem(item)
+        installItemTimeObserver()
+        queue.play()
+        errorText = nil
+        durationText = fmt(ep.durationMs)
+        apply(.playing)
+        
+        if let b = currentBook, let saved = LocalStore.progress(for: b.bookUrl),
+           saved.trackId == (current?.trackId ?? -1), saved.positionMs > 3000,
+           saved.durationMs > 0, Double(saved.positionMs) / Double(saved.durationMs) < 0.95 {
+            let rewind = Int64(LocalStore.loadPlayPrefs().resumeRewindSeconds) * 1000
+            let targetMs = max(0, saved.positionMs - rewind)
+            queue.seek(to: CMTime(value: targetMs, timescale: 1000))
+            position = min(1.0, Double(targetMs) / Double(max(saved.durationMs, 1)))
+            elapsedText = fmt(targetMs)
+        }
+        
+        LocalStore.pushRecent(.init(
+            bookUrl: currentBook?.bookUrl ?? "",
+            bookTitle: currentBook?.title ?? "",
+            trackId: ep.trackId,
+            episodeTitle: ep.title,
+            playedAt: Date(),
+            sourceId: currentSourceId))
+    }
+
     private func startItem(url: URL, headers: [String: String], ep: SharedBridge.EpisodeRow) {
         requestingEpisode = false
         BackgroundSession.activateForPlayback()
@@ -359,7 +435,7 @@ final class Player: NSObject, ObservableObject {
         let item = AVPlayerItem(asset: asset)
         
         // 边播边缓存：起播后异步下载
-        if prefs.autoCache {
+        if AudioCache.loadSettings().autoCacheNext {
             cacheInBackground(url: url, headers: headers)
         }
         if prefs.skipSilence {
@@ -404,12 +480,43 @@ final class Player: NSObject, ObservableObject {
 
     // MARK: - item 观察（异常路径的真身）
 
+
+    /// P0-01：自然播完 → 自动续下一集
+    private func handleItemDidEnd() {
+        guard let ep = current else { return }
+        // 末章处理：没有下一集就暂停
+        guard let next = nextEpisode(after: ep) else {
+            apply(.paused)
+            updateNowPlayingInfo()
+            return
+        }
+        // 有下一集：自动播放
+        playEpisode(next, book: currentBook, sourceId: currentSourceId)
+    }
+    
+    /// 找当前集的下一集（Player 需要持有当前书的章节列表）
+    private var currentEpisodes: [SharedBridge.EpisodeRow] = []
+    
+    private func nextEpisode(after ep: SharedBridge.EpisodeRow) -> SharedBridge.EpisodeRow? {
+        guard let idx = currentEpisodes.firstIndex(where: { $0.trackId == ep.trackId }) else { return nil }
+        let nextIdx = idx + 1
+        guard nextIdx < currentEpisodes.count else { return nil }
+        return currentEpisodes[nextIdx]
+    }
+
     private func attachItem(_ item: AVPlayerItem) {
         observedItem = item
         // ① status：AVPlayerItem 自己会上报 .failed（网络错误、解码失败、404 的 4xx 响应），
         //    但原实现没有任何观察者，failed 就永远没人看 → 界面停在 loading/playing
         itemObservation = item.observe(\.status, options: [.new, .initial]) { [weak self] it, _ in
             Task { @MainActor in self?.handleStatus(it) }
+        }
+        
+        // P0-01：自然播完监听（续章）
+        endObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.handleItemDidEnd() }
         }
         // ② 播到结尾失败：起了播但中途断了（CDN 403、重定向到 HTML 错误页、断网）
         //    此时 status 已是 readyToPlay，只有这条通知能拿到 var error

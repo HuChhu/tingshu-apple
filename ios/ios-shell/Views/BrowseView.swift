@@ -12,6 +12,8 @@ struct BrowseView: View {
     @State private var books: [SharedBridge.BookCard] = []
     @State private var loading = false
     @State private var hint: String = ""
+    /// 代际计数：每次加载 +1，回调对不上就丢弃（P0-1 弱网切源竞态）
+    @State private var requestGeneration = 0
 
     /// 与 SourcesView 的 defaultEnabled 保持同一份语义（P1-1）：
     /// 「空」= 默认启用集，不是全部。否则点「全关」后这里仍冒出 38 个源。
@@ -101,6 +103,8 @@ struct BrowseView: View {
     }
 
     private func reload() {
+        // 切源/首帧：先作废所有在途请求（P0-1），再判空源
+        requestGeneration += 1
         guard !selectedId.isEmpty else { return } // P1-2：首帧未选中不打空源
         categories = SharedBridge.categories(sourceId: selectedId).map { ($0.0, $0.1) }
         books = []

@@ -140,7 +140,11 @@ struct ShelfView: View {
 
     /// 浏览器抓到的卡（bookUrl 是 /album/{id}）既属于登录通道，也对免登录源有效；
     /// 统一交给登录通道，它自带匿名兜底，且 Cookie 注入后能取到会员集。
-    private func sourceOf(_ c: SharedBridge.BookCard) -> String { "ximalaya" }
+    /// 搜索结果的源：登录版优先（能取会员集），失败会由 SharedBridge.bookDetail 内部
+    /// 自动退回 ximalaya-open。注意不能传 "ximalaya-open"，那样永远拿不到会员内容。
+    private func sourceOf(_ c: SharedBridge.BookCard) -> String {
+        SharedBridge.loggedIn ? "ximalaya" : "ximalaya-open"
+    }
 
     private func row(_ c: SharedBridge.BookCard, width: CGFloat) -> some View {
         HStack(spacing: 12) {
@@ -400,7 +404,7 @@ struct AlbumView: View {
                         if episodes.isEmpty {
                             Text("该专辑暂无曲目").font(.footnote).foregroundStyle(.secondary)
                         } else {
-                            ForEach(Array(episodes.enumerated()), id: \.element.url) { idx, ep in
+                            ForEach(Array(episodes.enumerated()), id: \.element.url) { (idx: Int, ep: SharedBridge.EpisodeRow) in
                                 Button {
                                     playingRow = idx
                                     lastPlayedRow = idx
@@ -597,7 +601,9 @@ struct AlbumView: View {
         // 分页：只保留首页，其余页滚动到边界再拉（4820 集不再一次性进内存）
         let all = SharedBridge.rows(from: d)
         allEpisodes = all
-        pageSize = min(ChapterPageMeta(albumKey: bookKey.id).pageSize, max(20, all.count))
+        // 分页大小：不能超过总集数，也不能为 0（空专辑 prefix(0) 会让列表空指针）
+        let baseSize = ChapterPageMeta(albumKey: bookKey.id).pageSize
+        pageSize = all.isEmpty ? 20 : max(1, min(baseSize, all.count))
         totalChapters = Int(d.book.trackCount)
         pageCache = [1: Array(all.prefix(pageSize))]
         lastLoadedPage = 1
@@ -620,7 +626,8 @@ struct AlbumView: View {
         guard !all.isEmpty else { return }
         let next = lastLoadedPage + 1
         let start = (next - 1) * pageSize
-        guard start < all.count else { loadedAll = true; return }
+        // 防御：pageSize 异常（0/负数）或已到末尾，直接收工，绝不让下标越界
+        guard pageSize > 0, start >= 0, start < all.count else { loadedAll = true; return }
 
         loadingMore = true
         let slice = Array(all[start..<min(start + pageSize, all.count)])

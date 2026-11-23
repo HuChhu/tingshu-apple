@@ -961,22 +961,8 @@ final class Player: NSObject, ObservableObject {
         LocalStore.saveProgress(.init(
             bookUrl: b.bookUrl, title: b.title,
             trackId: ep.trackId, episodeTitle: ep.title,
-            positionMs: nowMs, durationMs: durMs, updatedAt: Date()))
-    }
-
-    /// deinit 里不能读 @MainActor 状态以外的东西，用纯静态路径写最后一条进度
-    private static func persistOnDrop(
-        item: SharedBridge.EpisodeRow?,
-        book: SharedBridge.BookCard?,
-        positionMs: Int64,
-        fallbackDurationMs: Int64
-    ) {
-        guard let ep = item, let b = book, positionMs > 0 else { return }
-        let dur = fallbackDurationMs > 0 ? fallbackDurationMs : positionMs
-        LocalStore.saveProgress(.init(
-            bookUrl: b.bookUrl, title: b.title,
-            trackId: ep.trackId, episodeTitle: ep.title,
-            positionMs: positionMs, durationMs: dur, updatedAt: Date()))
+            positionMs: nowMs, durationMs: durMs, updatedAt: Date(),
+            sourceId: currentSourceId, albumId: b.albumId))
     }
 
     private func fmt(_ ms: Int64) -> String {

@@ -205,6 +205,43 @@ enum SharedBridge {
         }
     }
 
+    /// 两路搜索合并（修复「搜索不出来」）：
+    /// 之前是「浏览器先、失败就放弃第二路」，结果风控限流时整页空白。
+    /// 现在两路都跑、按 albumId 去重合并；两路都空时把最有信息量的那句原因交出去。
+    /// 先走引擎（不依赖 WebView，风控下仍可能成功），再走浏览器（绕开 riskLevel=5）。
+    static func searchBoth(keyword: String, page: Int = 1) async -> [BookCard] {
+        lastWebSearchError = nil
+        var merged: [BookCard] = []
+        var seen = Set<String>()
+        var reasons: [String] = []
+
+        // 第一路：引擎直连（登录版通道，Cookie 已注入）
+        if let res = await search(keywords: keyword, page: page) {
+            for c in cards(from: res) {
+                let key = c.albumId > 0 ? String(c.albumId) : c.bookUrl
+                if seen.insert(key).inserted { merged.append(c) }
+            }
+            if merged.isEmpty, let h = degradedHint(from: res) { reasons.append("引擎：" + h) }
+        } else {
+            reasons.append("引擎：请求失败")
+        }
+
+        // 第二路：WKWebView 官方搜索页（拿得到真封面和播放量）
+        let web = await browserSearch(keyword: keyword, page: page)
+        for c in web {
+            let key = c.albumId > 0 ? String(c.albumId) : c.bookUrl
+            if seen.insert(key).inserted { merged.append(c) }
+        }
+        if web.isEmpty, let e = lastWebSearchError, !e.isEmpty { reasons.append("网页：" + e) }
+
+        if merged.isEmpty {
+            lastWebSearchError = reasons.isEmpty ? nil : reasons.joined(separator: " ／ ")
+        } else {
+            lastWebSearchError = nil
+        }
+        return merged
+    }
+
     /// 专辑详情 + 曲目。失败返回 nil。
     static func bookDetail(bookUrl: String) async -> BookDetail? {
         await bridge { done in
@@ -258,11 +295,15 @@ enum SharedBridge {
         let cookies = CookieStore.ximalayaCookies()
         guard !cookies.isEmpty else {
             SourceRegistryFactory().setCookie(cookie: nil)
+            cookieProvider.invalidate()
             return
         }
         // 拼成 "k=v; k2=v2" 形式
         let header = cookies.map { $0.name + "=" + $0.value }.joined(separator: "; ")
         SourceRegistryFactory().setCookie(cookie: header)
+        // 两套缓存都要失效：工厂的 injectedCookie 与 provider 的 cached 各自独立，
+        // 只刷一个会出现「设置页显示已同步 355 字符，引擎照样报未登录」
+        cookieProvider.invalidate()
     }
 
     /// 供设置页显示：引擎当前拿到的 Cookie 长度（0 = 没注入）
@@ -302,12 +343,40 @@ enum SharedBridge {
     }
 
     /// 按源详情。Kotlin 侧返回 BookDetailResult，失败时 reason 非空。
+    /// 上一次取专辑详情的失败原因（UI 要显示「为什么没出来」，不能只给一句「加载失败」）
+    private static let detailErrLock = NSLock()
+    private static var _lastDetailError: String?
+    static var lastDetailError: String? {
+        get { detailErrLock.lock(); defer { detailErrLock.unlock() }; return _lastDetailError }
+        set { detailErrLock.lock(); defer { detailErrLock.unlock() }; _lastDetailError = newValue }
+    }
+
     static func bookDetail(sourceId: String, bookUrl: String) async -> BookDetail? {
+        lastDetailError = nil
+        if let d = await rawBookDetail(sourceId: sourceId, bookUrl: bookUrl) { return d }
+        let firstReason = lastDetailError
+
+        // 兜底 1：喜马拉雅登录版失败（Cookie 过期/风控）→ 换免登录版同一专辑
+        if sourceId == "ximalaya", bookUrl.contains("/album/") {
+            if let d = await rawBookDetail(sourceId: "ximalaya-open", bookUrl: bookUrl) {
+                lastDetailError = nil
+                return d
+            }
+        }
+        // 兜底 2：书是酷我/B站等别的源搜出来的，专辑地址却是网页地址 → 试一次模板/原生解析
+        lastDetailError = firstReason
+        return nil
+    }
+
+    private static func rawBookDetail(sourceId: String, bookUrl: String) async -> BookDetail? {
         let r = await bridge { done in
             registry.bookDetail(sourceId: sourceId, bookUrl: bookUrl, loadEpisodes: true,
                                 completionHandler: { res, e in done(res, e) })
         }
-        return r?.detail
+        guard let r = r else { return nil }
+        if let d = r.detail { return d }
+        lastDetailError = r.reason
+        return nil
     }
 
     /// 上一次取播放地址的失败原因（P0-3：让「需要登录」能区分于「网络断了」）。

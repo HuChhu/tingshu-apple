@@ -13,6 +13,8 @@ struct ShelfView: View {
     @State private var mode: Mode = .search
     @State private var favorites: [LocalStore.Favorite] = []
     @State private var recent: [LocalStore.Recent] = []
+    /// 「用其他源搜」要切到浏览页（与 RootTabView 共用同一个 AppStorage key）
+    @AppStorage("selectedTab") private var selectedTab = 0
 
     enum Mode: String, CaseIterable { case search = "搜索", favorites = "收藏", recent = "最近" }
 
@@ -94,20 +96,51 @@ struct ShelfView: View {
         } else if cards.isEmpty {
             VStack(spacing: 16) {
                 placeholder(icon: "books.vertical",
-                            title: hint ?? "输入关键词开始搜索",
-                            detail: hint == nil ? "来自喜马拉雅官方接口，不硬冲风控" : "也可直接粘贴专辑分享链接；点底部「浏览」可按源找书")
+                            title: hint == nil ? "输入关键词开始搜索" : "这次没搜到",
+                            detail: hint == nil
+                                ? "引擎直连 + 网页两路同时搜，哪个通走哪个"
+                                : hint!)
+
+                if keyword.trimmingCharacters(in: .whitespacesAndNewlines).count >= 4 {
+                    HStack(spacing: 12) {
+                        Button {
+                            Task { await runSearch() }
+                        } label: {
+                            Label("再搜一次", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button {
+                            searchAllSources(keyword.trimmingCharacters(in: .whitespacesAndNewlines))
+                        } label: {
+                            Label("用其他源搜", systemImage: "square.stack.3d.up")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                    .font(.footnote)
+                }
             }
         } else {
             List {
                 ForEach(cards, id: \.bookUrl) { card in
                     NavigationLink {
-                        AlbumView(card: card)
+                        AlbumView(card: card, sourceId: sourceOf(card))
                     } label: { row(card, width: width) }
                 }
             }
             .listStyle(.plain)
         }
     }
+
+    /// 喜马拉雅两路都不通时，去「浏览」用 32 个模板站 + 免登录源接着搜同一本书
+    private func searchAllSources(_ kw: String) {
+        NotificationCenter.default.post(name: .browseSearchKeyword, object: kw)
+        selectedTab = 1
+    }
+
+    /// 浏览器抓到的卡（bookUrl 是 /album/{id}）既属于登录通道，也对免登录源有效；
+    /// 统一交给登录通道，它自带匿名兜底，且 Cookie 注入后能取到会员集。
+    private func sourceOf(_ c: SharedBridge.BookCard) -> String { "ximalaya" }
 
     private func row(_ c: SharedBridge.BookCard, width: CGFloat) -> some View {
         HStack(spacing: 12) {
@@ -238,27 +271,16 @@ struct ShelfView: View {
             }
         }
 
-        // 第一路：浏览器搜索
-        let web = await SharedBridge.browserSearch(keyword: kw, page: 1)
-        guard gen == searchGeneration else { return }   // 已被新搜索取代
-        if !web.isEmpty {
-            cards = web
-            return
-        }
-        let webError = SharedBridge.lastWebSearchError
-
-        // 第二路：引擎直连
-        guard let res = await SharedBridge.search(keywords: kw, page: 1) else {
-            guard gen == searchGeneration else { return }
-            errorText = webError ?? "搜索失败：浏览器与引擎两条路都没有结果"
-            return
-        }
+        // 两条路都跑，按 albumId 去重合并（原来「浏览器失败就整体放弃」，风控时整页空白）
+        let merged = await SharedBridge.searchBoth(keyword: kw, page: 1)
         guard gen == searchGeneration else { return }   // 旧结果直接丢弃
-        cards = SharedBridge.books(from: res).map(SharedBridge.card(from:))
-        let engineHint = SharedBridge.degradedHint(from: res)
-        if cards.isEmpty {
-            hint = engineHint ?? webError ?? "没搜到结果。换个关键词，或去设置页登录喜马拉雅后再试"
+        if merged.isEmpty {
+            let why = SharedBridge.lastWebSearchError
+            hint = why ?? "没搜到结果。换个关键词，或去设置页登录喜马拉雅后再试"
+            return
         }
+        cards = merged
+        hint = nil
     }
 }
 
@@ -285,13 +307,43 @@ struct AlbumView: View {
     var body: some View {
         Group {
             if loading {
-                ProgressView("加载中…")
+                // 别只给个转圈：先把已知的封面/书名/主播铺出来，章节区显示骨架，
+                // 这样「点进去立刻有东西」，详情回来再补简介和播放量
+                List {
+                    Section {
+                        albumHeader
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                    }
+                    Section {
+                        ForEach(0..<6, id: \.self) { _ in
+                            HStack(spacing: 10) {
+                                RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.12))
+                                    .frame(width: 26, height: 12)
+                                RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.12))
+                                    .frame(height: 12)
+                            }
+                            .redacted(reason: .placeholder)
+                        }
+                    } header: {
+                        HStack {
+                            Text("节目列表")
+                            Spacer()
+                            ProgressView().controlSize(.mini)
+                        }
+                    }
+                }
+                .listStyle(.plain)
             } else if let errorText {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 36)).foregroundStyle(.secondary)
                     Text(errorText).font(.footnote).multilineTextAlignment(.center)
                     if !SharedBridge.loggedIn {
-                        Text("提示：未登录时专辑接口返回 status=76，去设置页登录后再试")
+                        Text("未登录时喜马拉雅专辑接口返回 status=76，先去「设置」登录")
+                            .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }
+                    if sourceId != "ximalaya-open" && card.bookUrl.contains("/album/") {
+                        Text("已自动试过免登录通道，还是取不到。可以在海外/风控环境下换「免登录」源再点一次。")
                             .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
                     Button {
@@ -479,7 +531,8 @@ struct AlbumView: View {
             lastPlayedTrackId = saved.trackId
         }
         guard let d = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl) else {
-            errorText = "专辑加载失败（该源可能已下架或需要登录）"
+            let why = SharedBridge.lastDetailError ?? ""
+            errorText = why.isEmpty ? "专辑加载失败（该源可能已下架或需要登录）" : why
             return
         }
         // 回填真实元信息（封面/简介/集数/播放量都在 d.book 里）

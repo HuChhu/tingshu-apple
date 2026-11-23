@@ -11,6 +11,12 @@ struct SettingsView: View {
     /// 同时发通知让书架/专辑页的缓存角标跟着刷新（原来是写完没人读的死状态）
     @State private var cacheRefresh = 0
     @State private var cacheBytes: Int64 = AudioCache.totalBytes()
+    /// 引擎 Cookie 同步状态：0 = 未同步；>0 = 已同步字符数。
+    /// 之前直接读 SharedBridge.engineCookieLength 当视图值用 —— 它是普通计算属性，
+    /// 没有 @State 驱动，同步完界面永远停在旧值（要切页回来才刷新），
+    /// 用户看上去就是「点了重试没反应，过好久自己好了」。
+    @State private var engineCookieLen: Int = 0
+    @State private var syncing = false
 
     var body: some View {
         NavigationStack {
@@ -45,19 +51,31 @@ struct SettingsView: View {
                         Text("只显示字段名，不显示值。")
                             .font(.caption2).foregroundStyle(.secondary)
                         // 引擎侧 Cookie 注入状态：登录了却还提示「需要登录」时，一眼看出是这里的问题
-                        if SharedBridge.engineCookieLength > 0 {
-                            LabeledContent("引擎接管",
-                                           value: "已同步（\(SharedBridge.engineCookieLength) 字符）")
-                                .font(.caption2)
-                                .foregroundStyle(.green)
+                        if engineCookieLen > 0 {
+                            HStack {
+                                Text("引擎接管")
+                                Spacer()
+                                Text("已同步（\(engineCookieLen) 字符）")
+                                    .foregroundStyle(.green)
+                            }
+                            .font(.caption2)
                         } else {
                             Button {
-                                SharedBridge.injectCookie()
+                                syncNow()
                             } label: {
-                                LabeledContent("引擎接管", value: "未同步 · 点此重试")
-                                    .font(.caption2)
-                                    .foregroundStyle(.orange)
+                                HStack {
+                                    Text("引擎接管")
+                                    Spacer()
+                                    if syncing {
+                                        ProgressView().controlSize(.mini)
+                                        Text("正在同步…").foregroundStyle(.secondary)
+                                    } else {
+                                        Text("未同步 · 点此重试").foregroundStyle(.orange)
+                                    }
+                                }
+                                .font(.caption2)
                             }
+                            .disabled(syncing)
                         }
                     }
                 }
@@ -135,6 +153,10 @@ struct SettingsView: View {
                 )
             }
             .onAppear { refresh() }
+            .onReceive(NotificationCenter.default.publisher(for: .loginStateChanged)) { _ in
+                loggedIn = SharedBridge.loggedIn
+                engineCookieLen = SharedBridge.engineCookieLength
+            }
             // P1-10：cacheRefresh 一变就重读缓存占用，并广播给书架/专辑页
             .task(id: cacheRefresh) {
                 guard cacheRefresh > 0 else { return }
@@ -148,6 +170,20 @@ struct SettingsView: View {
         loggedIn = SharedBridge.loggedIn
         cookieNames = CookieStore.flatMap().keys.sorted()
         cacheBytes = AudioCache.totalBytes()   // 进页面/登出后重读缓存占用
+        // 每次进页面都重试一次同步：首帧 Cookie 可能还在从 WKWebView 往
+        // HTTPCookieStorage 拷（SPA 异步写），一次读不到很正常
+        if loggedIn { syncNow() } else { engineCookieLen = SharedBridge.engineCookieLength }
+    }
+
+    /// 把 Cookie 灌进引擎，并把结果写回 @State 让界面立刻变绿。
+    private func syncNow() {
+        syncing = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            SharedBridge.injectCookie()
+            engineCookieLen = SharedBridge.engineCookieLength
+            syncing = false
+            NotificationCenter.default.post(name: .loginStateChanged, object: nil)
+        }
     }
 }
 
@@ -207,6 +243,10 @@ enum DeviceInfo {
 extension Notification.Name {
     /// 音频缓存被清空（P1-10）：书架/专辑页收到后重读缓存占用
     static let audioCacheCleared = Notification.Name("tingshu.audioCacheCleared")
+    /// 书架搜索失败 → 「用其他源搜」：把关键词送到浏览页
+    static let browseSearchKeyword = Notification.Name("tingshu.browseSearchKeyword")
+    /// 登录态变化：各页面收到后刷新「引擎接管」与登录状态
+    static let loginStateChanged = Notification.Name("tingshu.loginStateChanged")
 }
 
 private extension Bundle {

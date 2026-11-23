@@ -18,6 +18,9 @@ struct BrowseView: View {
     @State private var requestGeneration = 0
     /// 当前选中的分类下标（P2-1：横向按钮要高亮）
     @State private var selectedCatIndex: Int = 0
+    /// 关键词搜索（BOOK_DETAIL）：浏览页也能直接搜，不用切回书架
+    @State private var searchText = ""
+    @State private var searchMode = false
 
     /// 与 SourcesView 的 defaultEnabled 保持同一份语义（P1-1）：
     /// 「空」= 默认启用集，不是全部。否则点「全关」后这里仍冒出 38 个源。
@@ -114,6 +117,19 @@ struct BrowseView: View {
                     }
                 }
 
+                if searchMode && !searchText.isEmpty && !books.isEmpty {
+                    Section {
+                        Button {
+                            searchMode = false
+                            searchText = ""
+                            reload()
+                        } label: {
+                            Label("结束搜索，回到「\(currentSource?.name ?? "当前源")」的推荐", systemImage: "xmark.circle")
+                                .font(.footnote)
+                        }
+                    }
+                }
+
                 if !books.isEmpty {
                     Section("共 \(books.count) 本") {
                         ForEach(books, id: \.bookUrl) { b in
@@ -121,6 +137,16 @@ struct BrowseView: View {
                         }
                     }
                 }
+            }
+            .searchable(text: $searchText, prompt: "用「\(currentSource?.name ?? "当前源")」搜书名")
+            .onSubmit(of: .search) { runSourceSearch() }
+            .onChange(of: selectedId) { _, _ in
+                if searchMode && !searchText.isEmpty { runSourceSearch() }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .browseSearchKeyword)) { note in
+                guard let kw = note.object as? String, !kw.isEmpty else { return }
+                searchText = kw
+                runSourceSearch()
             }
             .navigationTitle("浏览")
             .onAppear {
@@ -134,6 +160,31 @@ struct BrowseView: View {
                 reload()
             }
             .refreshable { reload() }
+        }
+    }
+
+    /// 在当前源里按关键词搜（原来只有搜索入口在书架，且只搜喜马拉雅）
+    private func runSourceSearch() {
+        let kw = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !kw.isEmpty, !selectedId.isEmpty else { return }
+        requestGeneration += 1
+        let gen = requestGeneration
+        let src = selectedId
+        searchMode = true
+        loading = true
+        books = []
+        hint = ""
+        Task {
+            let r = await SharedBridge.search(sourceId: src, keywords: kw, page: 1)
+            await MainActor.run {
+                guard gen == requestGeneration else { return }
+                books = SharedBridge.cards(from: r)
+                loading = false
+                if books.isEmpty {
+                    let why = (r?.hint).flatMap { $0.isEmpty ? nil : $0 }
+                    hint = why ?? "「\(src)」里没搜到「\(kw)」。换个源或换个关键词。"
+                }
+            }
         }
     }
 
@@ -215,7 +266,7 @@ struct BookRow: View {
 
     var body: some View {
         NavigationLink {
-            EpisodeListView(card: card, sourceId: sourceId)
+            AlbumView(card: card, sourceId: sourceId)
         } label: {
             HStack(spacing: 12) {
                 AsyncImage(url: URL(string: card.coverUrl)) { img in

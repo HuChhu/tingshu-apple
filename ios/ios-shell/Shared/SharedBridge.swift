@@ -20,7 +20,7 @@ import shared
 enum SharedBridge {
 
     // MARK: - 书架卡片（v1.1 全字段消费；bookUrl 形态 = /album/{albumId}）
-    struct BookCard {
+    struct BookCard: Codable {
         let bookUrl: String
         let title: String
         let author: String
@@ -30,6 +30,28 @@ enum SharedBridge {
         let playCount: Int64        // 播放量（「2887万播放」）
         let isFinished: Bool?       // nil = 上游未给，UI 不渲染
         var intro: String = ""      // 专辑简介（详情页展示）
+
+        /// 手写解码：intro 是后加的字段，旧缓存里没有，必须 decodeIfPresent
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            bookUrl = try c.decode(String.self, forKey: .bookUrl)
+            title = try c.decode(String.self, forKey: .title)
+            author = try c.decode(String.self, forKey: .author)
+            coverUrl = try c.decode(String.self, forKey: .coverUrl)
+            albumId = try c.decode(Int64.self, forKey: .albumId)
+            trackCount = try c.decode(Int64.self, forKey: .trackCount)
+            playCount = try c.decode(Int64.self, forKey: .playCount)
+            isFinished = try c.decodeIfPresent(Bool.self, forKey: .isFinished)
+            intro = try c.decodeIfPresent(String.self, forKey: .intro) ?? ""
+        }
+
+        init(bookUrl: String, title: String, author: String, coverUrl: String,
+             albumId: Int64, trackCount: Int64, playCount: Int64, isFinished: Bool?, intro: String = "") {
+            self.bookUrl = bookUrl; self.title = title; self.author = author
+            self.coverUrl = coverUrl; self.albumId = albumId
+            self.trackCount = trackCount; self.playCount = playCount
+            self.isFinished = isFinished; self.intro = intro
+        }
     }
 
     static func card(from b: Book) -> BookCard {

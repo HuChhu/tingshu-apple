@@ -19,6 +19,10 @@ import UIKit
 final class Player: NSObject, ObservableObject {
     var currentSourceId: String = "ximalaya-open"
 
+    /// 全屏播放页是否展开（迷你条点击 / 历史记录点击时置 true；
+    /// RootTabView 用 fullScreenCover 绑它，播放页自己关的时候写回 false）
+    var showFullScreen: Bool = false
+
     static let shared = Player()
 
     enum PlayerState: String {
@@ -28,6 +32,9 @@ final class Player: NSObject, ObservableObject {
 
     @Published private(set) var state: PlayerState = .stopped
     @Published private(set) var nowPlaying: String = ""
+    /// 是否展示全屏播放页（迷你条点击 → true；全屏页下拉关闭 → false）
+    /// 放在 Player 上而不是根视图，是因为「播完自动进全屏」「错误页跳播放」都要能触发它。
+    @Published var showFullScreen: Bool = false
     @Published private(set) var errorText: String?
     @Published private(set) var position: Double = 0        // 0...1
     @Published private(set) var elapsedText: String = "0:00"
@@ -81,6 +88,11 @@ final class Player: NSObject, ObservableObject {
 
     /// 取播放地址失败 → 有集在手就允许重试
     private func failAddress(_ msg: String) {
+        CrashLog.playbackFailed(
+            book: currentBook?.title ?? "?",
+            episode: current?.title ?? "?",
+            trackId: current?.trackId ?? 0,
+            source: currentSourceId, reason: "ADDR: " + msg)
         errorText = msg
         canRetry = (current != nil)
         resetPipeline()          // 连地址都没拿到，旧 item 必须清掉，否则界面还会插一句旧集
@@ -90,6 +102,11 @@ final class Player: NSObject, ObservableObject {
 
     /// 播放链路失败 → 记原因、落进度、给重试
     private func failPlayback(_ msg: String) {
+        CrashLog.playbackFailed(
+            book: currentBook?.title ?? "?",
+            episode: current?.title ?? "?",
+            trackId: current?.trackId ?? 0,
+            source: currentSourceId, reason: "PLAY: " + msg)
         saveProgress(force: true)
         errorText = msg
         canRetry = (current != nil)
@@ -545,9 +562,11 @@ final class Player: NSObject, ObservableObject {
         queue.play()
         errorText = nil
         durationText = fmt(ep.durationMs)
-        // 倍速：专辑值 > 全局默认
-        queue.rate = Float(effectivePlayback.speed)
+        // 倍速：专辑值 > 全局默认（这里再兜一次，AVPlayer 对 rate<=0/NaN 不友好）
+        let sp = effectivePlayback.speed
+        queue.rate = Float(sp.isFinite && sp > 0 ? min(3.0, max(0.5, sp)) : 1.0)
         apply(.playing)
+        CrashLog.write("PLAY", "start ok ep=\(ep.title) track=\(ep.trackId) src=\(currentSourceId) url=\(url.absoluteString.prefix(80))")
         
         if let b = currentBook,
            let saved = LocalStore.progress(for: BookKey(sourceId: currentSourceId, albumId: b.albumId, bookUrl: b.bookUrl)),
@@ -566,7 +585,8 @@ final class Player: NSObject, ObservableObject {
             trackId: ep.trackId,
             episodeTitle: ep.title,
             playedAt: Date(),
-            sourceId: currentSourceId, episodeUrl: ep.url))
+            sourceId: currentSourceId, episodeUrl: ep.url,
+            coverUrl: currentBook?.coverUrl ?? ""))
     }
 
     private func startItem(url: URL, headers: [String: String], ep: SharedBridge.EpisodeRow) {
@@ -631,7 +651,8 @@ final class Player: NSObject, ObservableObject {
             trackId: ep.trackId,
             episodeTitle: ep.title,
             playedAt: Date(),
-            sourceId: currentSourceId, episodeUrl: ep.url))
+            sourceId: currentSourceId, episodeUrl: ep.url,
+            coverUrl: currentBook?.coverUrl ?? ""))
     }
 
     // MARK: - item 观察（异常路径的真身）

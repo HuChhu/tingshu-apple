@@ -3,7 +3,7 @@ import SwiftUI
 /// 浏览：选源 → 分类 → 书单
 /// 修过的 P1/P2：P1-3（isTemplate 只看 kind）/ P1-8（__none__ 哨兵）/
 /// P2-1（分类选中态）/ P2-2（切源立刻 loading）/ P1-4（集列表 id 用 url）
-struct BrowseView: View {
+struct CategoryView: View {
 
     @AppStorage("enabledSources") private var enabledRaw: String = ""
     @AppStorage("lastSourceId") private var lastSourceId: String = "ximalaya-open"
@@ -148,7 +148,7 @@ struct BrowseView: View {
                 searchText = kw
                 runSourceSearch()
             }
-            .navigationTitle("浏览")
+            .navigationTitle("分类")
             .onAppear {
                 if sources.isEmpty { sources = SharedBridge.allSources() }
                 if selectedId.isEmpty { selectedId = lastSourceId }

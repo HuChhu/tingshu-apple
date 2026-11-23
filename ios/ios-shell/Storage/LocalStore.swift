@@ -196,6 +196,8 @@ enum LocalStore {
         let sourceId: String
         /// 该集的原始页面/音频地址（P1-07：模板集的 trackId 是数字，不能当 URL 用）
         let episodeUrl: String
+        /// 封面（首页「继续收听」展示用）
+        var coverUrl: String = ""
 
         /// 兼容旧数据：缺 sourceId 字段时不崩，回落到喜马拉雅免登录源
         init(from decoder: Decoder) throws {
@@ -207,11 +209,28 @@ enum LocalStore {
             playedAt = try c.decode(Date.self, forKey: .playedAt)
             sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
             episodeUrl = try c.decodeIfPresent(String.self, forKey: .episodeUrl) ?? ""
+            coverUrl = try c.decodeIfPresent(String.self, forKey: .coverUrl) ?? ""
         }
-        init(bookUrl: String, bookTitle: String, trackId: Int64, episodeTitle: String, playedAt: Date, sourceId: String, episodeUrl: String = "") {
+        init(bookUrl: String, bookTitle: String, trackId: Int64, episodeTitle: String, playedAt: Date, sourceId: String, episodeUrl: String = "", coverUrl: String = "") {
+            self.coverUrl = coverUrl
             self.bookUrl = bookUrl; self.bookTitle = bookTitle
             self.trackId = trackId; self.episodeTitle = episodeTitle
             self.playedAt = playedAt; self.sourceId = sourceId; self.episodeUrl = episodeUrl
+        }
+
+        // 显式编码：字段里有 let 也有 var（coverUrl 有默认值），
+        // 手写 init(from:) 之后让编译器再合成 encode(to:) 容易踩对称性问题，
+        // 这里两边都写死，键名与上面 decode 调用一一对应。
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(bookUrl, forKey: .bookUrl)
+            try c.encode(bookTitle, forKey: .bookTitle)
+            try c.encode(trackId, forKey: .trackId)
+            try c.encode(episodeTitle, forKey: .episodeTitle)
+            try c.encode(playedAt, forKey: .playedAt)
+            try c.encode(sourceId, forKey: .sourceId)
+            try c.encode(episodeUrl, forKey: .episodeUrl)
+            try c.encode(coverUrl, forKey: .coverUrl)
         }
     }
 
@@ -229,6 +248,20 @@ enum LocalStore {
     }
 
     static func clearRecent() { UserDefaults.standard.removeObject(forKey: recentKey) }
+
+    /// 从最近记录还原一集（首页「继续收听」点击播放用）
+    static func recentEpisode(_ r: Recent) -> SharedBridge.EpisodeRow {
+        SharedBridge.episodeRow(title: r.episodeTitle, trackId: r.trackId,
+                                index: 0, durationMs: 0,
+                                coverUrl: r.coverUrl, url: r.episodeUrl)
+    }
+
+    /// 从最近记录还原书卡
+    static func recentBook(_ r: Recent) -> SharedBridge.BookCard {
+        SharedBridge.BookCard(bookUrl: r.bookUrl, title: r.bookTitle, author: "",
+                              coverUrl: r.coverUrl, albumId: SharedBridge.albumId(from: r.bookUrl),
+                              trackCount: 0, playCount: 0, isFinished: nil)
+    }
 
     // MARK: - 清理
 
@@ -347,10 +380,13 @@ enum LocalStore {
     static func effective(for key: BookKey, prefs: PlayPrefs) -> AlbumPlayback {
         let album = albumPlayback(for: key)
         var out = AlbumPlayback()
-        out.speed = prefs.useGlobalSpeed ? prefs.defaultSpeed : (album?.speed ?? prefs.defaultSpeed)
-        out.skipIntroSec = prefs.useGlobalSkip ? prefs.defaultSkipIntroSec : (album?.skipIntroSec ?? 0)
-        out.skipOutroSec = prefs.useGlobalSkip ? prefs.defaultSkipOutroSec : (album?.skipOutroSec ?? 0)
-        out.volumeGainDb = prefs.useGlobalVolume ? prefs.volumeGainDb : (album?.volumeGainDb ?? 0)
+        // 夹紧到合法区间：AVPlayer 收到 rate <= 0 或 NaN 会出问题，这是搜索书闪退的高危点
+        let rawSpeed = prefs.useGlobalSpeed ? prefs.defaultSpeed : (album?.speed ?? prefs.defaultSpeed)
+        out.speed = rawSpeed.isFinite ? min(3.0, max(0.5, rawSpeed)) : 1.0
+        out.skipIntroSec = max(0, prefs.useGlobalSkip ? prefs.defaultSkipIntroSec : (album?.skipIntroSec ?? 0))
+        out.skipOutroSec = max(0, prefs.useGlobalSkip ? prefs.defaultSkipOutroSec : (album?.skipOutroSec ?? 0))
+        let rawGain = prefs.useGlobalVolume ? prefs.volumeGainDb : (album?.volumeGainDb ?? 0)
+        out.volumeGainDb = rawGain.isFinite ? min(12, max(-12, rawGain)) : 0
         out.reverseOrder = album?.reverseOrder ?? false
         return out
     }

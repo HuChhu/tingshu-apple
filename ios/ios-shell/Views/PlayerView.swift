@@ -149,6 +149,17 @@ struct PlayerView: View {
         }
         .padding(.top, 24)
         .navigationTitle("播放")
+        // 全屏播放页（RootTabView 的 fullScreenCover）需要一个关闭入口；
+        // 从 Tab 进来的 PlayerView 里这个按钮只是把 showFullScreen 置 false，无副作用。
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    player.showFullScreen = false
+                } label: {
+                    Label("收起", systemImage: "chevron.down")
+                }
+            }
+        }
         .sheet(isPresented: $showSpeed) { speedSheet }
         .sheet(isPresented: $showSleep) { sleepSheet }
     }

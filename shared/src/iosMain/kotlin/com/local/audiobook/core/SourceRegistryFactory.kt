@@ -14,6 +14,12 @@ import io.ktor.client.engine.darwin.Darwin
  */
 object SourceRegistryFactory {
 
+    /** 可选：由壳注入真实登录态（没有则匿名） */
+    var cookieProvider: CookieProvider = object : CookieProvider {
+        override suspend fun cookie(): String? = null
+        override suspend fun refresh() {}
+    }
+
     private val singleton: SourceRegistry by lazy {
         SourceRegistry(
             fetcher = IosJsonFetcher(

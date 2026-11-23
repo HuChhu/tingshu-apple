@@ -70,6 +70,7 @@ final class Player: NSObject, ObservableObject {
         guard (allowed[state] ?? []).contains(next) else {
             #if DEBUG
             debugPrint("[Player] 拒绝非法状态迁移 " + state.rawValue + " -> " + next.rawValue)
+            #endif
             return
         }
         state = next

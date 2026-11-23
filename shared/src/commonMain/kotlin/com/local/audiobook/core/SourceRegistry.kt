@@ -86,6 +86,22 @@ class SourceRegistry(
         val kind: String,
     )
 
+    /**
+     * 音频提取结果（K/N 安全返回类型）。
+     * 为什么需要：K/N 头文件明确「Other uncaught Kotlin exceptions are fatal」，
+     * SourceErrors 继承 KotlinRuntimeException，直接抛给 Swift 会 fatal。
+     * 所以 audio() 改为返回此类型，错误用 reason 字段表达。
+     */
+    data class BookDetailResult(
+        val detail: BookDetail? = null,
+        val reason: String? = null,
+    )
+
+    data class AudioResult(
+        val audio: ExtractedAudio? = null,
+        val reason: String? = null,
+    )
+
     /** 全部源 */
     fun list(): List<SourceInfo> {
         val out = mutableListOf<SourceInfo>()
@@ -121,9 +137,12 @@ class SourceRegistry(
         SearchResult(emptyList(), 0, "error", page, e.message ?: "未知错误")
     }
 
-    /** 按源取详情 */
-    suspend fun bookDetail(sourceId: String, bookUrl: String, loadEpisodes: Boolean): BookDetail {
-        return when (sourceId) {
+    /**
+     * 按源取详情。
+     * 返回 BookDetailResult 而不是抛异常（K/N fatal 语义同上）。
+     */
+    suspend fun bookDetail(sourceId: String, bookUrl: String, loadEpisodes: Boolean): BookDetailResult = try {
+        val d = when (sourceId) {
             "ximalaya-open" -> ximalayaOpen.bookDetail(bookUrl, loadEpisodes, false)
             "kuwo" -> kuwo.bookDetail(bookUrl, loadEpisodes, false)
             "bilibili" -> bilibili.bookDetail(bookUrl, loadEpisodes, false)
@@ -131,13 +150,22 @@ class SourceRegistry(
             "netease" -> netease.bookDetail(bookUrl, loadEpisodes, false)
             "ximalaya" -> ximalayaLogin.bookDetail(bookUrl, loadEpisodes, false)
             else -> templates[sourceId]?.bookDetail(bookUrl, loadEpisodes, false)
-                ?: throw SourceErrors.ParseFailed(unknownSource(sourceId))
+                ?: return BookDetailResult(reason = unknownSource(sourceId))
         }
+        BookDetailResult(detail = d)
+    } catch (e: SourceErrors) {
+        BookDetailResult(reason = describe(e))
+    } catch (e: Throwable) {
+        BookDetailResult(reason = e.message ?: "未知错误")
     }
 
-    /** 按源取播放地址 */
-    suspend fun audio(sourceId: String, url: String): ExtractedAudio {
-        return when (sourceId) {
+    /**
+     * 按源取播放地址。
+     * 返回 AudioResult 而不是抛异常：K/N 的 fatal 语义会让 Swift 侧直接崩溃。
+     * 失败时 audio=null，reason=可读原因。
+     */
+    suspend fun audio(sourceId: String, url: String): AudioResult = try {
+        val a = when (sourceId) {
             "ximalaya-open" -> ximalayaOpen.audioExtractor().extract(url)
             "kuwo" -> kuwo.audioExtractor().extract(url)
             "bilibili" -> bilibili.audioExtractor().extract(url)
@@ -145,14 +173,20 @@ class SourceRegistry(
             "netease" -> netease.audioExtractor().extract(url)
             "ximalaya" -> ximalayaLogin.audioExtractor().extract(url)
             else -> templates[sourceId]?.audioExtractor()?.extract(url)
-                ?: throw SourceErrors.ParseFailed(unknownSource(sourceId))
+                ?: return AudioResult(reason = unknownSource(sourceId))
         }
+        AudioResult(audio = a)
+    } catch (e: SourceErrors) {
+        AudioResult(reason = describe(e))
+    } catch (e: Throwable) {
+        AudioResult(reason = e.message ?: "未知错误")
     }
 
-    /** 模板站的分类浏览。失败时抛 SourceErrors，调用方转成提示。 */
-    suspend fun categoryBooks(sourceId: String, catIndex: Int): List<Book> {
-        return templates[sourceId]?.categoryBooks(catIndex)
-            ?: throw SourceErrors.ParseFailed("没有这个源或不是模板站：" + sourceId)
+    /** 模板站的分类浏览。失败返回空列表，不抛异常（K/N fatal 防护）。 */
+    suspend fun categoryBooks(sourceId: String, catIndex: Int): List<Book> = try {
+        templates[sourceId]?.categoryBooks(catIndex) ?: emptyList()
+    } catch (e: Throwable) {
+        emptyList()
     }
 
     /** 模板站的分类列表 */

@@ -101,13 +101,15 @@ final class WebViewSniffer: NSObject {
 extension WebViewSniffer: WKScriptMessageHandler {
     func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "tingshuSniffer", let body = message.body as? String else { return }
-        if body.hasPrefix("confirm|") {          // fetch content-type 确认的音视频流：直接收
+        if body.hasPrefix("confirm|") {          // fetch content-type 确认的音视频流
             let u = String(body.dropFirst("confirm|".count))
+            // 安全：必须 http(s)，且必须是已知媒体扩展名，防止恶意页面塞 javascript: 或任意 URL
+            guard u.hasPrefix("http://") || u.hasPrefix("https://"), mediaURL(u) else { return }
             if !candidates.contains(u) { candidates.append(u) }
             finish(.success(u))
             return
         }
-        guard body.hasPrefix("http") else { return }
+        guard body.hasPrefix("http://") || body.hasPrefix("https://") else { return }
         if candidates.contains(body) { return }  // JS 侧已去重，双保险
         candidates.append(body)
         if mediaURL(body) { finish(.success(body)) }  // 命中媒体特征即收，不等页面继续跑

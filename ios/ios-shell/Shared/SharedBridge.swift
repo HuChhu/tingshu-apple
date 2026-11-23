@@ -266,14 +266,13 @@ enum SharedBridge {
         }
     }
 
-    /// 按源详情
+    /// 按源详情。Kotlin 侧返回 BookDetailResult，失败时 reason 非空。
     static func bookDetail(sourceId: String, bookUrl: String) async -> BookDetail? {
-        await bridge { done in
+        let r = await bridge { done in
             registry.bookDetail(sourceId: sourceId, bookUrl: bookUrl, loadEpisodes: true,
-                                completionHandler: { d, e in
-                if e != nil { done(nil, e) } else { done(d, nil) }
-            })
+                                completionHandler: { res, e in done(res, e) })
         }
+        return r?.detail
     }
 
     /// 上一次取播放地址的失败原因（P0-3：让「需要登录」能区分于「网络断了」）。
@@ -288,27 +287,20 @@ enum SharedBridge {
     }
 
     /// 按源取播放地址。失败返回 nil，同时把可读原因记进 lastAudioError。
+    /// K/N  fatal 防护：Kotlin 侧现在返回 AudioResult，不再抛异常给 Swift。
     static func audio(sourceId: String, url: String) async -> ExtractedAudio? {
         lastAudioError = nil
-        let result: ExtractedAudio? = await bridge { done in
-            registry.audio(sourceId: sourceId, url: url, completionHandler: { a, e in
-                if let a = a {
-                    done(a, nil)
-                } else {
-                    // K/N 桥：Kotlin 异常 → NSError(domain: "KotlinException")
-                    // 尝试按 SourceErrors 细分；不行就取 localizedDescription 兜底
-                    var reason = "未知错误"
-                    if let ke = e as? SourceErrors {
-                        reason = Self.message(for: ke)
-                    } else if let ns = e as? NSError {
-                        reason = ns.localizedDescription.isEmpty ? "未知错误" : ns.localizedDescription
-                    }
-                    Self.lastAudioError = reason
-                    done(nil, e)
-                }
+        let r = await bridge { done in
+            registry.audio(sourceId: sourceId, url: url, completionHandler: { res, e in
+                done(res, e)
             })
         }
-        return result
+        guard let r = r else { return nil }
+        if let reason = r.reason {
+            Self.lastAudioError = reason
+            return nil
+        }
+        return r.audio
     }
 
     /// 模板站分类浏览

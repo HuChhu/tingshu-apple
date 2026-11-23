@@ -96,6 +96,7 @@ final class Player: NSObject, ObservableObject {
     override init() {
         super.init()
         installTimeObserver()
+        installRemoteCommands()
     }
 
     // MARK: - 播放

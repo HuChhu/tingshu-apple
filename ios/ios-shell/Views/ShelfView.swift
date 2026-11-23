@@ -147,8 +147,11 @@ struct ShelfView: View {
             bookUrl: r.bookUrl, title: r.bookTitle, author: "",
             coverUrl: "", albumId: SharedBridge.albumId(from: r.bookUrl),
             trackCount: 0, playCount: 0, isFinished: nil)
-        // trackId 优先；老记录 trackId 可能是 0，则用 bookUrl 作为回退输入（和 AlbumView 一致）
-        let input = r.trackId > 0 ? String(r.trackId) : r.bookUrl
+        // P1-07：优先用记录的 episodeUrl（模板集的 trackId 是数字，不能当 URL）
+        // 老记录没有 episodeUrl 时回退到 trackId（登录版兼容），再不行用 bookUrl
+        let input = r.episodeUrl.isEmpty
+            ? (r.trackId > 0 ? String(r.trackId) : r.bookUrl)
+            : r.episodeUrl
         let ep = SharedBridge.episodeRow(
             title: r.episodeTitle, trackId: r.trackId, index: 1,
             durationMs: 0, coverUrl: "", url: input)

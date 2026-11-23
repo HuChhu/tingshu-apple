@@ -72,6 +72,7 @@ enum LocalStore {
             albumId = try c.decode(Int64.self, forKey: .albumId)
             addedAt = try c.decode(Date.self, forKey: .addedAt)
             sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
+            episodeUrl = try c.decodeIfPresent(String.self, forKey: .episodeUrl) ?? ""
         }
         init(bookUrl: String, title: String, author: String, coverUrl: String, albumId: Int64, addedAt: Date, sourceId: String) {
             self.bookUrl = bookUrl; self.title = title; self.author = author
@@ -121,6 +122,8 @@ enum LocalStore {
         let playedAt: Date
         /// 用哪个源播的（多源支持；旧记录没有此字段时默认 ximalaya-open）
         let sourceId: String
+        /// 该集的原始页面/音频地址（P1-07：模板集的 trackId 是数字，不能当 URL 用）
+        let episodeUrl: String
 
         /// 兼容旧数据：缺 sourceId 字段时不崩，回落到喜马拉雅免登录源
         init(from decoder: Decoder) throws {
@@ -132,10 +135,10 @@ enum LocalStore {
             playedAt = try c.decode(Date.self, forKey: .playedAt)
             sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
         }
-        init(bookUrl: String, bookTitle: String, trackId: Int64, episodeTitle: String, playedAt: Date, sourceId: String) {
+        init(bookUrl: String, bookTitle: String, trackId: Int64, episodeTitle: String, playedAt: Date, sourceId: String, episodeUrl: String = "") {
             self.bookUrl = bookUrl; self.bookTitle = bookTitle
             self.trackId = trackId; self.episodeTitle = episodeTitle
-            self.playedAt = playedAt; self.sourceId = sourceId
+            self.playedAt = playedAt; self.sourceId = sourceId; self.episodeUrl = episodeUrl
         }
     }
 

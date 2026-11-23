@@ -9,7 +9,13 @@ import io.ktor.http.*
 class KtorJsonFetcher(private val client: HttpClient) : JsonFetcher {
     override suspend fun get(url: String, headers: Map<String, String>): FetchOutcome = try {
         val resp = client.get(url) { headers.forEach { (k, v) -> header(k, v) } }
-        FetchOutcome.Ok(resp.status.value, resp.bodyAsText())
+        if (resp.status.value in 200..299) {
+            FetchOutcome.Ok(resp.status.value, resp.bodyAsText())
+        } else {
+            FetchOutcome.Failed("HTTP", "status=" + resp.status.value + " url=" + url.take(80))
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: Exception) {
         FetchOutcome.Failed(e.javaClass.simpleName, e.message ?: "")
     }

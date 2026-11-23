@@ -116,22 +116,40 @@ class QingtingSource(
             isFinished = d["finished"]?.asStr() == "1",
         )
 
-        // 蜻蜓的节目列表接口不公开（试过 8 种路径全 404），
-        // 所以这里只返回频道信息，曲目留空。
-        // 用户可用「最近更新」的 latest_program 单集。
+        // P0-1：latest_program 可能是字符串（标题）也可能是对象（含 id）。
+        // 实测 i.qtfm.cn/capi/channel/403408 返回的是字符串，asObj() 得 null → 永远 0 章。
         val eps = mutableListOf<Episode>()
-        d["latest_program"]?.asObj()?.let { lp ->
-            val pid = lp["id"]?.optLong()
-            if (pid != null) {
-                eps.add(Episode(
-                    title = lp["title"]?.asStr() ?: "最新一期",
-                    url = "qtfm://play/" + channelId + "/" + pid,
-                    trackId = pid,
-                    index = 1,
-                    durationMs = (lp["duration"]?.optLong() ?: 0L) * 1000,
-                    coverUrl = book.coverUrl,
-                ))
+        when (val lp = d["latest_program"]) {
+            is JsonObject -> {
+                val pid = lp["id"]?.optLong()
+                if (pid != null) {
+                    eps.add(Episode(
+                        title = lp["title"]?.asStr() ?: "最新一期",
+                        url = "qtfm://play/" + channelId + "/" + pid,
+                        trackId = pid,
+                        index = 1,
+                        durationMs = (lp["duration"]?.optLong() ?: 0L) * 1000,
+                        coverUrl = book.coverUrl,
+                    ))
+                }
             }
+            is JsonPrimitive -> {
+                // 字符串形态：只有标题，没有 id。尝试用搜索结果的 program id 兜底。
+                // 搜索时 parent_id 就是 channelId，id 是 program id。
+                // 这里如果没有 id，只能提示「需通过搜索进入该集」。
+                val title = lp.content
+                if (title.isNotBlank()) {
+                    eps.add(Episode(
+                        title = title,
+                        url = "qtfm://channel/" + channelId + "/latest",
+                        trackId = 0L,
+                        index = 1,
+                        durationMs = 0L,
+                        coverUrl = book.coverUrl,
+                    ))
+                }
+            }
+            else -> {}
         }
 
         return BookDetail(book, if (loadEpisodes) eps else emptyList())
@@ -142,11 +160,27 @@ class QingtingSource(
     override fun audioExtractor(): com.local.audiobook.core.AudioExtractor =
         object : com.local.audiobook.core.AudioExtractor {
             override suspend fun extract(url: String, timeoutMs: Int): ExtractedAudio {
-                // url 形如 qtfm://play/{channelId}/{programId}
-                val parts = url.substringAfterLast("play/", url).split("/")
-                val channelId = parts.getOrNull(0) ?: throw SourceErrors.ParseFailed("缺 channelId")
-                val programId = parts.getOrNull(1)?.toLongOrNull()
-                    ?: throw SourceErrors.ParseFailed("缺 programId")
+                // 两种 URL 形态：
+                //   qtfm://play/{channelId}/{programId}   正常单集
+                //   qtfm://channel/{channelId}/latest    字符串型 latest_program 的兜底
+                var channelId: String
+                var programId: Long
+                if (url.contains("/channel/")) {
+                    channelId = url.substringAfterLast("channel/", "").substringBefore("/")
+                    // 再取一次频道详情，拿最新一集的 id（这次可能是对象形态）
+                    val detail = getJson("https://i.qtfm.cn/capi/channel/" + channelId)
+                    val lp = detail["data"]?.asObj()?.get("latest_program")
+                    programId = when (lp) {
+                        is JsonObject -> lp["id"]?.optLong() ?: 0L
+                        else -> 0L
+                    }
+                    if (programId == 0L) throw SourceErrors.ParseFailed("该频道没有可播放的节目")
+                } else {
+                    val parts = url.substringAfterLast("play/", url).split("/")
+                    channelId = parts.getOrNull(0) ?: throw SourceErrors.ParseFailed("缺 channelId")
+                    programId = parts.getOrNull(1)?.toLongOrNull()
+                        ?: throw SourceErrors.ParseFailed("缺 programId")
+                }
 
                 val ts = nowMs().toString()
                 // 被签名的串：路径 + 参数（不含域名）

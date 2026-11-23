@@ -29,6 +29,11 @@ import com.local.audiobook.data.ximalaya.RequestThrottle
 class SourceRegistry(
     private val fetcher: JsonFetcher,
     private val nowMs: () -> Long = { 0L },
+    /** 登录态提供者（P0-2：原来写死 null，登录版永远匿名） */
+    private val cookieProvider: CookieProvider = object : CookieProvider {
+        override suspend fun cookie(): String? = null
+        override suspend fun refresh() {}
+    },
 ) {
     private val throttle = RequestThrottle(minIntervalMs = 1_000L, clock = nowMs)
     private val clock = nowMs
@@ -47,10 +52,8 @@ class SourceRegistry(
         throttle = throttle,
         budget = WebSearchBudget(now = clock),
         nowMs = clock,
-        cookieProvider = object : CookieProvider {
-            override suspend fun cookie(): String? = null
-            override suspend fun refresh() {}
-        },
+        cookieProvider = cookieProvider,
+        sourceId = "ximalaya",
     )
 
     // ---------- 模板站 ----------

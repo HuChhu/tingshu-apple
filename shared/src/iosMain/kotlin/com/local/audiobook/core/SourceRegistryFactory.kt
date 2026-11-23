@@ -31,6 +31,7 @@ object SourceRegistryFactory {
                 }
             ),
             nowMs = { PlatformClock.nowMs() },
+            cookieProvider = cookieProvider,
         )
     }
 

@@ -154,13 +154,23 @@ final class Player: NSObject, ObservableObject {
         guard liveGuard: @escaping () -> Bool,
         handler: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus
     ) {
-        // 非 live 实例一律 .commandFailed：多个 target 时系统按顺序取第一个非 failed 的结果，
-        // 让僵尸实例返回 failed，事件才会继续落给真正的 Player.shared。
-        let token = cmd.addTarget { ev in
+        // P1-04：用 addTarget(_:action:) 而不是闭包。
+        // selector 由 Objective-C 运行时在主线程调用，天然隔离正确。
+        // 闭包方式可能在任意线程触发，导致 @MainActor 越界。
+        let token = cmd.addTarget(self, action: #selector(handleRemoteCommand(_:)))
+        remoteTargets.append((cmd, token))
+        // 保存 handler 供 selector 调用
+        remoteHandlers[cmd] = { ev in
             guard liveGuard() else { return .commandFailed }
             return handler(ev)
         }
-        remoteTargets.append((cmd, token))
+    }
+    
+    private var remoteHandlers: [MPRemoteCommand: (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus] = [:]
+    
+    @objc private func handleRemoteCommand(_ event: MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+        guard let cmd = event.command else { return .commandFailed }
+        return remoteHandlers[cmd]?(event) ?? .commandFailed
     }
 
     private func updateNowPlayingInfo() {
@@ -415,7 +425,7 @@ final class Player: NSObject, ObservableObject {
             trackId: ep.trackId,
             episodeTitle: ep.title,
             playedAt: Date(),
-            sourceId: currentSourceId))
+            sourceId: currentSourceId, episodeUrl: ep.url))
     }
 
     private func startItem(url: URL, headers: [String: String], ep: SharedBridge.EpisodeRow) {
@@ -475,7 +485,7 @@ final class Player: NSObject, ObservableObject {
             trackId: ep.trackId,
             episodeTitle: ep.title,
             playedAt: Date(),
-            sourceId: currentSourceId))
+            sourceId: currentSourceId, episodeUrl: ep.url))
     }
 
     // MARK: - item 观察（异常路径的真身）

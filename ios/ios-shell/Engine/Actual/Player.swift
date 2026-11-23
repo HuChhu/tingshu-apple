@@ -36,6 +36,14 @@ final class Player: NSObject, ObservableObject {
     @Published private(set) var canRetry: Bool = false
 
     private let queue = AVQueuePlayer()
+    /// 改变播放位置命令 / 进度条的分母（P2-6）：
+    /// currentDuration 在空队列或刚起播时是 0，直接 max(d, 1) 只能挡住 0，挡不住 NaN，
+    /// 结果 0/1 或 NaN 传给 seek，进度条不收敛。这里先判 isFinite && > 0。
+    private var safeDuration: Double {
+        let d = currentDuration
+        guard d.isFinite, d > 0 else { return 1 }
+        return d
+    }
     /// AVQueuePlayer 没有 .duration；统一从 currentItem 取（换章时随 item 更新）
     private var currentDuration: Double {
         guard let d = queue.currentItem?.duration.seconds, d.isFinite, d > 0 else { return 0 }
@@ -62,19 +70,21 @@ final class Player: NSObject, ObservableObject {
         guard (allowed[state] ?? []).contains(next) else {
             #if DEBUG
             debugPrint("[Player] 拒绝非法状态迁移 " + state.rawValue + " -> " + next.rawValue)
-            #endif
             return
         }
         state = next
         if next != .error { canRetry = false }
-        updateNowPlayingInfo()
+        // 注意：这里不直接刷锁屏信息。apply 在 init 的观察回调里也会触发，
+        // 那时 self 还没完全构造好；统一由各动作在改完状态后显式刷新。
     }
 
     /// 取播放地址失败 → 有集在手就允许重试
     private func failAddress(_ msg: String) {
         errorText = msg
         canRetry = (current != nil)
+        resetPipeline()          // 连地址都没拿到，旧 item 必须清掉，否则界面还会插一句旧集
         apply(.error)
+        updateNowPlayingInfo()
     }
 
     /// 播放链路失败 → 记原因、落进度、给重试
@@ -128,7 +138,8 @@ final class Player: NSObject, ObservableObject {
         }
         addRemote(cc.changePlaybackPositionCommand, guard: guardCmd) { [weak self] ev in
             guard let self, let e = ev as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            self.seek(toFraction: e.positionTime / max(self.currentDuration, 1))
+            // P2-6：分母不能是 0/NaN —— safeDuration 已判 isFinite 且 > 0
+            self.seek(toFraction: e.positionTime / self.safeDuration)
             return .success
         }
         // 失败态下锁屏也能重试（不用点亮屏幕回 App）
@@ -142,16 +153,13 @@ final class Player: NSObject, ObservableObject {
         guard liveGuard: @escaping () -> Bool,
         handler: @escaping (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus
     ) {
+        // 非 live 实例一律 .commandFailed：多个 target 时系统按顺序取第一个非 failed 的结果，
+        // 让僵尸实例返回 failed，事件才会继续落给真正的 Player.shared。
         let token = cmd.addTarget { ev in
             guard liveGuard() else { return .commandFailed }
             return handler(ev)
         }
         remoteTargets.append((cmd, token))
-    }
-
-    private func removeRemoteCommands() {
-        for (cmd, token) in remoteTargets { cmd.removeTarget(token) }
-        remoteTargets.removeAll()
     }
 
     private func updateNowPlayingInfo() {
@@ -212,6 +220,12 @@ final class Player: NSObject, ObservableObject {
     /// 正在后台挂着等地址的那一集（不落进度，避免把续播点写到错误位置）
     private var requestingEpisode = false
 
+    /// 快进/快退是否可用：只有真的挂着 item 才能 seek（error/stopped 时队列是空的）
+    var canSeek: Bool {
+        guard state == .playing || state == .paused else { return false }
+        return queue.currentItem != nil
+    }
+
     /// 远程命令/后台回调只对活着的那个实例生效
     private var isLive: Bool { Player.shared === self }
 
@@ -220,15 +234,16 @@ final class Player: NSObject, ObservableObject {
         installTimeObserver()
         installRemoteCommands()
         wireLifecycle()
+        updateNowPlayingInfo()
     }
 
     deinit {
-        // 强制落一次进度：用户把 Tab 关掉 / 系统回收场景下，最后 5 秒内的进度不丢
-        let lastMs = Int64(queue.currentTime().seconds * 1000)
+        // Player.shared 是单例，deinit 实际只在「有代码 new 了第二个 Player」时触发；
+        // 即便如此，也把最后一条进度和 observer 收拾干净，避免多实例场景留下脏 token。
+        let lastMs = Int64(queue.currentTime().seconds * 1000)   // synchronous，deinit 里可安全调
         Player.persistOnDrop(item: current, book: currentBook, positionMs: lastMs,
                             fallbackDurationMs: current?.durationMs ?? 0)
-        NotificationCenter.default.removeObserver(self)
-        if let t = timeObserver { queue.removeTimeObserver(t) }
+        NotificationCenter.default.removeObserver(self)          // 闭包式 addObserver 的 token 已由系统回收
     }
     // MARK: - 播放
 
@@ -288,9 +303,28 @@ final class Player: NSObject, ObservableObject {
         }
     }
 
-    /// 两条 playEpisode 的公共前置：切章先落旧进度 → 挂 loading → 换代际
+    /// 两条 playEpisode 的公共前置：切章先落旧进度 → 换书判定 → 挂 loading → 换代际
     private func beginRequest(_ ep: SharedBridge.EpisodeRow, book: SharedBridge.BookCard?) {
         saveProgress(force: true)          // 切章：旧集进度必须落地，不能被新集覆盖
+        // P1-5：currentBook 之前是「粘性」的 —— 只在新参数非 nil 时覆盖，
+        // 跨书播放时（新书没传 book，或传的是同一本书的旧卡）会残留上一本的
+        // bookUrl/title，导致续播读的是上一本的位置、lockscreen 显示上一本书名。
+        // 这里按 bookUrl 判定换书：url 不同就整本换掉，并清掉续播写点。
+        if let b = book {
+            let prev = currentBook
+            let switchedBook = (prev == nil) || (prev?.bookUrl != b.bookUrl)
+            currentBook = b
+            if switchedBook {
+                lastSavedMs = 0
+                position = 0
+                elapsedText = "0:00"
+                durationText = "0:00"
+            }
+        } else {
+            // 没传书：说明调用方不关心书身份，旧书上下文一律作废，别让重试读到错的书
+            currentBook = nil
+            lastSavedMs = 0
+        }
         requestGeneration &+= 1
         requestingEpisode = true
         // .error 不能直接跳 .loading（apply 的允许集合），先退到 stopped 再进 loading
@@ -298,9 +332,8 @@ final class Player: NSObject, ObservableObject {
         errorText = nil
         nowPlaying = ep.title
         current = ep
-        if let b = book { currentBook = b }
-        lastSavedMs = 0
         apply(.loading)
+        updateNowPlayingInfo()
     }
 
     private func startItem(url: URL, headers: [String: String], ep: SharedBridge.EpisodeRow) {
@@ -455,8 +488,7 @@ final class Player: NSObject, ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isLive else { return }
-                self.saveProgress(force: true)
-                if self.state == .playing { self.updateNowPlayingInfo() }
+                self.saveProgress(force: true)   // 下拉通知中心/来电弹窗都可能触发，必须先落地
             }
         }
         n.addObserver(
@@ -615,7 +647,6 @@ final class Player: NSObject, ObservableObject {
     private func resetPipeline() {
         detachItem()
         queue.removeAllItems()
-        safeRemoveInstanceObserver()
         installTimeObserver()
     }
 

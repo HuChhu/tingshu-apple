@@ -81,7 +81,7 @@ struct PlayerView: View {
                 } label: {
                     Image(systemName: "gobackward.\(seekSecs)").font(.title2)
                 }
-                .disabled(player.state == .stopped)
+                .disabled(!player.canSeek)
 
                 Button {
                     if player.state == .playing { player.pause() } else { player.resume() }
@@ -96,7 +96,7 @@ struct PlayerView: View {
                 } label: {
                     Image(systemName: "goforward.\(seekSecs)").font(.title2)
                 }
-                .disabled(player.state == .stopped)
+                .disabled(!player.canSeek)
             }
             .padding(.top, 8)
 
@@ -111,7 +111,7 @@ struct PlayerView: View {
         LocalStore.loadPlayPrefs().seekSeconds
     }
 
-    /// 主键图标：失败态显示刷新符（点了=重试），加载/缓冲中显示转圈的暂停符
+    /// 主键图标：失败态显示刷新符（点了=重试），加载/缓冲中显示沙漏
     private var mainIcon: String {
         switch player.state {
         case .playing: return "pause.circle.fill"

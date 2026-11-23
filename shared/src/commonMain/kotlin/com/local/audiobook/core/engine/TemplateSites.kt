@@ -39,6 +39,26 @@ object TemplateSites {
         val chapterPattern: String = "/play/(\\d+)-(\\d+)-(\\d+)\\.html",
         /** 章节 URL 前缀（有的站章节不在 /play/ 下，要整段拼接） */
         val chapterPrefix: String = "/play/",
+        /** 章节来源：Html（默认，正则抓链接）/ Playlist（audioigniter JSON）/ Json（数据接口） */
+        val chapterMode: TemplateTingSite.ChapterMode = TemplateTingSite.ChapterMode.Html,
+        val jsonApiPattern: String = "",
+        val jsonListKey: String = "data",
+        val jsonUrlKey: String = "url",
+        val jsonAudioKey: String = "",
+        val jsonTitleKey: String = "title",
+        val jsonCoverKey: String = "",
+        /** HtmlPages 模式：第 N 页 URL 模板，{url}=首章 URL，{page}=页码 */
+        val htmlPagePattern: String = "{url}/{page}",
+        val htmlMaxPages: Int = 40,
+        /** HtmlPages 第二页的 {page} 值（vbus=2；yuetingba=按集数偏移 40） */
+        val htmlPageStart: Int = 2,
+        val htmlPageStep: Int = 1,
+        /** 章节 URL 取哪个捕获组的整段路径（-1 = 整个匹配就是 URL；0 = 默认 3 段拼接） */
+        val chapterPathGroup: Int = 0,
+        /** 播放接口（POST 表单换音频），ting15 用 /?s=api-getneoplay */
+        val audioApiPattern: String = "",
+        /** 播放接口（GET，响应正文 = 音频 URL），{url}/{id} 占位 */
+        val audioApiUrlPattern: String = "",
     )
 
     val all: List<SiteConfig> = listOf(
@@ -108,9 +128,14 @@ object TemplateSites {
             key = "gushiya",
             name = "GuShiYa",
             base = "https://www.gushiya.com",
+            // 实测 2026-11-23：书页仍是 /tingshu/N.html，但分类页从 /tingshu/N.html 迁到 /ya/N.html，
+            // 首页只剩 6 个 /tingshu/ 链接（推荐位），旧配置的 /tingshu/1581.html 是 404。
             bookHrefPattern = "/tingshu/(\\d+)\\.html",
             cats = listOf(
-                "首页" to "https://www.gushiya.com/",
+                "言情" to "https://www.gushiya.com/ya/1581.html", "武侠" to "https://www.gushiya.com/ya/1582.html",
+                "悬疑" to "https://www.gushiya.com/ya/1583.html", "历史" to "https://www.gushiya.com/ya/1584.html",
+                "军事" to "https://www.gushiya.com/ya/1585.html", "评书" to "https://www.gushiya.com/ya/1586.html",
+                "相声小品" to "https://www.gushiya.com/ya/1587.html", "商业财经" to "https://www.gushiya.com/ya/1589.html",
             ),
         ),
         SiteConfig(
@@ -335,54 +360,110 @@ object TemplateSites {
         SiteConfig(
             key = "yuetingba",
             name = "Yuetingba",
-            base = "https://www.yuetingba.cn",
-            bookHrefPattern = "/book/detail/([A-Za-z0-9-]+)/1",
-            cats = listOf("首页" to "https://www.yuetingba.cn/"),
+            // 实测 2026-11-23：https 入口 301 到 http（不是 https），Ktor 不跟跨协议跳转
+            // → 拿到的是 147 字节“对象已移动”页，0 本书。base 直接用 http。
+            base = "http://www.yuetingba.cn",
+            // 书籍链接是 /book/detail/<uuid>/0（旧配置写死 /1，一个都匹配不上）
+            bookHrefPattern = "/book/detail/([A-Za-z0-9-]+)/0",
+            // 章节在 /book/ting/<uuid>，一页 40 集；第 N 页 = /book/detail/<uuid>/<N*40>
+            chapterPattern = "/book/ting/([A-Za-z0-9-]+)",
+            chapterPathGroup = -1,
+            chapterMode = TemplateTingSite.ChapterMode.HtmlPages,
+            htmlPagePattern = "{url}/{page}",
+            htmlPageStart = 40,
+            htmlPageStep = 40,
+            // 播放器也是 JS：GET /api/app/docs-listen/<tingId>/audio-url 响应正文就是 mp3 直链
+            audioApiUrlPattern = "/api/app/docs-listen/{id}/audio-url",
+            cats = listOf("首页" to "http://www.yuetingba.cn/"),
         ),
         SiteConfig(
             key = "ting15",
             name = "Ting15",
-            base = "https://m.ting15.com",
-            bookHrefPattern = "/(\\d+)\\.html",
-            cats = listOf("武侠玄幻" to "https://m.ting15.com/wuxiaxuanhuan/1.html", "都市言情" to "https://m.ting15.com/dushiyanqing/1.html"),
+            // 实测 2026-11-23：m.ting15.com 是精简版，分类页 /wuxiaxuanhuan/ 和 /wuxiaxuanhuan/1.html 都没有书籍链接；
+            // www.ting15.com 才是完整站。书页 = /分类/N.html，章节 = /分类/N/卷-集.html（按分类分目录，不是全局 /N.html）
+            base = "https://www.ting15.com",
+            bookHrefPattern = "/(?:wuxiaxuanhuan|dushiyanqing|kongbulingyi|tuilixuanyi|jiatinglunli|wenxuemingzhu|jingdianpingshu|quyixiqu|xiangshengxiaopin|yinyue)/(\\d+)\\.html",
+            cats = listOf(
+                "武侠玄幻" to "https://www.ting15.com/wuxiaxuanhuan/", "都市言情" to "https://www.ting15.com/dushiyanqing/", "恐怖灵异" to "https://www.ting15.com/kongbulingyi/", "推理悬疑" to "https://www.ting15.com/tuilixuanyi/", "经典评书" to "https://www.ting15.com/jingdianpingshu/", "官场职场" to "https://www.ting15.com/wenxuemingzhu/"
+            ),
+            // 章节在分类子目录里：/wuxiaxuanhuan/1254/0-1.html（两段，不是 N-N-N）。
+            // 用 chapterPathGroup = -1 表示“整段匹配就是章节 URL”，不拼接。
+            chapterPattern = "/(?:wuxiaxuanhuan|dushiyanqing|kongbulingyi|tuilixuanyi|jiatinglunli|wenxuemingzhu|jingdianpingshu|quyixiqu|xiangshengxiaopin|yinyue)/\\d+/\\d+-\\d+\\.html",
+            chapterPrefix = "",
+            chapterPathGroup = -1,
+            // 播放器是 JS：POST /?s=api-getneoplay {bookId,isPay,page}，响应 {"url":"...m4a","status":1}
+            // 从播放页的 <meta _b/_cp/_p/_c/_l> 取参数与验证头
+            audioApiPattern = "/?s=api-getneoplay",
         ),
         SiteConfig(
             key = "vbus",
             name = "VBUS",
             base = "https://www.vbus.cc",
+            // 实测 2026-11-23：
+            //  - /v/N 是"节目不存在"占位页（旧 books//(\d+) 抓的就是它，所以 6.7KB 无章节）
+            //  - /api/v1/program/list 存在，但 album_id/album/aid 参数全被忽略，恒返回全站最新 6852 条
+            //    （试过 album_id/album/albumId/aid 四种，total 都是 6852）——不能用
+            //  - 真数据在专辑页 HTML：/album/1064 每页 20 条 <a href="/v/5893">，第 N 页 /album/1064/N
+            //  - 节目音频：/program/get-source/5893 是 302 → files.vbus.cc/xxx.mp3（带过期签名），
+            //    直接把 302 口交给播放器，比在这里取一次签名更耐放
             bookHrefPattern = "/album/(\\d+)",
-            cats = listOf("首页" to "https://www.vbus.cc/"),
+            cats = listOf(
+                "最新" to "https://www.vbus.cc/album/new",
+                "最热" to "https://www.vbus.cc/album/hot",
+                "推荐" to "https://www.vbus.cc/album/recommend",
+            ),
+            chapterMode = TemplateTingSite.ChapterMode.HtmlPages,
+            htmlPagePattern = "{url}/{page}",
+            htmlMaxPages = 40,
         ),
         SiteConfig(
             key = "ytysxs",
             name = "Ytysxs",
             base = "https://www.ytysxs.com",
+            // 实测 2026-11-23：WordPress + audioigniter 播放器，没有 /play/N-N-N.html。
+            // 书页里每个 <div data-tracks-url="?audioigniter_playlist_id=N"> 是一个 100 集的分块，
+            // 拉该 URL 返回 JSON 数组 [{title,audio,cover}]，audio 就是 mp3.ytysxs.top 上的直链。
             bookHrefPattern = "/(\\d+)\\.html",
-            cats = listOf("首页" to "https://www.ytysxs.com/"),
+            cats = listOf(
+                "言情" to "https://www.ytysxs.com/yanqing/", "玄幻" to "https://www.ytysxs.com/xuanhuan/",
+                "都市" to "https://www.ytysxs.com/dushi/", "历史" to "https://www.ytysxs.com/lishi/",
+                "科幻" to "https://www.ytysxs.com/kehuan/", "仙侠" to "https://www.ytysxs.com/xianxia/",
+            ),
+            chapterMode = TemplateTingSite.ChapterMode.Playlist,
         ),
     )
 
     fun build(fetcher: JsonFetcher, throttle: RequestThrottle): List<TemplateTingSite> =
-        all.map { c ->
-            TemplateTingSite(
-                fetcher = fetcher, throttle = throttle,
-                base = c.base, siteName = c.name,
-                cats = c.cats, bookHrefPattern = c.bookHrefPattern,
-                chapterPattern = c.chapterPattern,
-                chapterPrefix = c.chapterPrefix,
-                sourceId = c.key,
-            )
-        }
+        all.map { it.toSite(fetcher, throttle) }
 
-    fun byKey(key: String, fetcher: JsonFetcher, throttle: RequestThrottle): TemplateTingSite? {
-        val c = all.firstOrNull { it.key == key } ?: return null
-        return TemplateTingSite(
-            fetcher = fetcher, throttle = throttle,
-            base = c.base, siteName = c.name,
-            cats = c.cats, bookHrefPattern = c.bookHrefPattern,
-            chapterPattern = c.chapterPattern,
-            chapterPrefix = c.chapterPrefix,
-            sourceId = c.key,
-        )
-    }
+    fun byKey(key: String, fetcher: JsonFetcher, throttle: RequestThrottle): TemplateTingSite? =
+        all.firstOrNull { it.key == key }?.toSite(fetcher, throttle)
+
+    /**
+     * 唯一装配点：SourceRegistry 和 byKey 都走这里。
+     * P0（审计）：之前 SourceRegistry 自己 inline 装配，漏传 chapterPattern/chapterPrefix，
+     * 结果是 tingdada 在 App 里拿 0 章，只有 CLI 的 byKey 路径正常。
+     */
+    private fun SiteConfig.toSite(fetcher: JsonFetcher, throttle: RequestThrottle) = TemplateTingSite(
+        fetcher = fetcher, throttle = throttle,
+        base = base, siteName = name,
+        cats = cats, bookHrefPattern = bookHrefPattern,
+        chapterPattern = chapterPattern,
+        chapterPrefix = chapterPrefix,
+        chapterMode = chapterMode,
+        jsonApiPattern = jsonApiPattern,
+        jsonListKey = jsonListKey,
+        jsonUrlKey = jsonUrlKey,
+        jsonAudioKey = jsonAudioKey,
+        jsonTitleKey = jsonTitleKey,
+        jsonCoverKey = jsonCoverKey,
+        htmlPagePattern = htmlPagePattern,
+        htmlMaxPages = htmlMaxPages,
+        htmlPageStart = htmlPageStart,
+        htmlPageStep = htmlPageStep,
+        chapterPathGroup = chapterPathGroup,
+        audioApiPattern = audioApiPattern,
+        audioApiUrlPattern = audioApiUrlPattern,
+        sourceId = key,
+    )
 }

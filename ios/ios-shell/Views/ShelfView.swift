@@ -69,11 +69,14 @@ struct ShelfView: View {
                 placeholder(icon: "clock", title: "还没有播放记录", detail: "点一集开始播放就会记录")
             } else {
                 List(recent) { r in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(r.episodeTitle).font(.subheadline).lineLimit(1)
-                        Text(r.bookTitle).font(.caption).foregroundStyle(.secondary)
+                    // P2-3：点一条直接续播 —— 用记录里的 sourceId 取地址，
+                    // 不再只能看不能点（记录里已存 bookUrl/trackId/sourceId，够还原一集）
+                    Button {
+                        playRecent(r)
+                    } label: {
+                        recentRow(r)
                     }
-                    .padding(.vertical, 2)
+                    .buttonStyle(.plain)
                 }
                 .listStyle(.plain)
             }
@@ -119,6 +122,46 @@ struct ShelfView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// 最近播放行：书名 + 集名 + 用的哪个源 + 点了就从那集续播
+    private func recentRow(_ r: LocalStore.Recent) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "play.circle.fill")
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(r.episodeTitle).font(.subheadline).lineLimit(1)
+                Text(r.bookTitle).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(sourceName(r.sourceId)).font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+
+    /// 点最近记录 → 还原成 EpisodeRow 交给播放器，sourceId 用记录里那个
+    private func playRecent(_ r: LocalStore.Recent) {
+        let card = SharedBridge.BookCard(
+            bookUrl: r.bookUrl, title: r.bookTitle, author: "",
+            coverUrl: "", albumId: SharedBridge.albumId(from: r.bookUrl),
+            trackCount: 0, playCount: 0, isFinished: nil)
+        // trackId 优先；老记录 trackId 可能是 0，则用 bookUrl 作为回退输入（和 AlbumView 一致）
+        let input = r.trackId > 0 ? String(r.trackId) : r.bookUrl
+        let ep = SharedBridge.episodeRow(
+            title: r.episodeTitle, trackId: r.trackId, index: 1,
+            durationMs: 0, coverUrl: "", url: input)
+        if r.sourceId == "ximalaya" || r.sourceId == "ximalaya-open" {
+            Player.shared.playEpisode(ep, book: card)
+        } else {
+            Player.shared.playEpisode(ep, book: card, sourceId: r.sourceId)
+        }
+        reloadLists()
+    }
+
+    private func sourceName(_ id: String) -> String {
+        SharedBridge.allSources().first { $0.id == id }?.name ?? id
     }
 
     private func favRow(_ f: LocalStore.Favorite, width: CGFloat) -> some View {
@@ -185,16 +228,18 @@ struct ShelfView: View {
             cards = web
             return
         }
+        // P1-9：网页搜索失败（busy / 超时 / 页面挂了）要说出原因，不能当成「没结果」
+        let webError = SharedBridge.lastWebSearchError
 
         // 第二路：引擎直连（常被风控拦，作为兜底）
         guard let res = await SharedBridge.search(keywords: kw, page: 1) else {
-            errorText = "搜索失败：浏览器与引擎两条路都没有结果"
+            errorText = webError ?? "搜索失败：浏览器与引擎两条路都没有结果"
             return
         }
         cards = SharedBridge.books(from: res).map(SharedBridge.card(from:))
         let engineHint = SharedBridge.degradedHint(from: res)
         if cards.isEmpty {
-            hint = engineHint ?? "没搜到结果。点下面「在网页里找」手动搜，或去设置页登录喜马拉雅后再试"
+            hint = engineHint ?? webError ?? "没搜到结果。换个关键词，或去设置页登录喜马拉雅后再试"
         }
     }
 }
@@ -217,17 +262,25 @@ struct AlbumView: View {
             if loading {
                 ProgressView("加载曲目…")
             } else if let errorText {
-                VStack(spacing: 10) {
+                VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 36)).foregroundStyle(.secondary)
                     Text(errorText).font(.footnote).multilineTextAlignment(.center)
                     if !SharedBridge.loggedIn {
                         Text("提示：未登录时专辑接口返回 status=76，去设置页登录后再试")
                             .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
+                    // P2-5：失败态给「重试」按钮，重新走 load()
+                    Button {
+                        Task { await load() }
+                    } label: {
+                        Label("重试", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(loading)
                 }.padding()
             } else {
-                List(episodes.indices, id: \.self) { i in
-                    let ep = episodes[i]
+                // P1-4 同源问题：模板站多页追加时下标会变，用 url 当稳定 key（每集播放页唯一）
+                List(episodes, id: \.url) { ep in
                     Button {
                         lastPlayedTrackId = ep.trackId
                         Player.shared.playEpisode(ep, book: card, sourceId: sourceId)
@@ -277,6 +330,11 @@ struct AlbumView: View {
     }
 
     private func load() async {
+        // P2-5：可重入 —— 重试前先把上一轮的失败态清掉，否则 loading 时还挂着错误文字
+        await MainActor.run {
+            loading = true
+            errorText = nil
+        }
         defer { loading = false }
         if let saved = LocalStore.progress(for: card.bookUrl) {
             lastPlayedTrackId = saved.trackId

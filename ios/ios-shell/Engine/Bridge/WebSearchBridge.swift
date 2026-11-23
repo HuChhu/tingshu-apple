@@ -14,20 +14,32 @@ import WebKit
 ///   ② 打开前把 HTTPCookieStorage 的 cookie 回灌进 WebView
 ///   ③ 用 WKScriptMessageHandler 收结构化 JSON，不轮询 evaluateJavaScript
 ///   ④ 一次一个搜索，并发抛 busy
-///   ⑤ 超时 20s，超时即失败不猜
+///   ⑤ 超时 20s（Self.timeoutSeconds），超时即失败不猜
 @MainActor
 final class WebSearchBridge: NSObject {
     static let shared = WebSearchBridge()
 
+    /// P1-9：超时秒数只在一个地方定义，文案从这里取，避免文案和实际值各写各的
+    static let timeoutSeconds: Int = 20
+
     enum BridgeError: Error, LocalizedError {
-        case busy, badURL, timeout, pageFailed, parseFailed
+        case busy
+        case badURL
+        case timeout
+        case pageFailed
+        case parseFailed(String?)
         var errorDescription: String? {
             switch self {
-            case .busy: return "上一个搜索还没结束"
-            case .badURL: return "搜索地址无效"
-            case .timeout: return "搜索超时（30 秒）"
-            case .pageFailed: return "页面加载失败"
-            case .parseFailed: return "页面结构解析失败"
+            case .busy:
+                return "上一次网页搜索还没结束，等它返回（最多 " + String(WebSearchBridge.timeoutSeconds) + " 秒）再搜"
+            case .badURL:
+                return "搜索地址无效"
+            case .timeout:
+                return "网页搜索超时（" + String(WebSearchBridge.timeoutSeconds) + " 秒内没拿到结果）"
+            case .pageFailed:
+                return "页面加载失败"
+            case .parseFailed(let detail):
+                return detail ?? "页面结构解析失败"
             }
         }
     }
@@ -41,6 +53,8 @@ final class WebSearchBridge: NSObject {
 
     /// 搜索关键词，返回原始字典数组（字段：albumId/title/author/cover/playCount/trackCount/isFinished）
     func search(keyword: String, page: Int = 1) async throws -> [[String: Any]] {
+        // P1-9：busy 以前被 ShellView 的 catch-all 吞成「没有结果」，
+        // 现在是明确的 .busy（errorDescription 里带真实超时秒数），上层原样展示。
         guard pending == nil else { throw BridgeError.busy }
         let q = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         guard let url = URL(string: "https://www.ximalaya.com/search/album/\(q)?page=\(page)") else {
@@ -55,7 +69,7 @@ final class WebSearchBridge: NSObject {
             webView = view
 
             timeoutTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(Self.timeoutSeconds) * 1_000_000_000)
                 guard let self, self.pending != nil else { return }
                 self.finish(.failure(BridgeError.timeout))
             }

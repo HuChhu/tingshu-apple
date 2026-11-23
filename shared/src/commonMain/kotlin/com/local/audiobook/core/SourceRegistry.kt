@@ -55,18 +55,25 @@ class SourceRegistry(
 
     // ---------- 模板站 ----------
 
+    /**
+     * 模板站实例表。
+     * P0（审计 2026-11-23）：原来这里 inline 装配，漏传 chapterPattern / chapterPrefix，
+     * tingdada 的 /mp3/N-N-N.html 在真机上全变成 /play/N-N-N.html → detail 返回 0 章。
+     * 现在统一走 TemplateSites.build()，CLI 与 App 只有一条装配路径。
+     */
     private val templates: Map<String, TemplateTingSite> =
-        TemplateSites.all.associate { cfg ->
-            cfg.key to TemplateTingSite(
-                fetcher = fetcher,
-                throttle = throttle,
-                base = cfg.base,
-                siteName = cfg.name,
-                cats = cfg.cats,
-                bookHrefPattern = cfg.bookHrefPattern,
-                sourceId = cfg.key,
-            )
-        }
+        TemplateSites.build(fetcher, throttle).associateBy { it.sourceId }
+
+    companion object {
+        /** 原生源 id：不在 when 里写的都归模板站，写错 id 会静默掉到 templates[null] 再报"没有这个源" */
+        val NATIVE_IDS = listOf("ximalaya-open", "kuwo", "bilibili", "qingting", "netease", "ximalaya")
+    }
+
+    /** 这个 id 是原生源还是模板站（UI 与排障用；未知 id 返回 null） */
+    fun kindOf(sourceId: String): String? = when (sourceId) {
+        in NATIVE_IDS -> if (sourceId == "ximalaya") "login" else "native"
+        else -> if (templates.containsKey(sourceId)) "template" else null
+    }
 
     // ---------- 统一接口 ----------
 
@@ -88,7 +95,9 @@ class SourceRegistry(
         out.add(SourceInfo("qingting", "蜻蜓FM", "HMAC-MD5 签名已逆出", "native"))
         out.add(SourceInfo("netease", "网易云音乐", "走 Meting 代理", "native"))
         out.add(SourceInfo("ximalaya", "喜马拉雅（登录版）", "需登录，可听会员内容", "login"))
+        // 模板站 id 必须和 NATIVE_IDS 不撞：撞了 list() 会出现两个同名条目，search() 也会静默走原生源
         for (cfg in TemplateSites.all) {
+            if (cfg.key in NATIVE_IDS) continue
             out.add(SourceInfo(cfg.key, cfg.name, "模板站 " + cfg.base, "template"))
         }
         return out
@@ -104,7 +113,7 @@ class SourceRegistry(
             "netease" -> netease.search(keywords, page)
             "ximalaya" -> ximalayaLogin.search(keywords, page)
             else -> templates[sourceId]?.search(keywords, page)
-                ?: SearchResult(emptyList(), 0, sourceId, page, "没有这个源：" + sourceId)
+                ?: SearchResult(emptyList(), 0, sourceId, page, unknownSource(sourceId))
         }
     } catch (e: SourceErrors) {
         SearchResult(emptyList(), 0, "error", page, describe(e))
@@ -122,7 +131,7 @@ class SourceRegistry(
             "netease" -> netease.bookDetail(bookUrl, loadEpisodes, false)
             "ximalaya" -> ximalayaLogin.bookDetail(bookUrl, loadEpisodes, false)
             else -> templates[sourceId]?.bookDetail(bookUrl, loadEpisodes, false)
-                ?: throw SourceErrors.ParseFailed("没有这个源：" + sourceId)
+                ?: throw SourceErrors.ParseFailed(unknownSource(sourceId))
         }
     }
 
@@ -136,7 +145,7 @@ class SourceRegistry(
             "netease" -> netease.audioExtractor().extract(url)
             "ximalaya" -> ximalayaLogin.audioExtractor().extract(url)
             else -> templates[sourceId]?.audioExtractor()?.extract(url)
-                ?: throw SourceErrors.ParseFailed("没有这个源：" + sourceId)
+                ?: throw SourceErrors.ParseFailed(unknownSource(sourceId))
         }
     }
 
@@ -150,6 +159,11 @@ class SourceRegistry(
     fun categories(sourceId: String): List<Pair<String, String>> {
         return TemplateSites.all.firstOrNull { it.key == sourceId }?.cats ?: emptyList()
     }
+
+    /** 区分"原生源写错"和"模板站 key 不存在"，不然排障时看不出是哪种 */
+    private fun unknownSource(sourceId: String): String =
+        if (sourceId in NATIVE_IDS) "原生源未接入该动作：" + sourceId
+        else "没有这个源：" + sourceId + "（可用模板站 " + TemplateSites.all.size + " 个）"
 
     private fun describe(e: SourceErrors): String = when (e) {
         is SourceErrors.NotFound -> "没有找到该资源"

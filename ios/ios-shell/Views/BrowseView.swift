@@ -1,6 +1,8 @@
 import SwiftUI
 
 /// 浏览：选源 → 分类 → 书单
+/// 修过的 P1/P2：P1-3（isTemplate 只看 kind）/ P1-8（__none__ 哨兵）/
+/// P2-1（分类选中态）/ P2-2（切源立刻 loading）/ P1-4（集列表 id 用 url）
 struct BrowseView: View {
 
     @AppStorage("enabledSources") private var enabledRaw: String = ""
@@ -14,6 +16,8 @@ struct BrowseView: View {
     @State private var hint: String = ""
     /// 代际计数：每次加载 +1，回调对不上就丢弃（P0-1 弱网切源竞态）
     @State private var requestGeneration = 0
+    /// 当前选中的分类下标（P2-1：横向按钮要高亮）
+    @State private var selectedCatIndex: Int = 0
 
     /// 与 SourcesView 的 defaultEnabled 保持同一份语义（P1-1）：
     /// 「空」= 默认启用集，不是全部。否则点「全关」后这里仍冒出 38 个源。
@@ -23,7 +27,12 @@ struct BrowseView: View {
         "tianxiatingshu", "picfxapp", "yitingshu", "aj006", "music189",
     ]
 
+    /// 「明确全关」哨兵（P1-8）：与「未设置（空串）」区分开，
+    /// 否则点「全关」后 enabledRaw 为空，被读成默认启用集，列表仍是 15 个开着。
+    private static let noneSentinel = "__none__"
+
     private var enabledSources: [SharedBridge.SourceItem] {
+        if enabledRaw == Self.noneSentinel { return [] }
         let set = enabledRaw.isEmpty
             ? Self.defaultEnabled
             : Set(enabledRaw.split(separator: ",").map(String.init))
@@ -34,6 +43,9 @@ struct BrowseView: View {
         sources.first { $0.id == selectedId }
     }
 
+    /// P1-3：只看 kind，不看 categories 是否为空。
+    /// 以前写成 kind == "template" && !categories.isEmpty，分类为空时
+    /// 直接掉进 else 分支只显示提示，loadCategory 永远不触发。
     private var isTemplate: Bool {
         currentSource?.kind == "template"
     }
@@ -42,39 +54,57 @@ struct BrowseView: View {
         NavigationStack {
             List {
                 Section("源") {
-                    Picker("当前源", selection: $selectedId) {
-                        ForEach(enabledSources, id: \.id) { s in
-                            Text(s.name).tag(s.id)
+                    if enabledSources.isEmpty {
+                        Text("源全关了。去「源管理」重新勾选至少一个。")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        Picker("当前源", selection: $selectedId) {
+                            ForEach(enabledSources, id: \.id) { s in
+                                Text(s.name).tag(s.id)
+                            }
                         }
-                    }
-                    .onChange(of: selectedId) { _, newValue in
-                        lastSourceId = newValue
-                        reload()
+                        .onChange(of: selectedId) { _, newValue in
+                            lastSourceId = newValue
+                            reload()
+                        }
                     }
                 }
 
-                if isTemplate && !categories.isEmpty {
+                // P1-3：模板站一律显示分类区（分类为空时给空态，不吞掉整个区）
+                if isTemplate {
                     Section("分类") {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(Array(categories.enumerated()), id: \.offset) { idx, cat in
-                                    Button(cat.0) {
-                                        loadCategory(idx)
+                        if categories.isEmpty {
+                            Text("这个站没配分类，点上面「搜索」标签用关键词找书。")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        } else {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    // id 用分类 URL 而不是下标：同站重载后顺序可能变，下标 key 会串行
+                                    ForEach(Array(categories.enumerated()), id: \.element.1) { idx, cat in
+                                        Button(cat.0) {
+                                            selectedCatIndex = idx
+                                            loadCategory(idx)
+                                        }
+                                        // P2-1：选中分类高亮。buttonStyle 的三目类型是基类 ButtonStyle，
+                                        // contentShape 会把点击区裁成胶囊大小，反而缩手，所以用 tint 区分。
+                                        .buttonStyle(.bordered)
+                                        .tint(idx == selectedCatIndex ? Color.accentColor : Color.secondary)
+                                        .font(.caption)
                                     }
-                                    .buttonStyle(.bordered)
-                                    .font(.caption)
                                 }
+                                .padding(.vertical, 4)
                             }
-                            .padding(.vertical, 4)
                         }
                     }
                 }
 
                 if loading {
                     Section {
-                        HStack {
+                        HStack(spacing: 10) {
                             Spacer()
-                            ProgressView("加载中…")
+                            ProgressView()
+                            Text("正在加载「\(currentSource?.name ?? selectedId)」…")
+                                .font(.footnote).foregroundStyle(.secondary)
                             Spacer()
                         }
                     }
@@ -96,6 +126,11 @@ struct BrowseView: View {
             .onAppear {
                 if sources.isEmpty { sources = SharedBridge.allSources() }
                 if selectedId.isEmpty { selectedId = lastSourceId }
+                // P1-9：上次选的源可能已被「全关」（__none__ 哨兵或列表里没有），
+                // 这时回落到默认启用集的第一个，否则整页只剩空选择框
+                if !enabledSources.contains(where: { $0.id == selectedId }) {
+                    selectedId = enabledSources.first?.id ?? ""
+                }
                 reload()
             }
             .refreshable { reload() }
@@ -105,30 +140,48 @@ struct BrowseView: View {
     private func reload() {
         // 切源/首帧：先作废所有在途请求（P0-1），再判空源
         requestGeneration += 1
-        guard !selectedId.isEmpty else { return } // P1-2：首帧未选中不打空源
-        categories = SharedBridge.categories(sourceId: selectedId).map { ($0.0, $0.1) }
+        // P2-2：切源立刻进 loading，等分类书单回来再退出
+        loading = true
         books = []
         hint = ""
-        if isTemplate && !categories.isEmpty {
+        categories = []
+        selectedCatIndex = 0
+        guard !selectedId.isEmpty else { // P1-2：首帧未选中不打空源
+            loading = false
+            return
+        }
+        categories = SharedBridge.categories(sourceId: selectedId).map { ($0.0, $0.1) }
+        if isTemplate {
+            if categories.isEmpty {
+                // P1-3：模板站但没配分类 —— 仍然给出可操作提示，loading 收掉
+                loading = false
+                hint = "这个模板站没配分类。点上面的『搜索』标签用关键词搜书。"
+                return
+            }
             loadCategory(0)
+        } else if currentSource != nil {
+            loading = false
+            hint = "点上面的『搜索』标签搜书。"
         } else {
-            hint = "点上面的『搜索』标签搜书，或在设置里挑一个模板站浏览。"
+            loading = false
+            hint = "先在上面挑一个源；一个都没有就去「源管理」勾上。"
         }
     }
 
     private func loadCategory(_ idx: Int) {
         requestGeneration += 1
         let gen = requestGeneration
+        let sourceId = selectedId
         loading = true
         hint = ""
         Task {
-            let list = await SharedBridge.categoryBooks(sourceId: selectedId, catIndex: idx)
+            let list = await SharedBridge.categoryBooks(sourceId: sourceId, catIndex: idx)
             await MainActor.run {
                 guard gen == requestGeneration else { return } // 旧代际回调，丢弃
                 books = list.map { SharedBridge.card(from: $0) }
                 loading = false
                 if books.isEmpty {
-                    hint = "这个分类没抓到书，换一个试试。"
+                    hint = "这个分类没抓到书，换一个分类试试。"
                 }
             }
         }
@@ -190,7 +243,9 @@ struct EpisodeListView: View {
             } else if !errorText.isEmpty {
                 ContentUnavailableView("读不到章节", systemImage: "exclamationmark.triangle", description: Text(errorText))
             } else {
-                List(episodes, id: \.index) { ep in
+                // P1-4：模板站的 index 是 1,2,3… 连续整数且可能重复，
+                // 用 url 当 id（每集播放页地址唯一），追加加载不会撞 key。
+                List(episodes, id: \.url) { ep in
                     Button {
                         play(ep)
                     } label: {

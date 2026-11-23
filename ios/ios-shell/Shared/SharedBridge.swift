@@ -62,6 +62,13 @@ enum SharedBridge {
         let coverUrl: String
         let url: String              // 上游给的曲目地址；trackId<=0 时作为 extract 回退输入
     }
+    /// 壳内自造一行（最近播放/队列续播用）：不经过 KMP，纯 Swift 值类型
+    static func episodeRow(title: String, trackId: Int64, index: Int32,
+                           durationMs: Int64, coverUrl: String, url: String) -> EpisodeRow {
+        EpisodeRow(title: title, trackId: trackId, index: index,
+                   durationMs: durationMs, coverUrl: coverUrl, url: url)
+    }
+
     static func row(from e: Episode) -> EpisodeRow {
         EpisodeRow(
             title: e.title,
@@ -152,7 +159,16 @@ enum SharedBridge {
     /// 浏览器搜索：走 WKWebView 打开喜马拉雅搜索页，抓结构化结果。
     /// 引擎直连会撞风控（riskLevel=5）与 webtk 缺失，这条路绕开这两个门。
     /// 返回空数组表示页面里没找到结果。
+    /// 失败时（含 P1-9 的 busy / 超时）把可读原因写进 lastWebSearchError，不再一律吞成「没结果」。
+    private static let webErrLock = NSLock()
+    private static var _lastWebSearchError: String?
+    static var lastWebSearchError: String? {
+        get { webErrLock.lock(); defer { webErrLock.unlock() }; return _lastWebSearchError }
+        set { webErrLock.lock(); defer { webErrLock.unlock() }; _lastWebSearchError = newValue }
+    }
+
     static func browserSearch(keyword: String, page: Int = 1) async -> [BookCard] {
+        lastWebSearchError = nil
         do {
             let raw = try await WebSearchBridge.shared.search(keyword: keyword, page: page)
             return raw.compactMap { dict -> BookCard? in
@@ -171,6 +187,9 @@ enum SharedBridge {
                 )
             }
         } catch {
+            // P1-9：busy / 超时 / 页面失败各自带明确文案，交给书架原样显示
+            let desc = error.localizedDescription
+            lastWebSearchError = desc.isEmpty ? String(describing: error) : desc
             return []
         }
     }

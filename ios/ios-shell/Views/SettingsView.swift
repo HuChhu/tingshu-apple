@@ -7,7 +7,10 @@ struct SettingsView: View {
     @State private var showLogin = false
     @State private var cookieNames: [String] = []
     @State private var prefs = LocalStore.loadPlayPrefs()
-    @State private var cacheRefresh = false
+    /// P1-10：缓存占用的触发号 —— 清缓存后 +1，让「已用空间」那一行重读磁盘，
+    /// 同时发通知让书架/专辑页的缓存角标跟着刷新（原来是写完没人读的死状态）
+    @State private var cacheRefresh = 0
+    @State private var cacheBytes: Int64 = AudioCache.totalBytes()
 
     var body: some View {
         NavigationStack {
@@ -72,10 +75,16 @@ struct SettingsView: View {
                 }
 
                 Section("缓存") {
-                    LabeledContent("已用空间", value: AudioCache.humanSize(AudioCache.totalBytes()))
+                    LabeledContent("已用空间", value: AudioCache.humanSize(cacheBytes))
                     Button("清除所有音频缓存", role: .destructive) {
                         AudioCache.clearAll()
-                        cacheRefresh.toggle()
+                        // P1-10：cacheRefresh 从「只写不读」改成真实触发点：
+                        // 值一变 → 下面的 reloadTask 跑一次 → 重读磁盘 + 通知别的页
+                        cacheRefresh += 1
+                    }
+                    .disabled(cacheBytes == 0)
+                    if cacheBytes == 0 {
+                        Text("当前没有缓存音频").font(.caption).foregroundStyle(.secondary)
                     }
                 }
 
@@ -111,12 +120,19 @@ struct SettingsView: View {
                 )
             }
             .onAppear { refresh() }
+            // P1-10：cacheRefresh 一变就重读缓存占用，并广播给书架/专辑页
+            .task(id: cacheRefresh) {
+                guard cacheRefresh > 0 else { return }
+                cacheBytes = AudioCache.totalBytes()
+                NotificationCenter.default.post(name: .audioCacheCleared, object: nil)
+            }
         }
     }
 
     private func refresh() {
         loggedIn = SharedBridge.loggedIn
         cookieNames = CookieStore.flatMap().keys.sorted()
+        cacheBytes = AudioCache.totalBytes()   // 进页面/登出后重读缓存占用
     }
 }
 
@@ -171,6 +187,11 @@ enum DeviceInfo {
         ]
         return table[id] ?? id
     }
+}
+
+extension Notification.Name {
+    /// 音频缓存被清空（P1-10）：书架/专辑页收到后重读缓存占用
+    static let audioCacheCleared = Notification.Name("tingshu.audioCacheCleared")
 }
 
 private extension Bundle {

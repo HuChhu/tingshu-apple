@@ -22,10 +22,20 @@ struct SourcesView: View {
         "tianxiatingshu", "picfxapp", "yitingshu", "aj006", "music189",
     ]
 
+    /// 「明确全关」哨兵（P1-8）。
+    /// 空串的语义是「用户没设置过 = 默认启用集」，所以不能拿空串当全关，
+    /// 否则点完「全关」列表里照样 15 个开关是开的。用 __none__ 把两种状态分开。
+    private static let noneSentinel = "__none__"
+
     private var enabled: Set<String> {
-        enabledRaw.isEmpty
-            ? defaultEnabled
-            : Set(enabledRaw.split(separator: ",").map(String.init))
+        if enabledRaw == Self.noneSentinel { return [] }
+        if enabledRaw.isEmpty { return defaultEnabled }
+        return Set(enabledRaw.split(separator: ",").map(String.init))
+    }
+
+    /// 写回：空集合必须落成哨兵，不能落成空串（否则又变回默认启用集）
+    private func persist(_ set: Set<String>) {
+        enabledRaw = set.isEmpty ? Self.noneSentinel : set.joined(separator: ",")
     }
 
     private var shown: [SharedBridge.SourceItem] {
@@ -83,14 +93,17 @@ struct SourcesView: View {
             .toolbar {
                 Menu("操作") {
                     Button("全开（原生 + 大站）") {
-                        enabledRaw = defaultEnabled.joined(separator: ",")
+                        persist(defaultEnabled)
                     }
                     Button("全关") {
-                        enabledRaw = ""
+                        // P1-8：落哨兵，不是空串；列表才会真的全关
+                        persist([])
                     }
                     Button("只留原生") {
-                        enabledRaw = ["ximalaya-open", "kuwo", "bilibili", "qingting", "netease"]
-                            .joined(separator: ",")
+                        persist(Set(["ximalaya-open", "kuwo", "bilibili", "qingting", "netease"]))
+                    }
+                    Button("恢复默认") {
+                        enabledRaw = ""
                     }
                 }
             }
@@ -104,7 +117,7 @@ struct SourcesView: View {
     private func toggle(_ id: String, _ on: Bool) {
         var cur = enabled
         if on { cur.insert(id) } else { cur.remove(id) }
-        enabledRaw = cur.joined(separator: ",")
+        persist(cur)
     }
 
     private func icon(for kind: String) -> String {

@@ -41,6 +41,42 @@ suspend fun main(args: Array<String>) {
         cookieProvider = cookieProvider,
     )
     when (mode) {
+        "tpl" -> runCatching {
+            val op = args.getOrNull(1) ?: "list"
+            when (op) {
+                "list" -> {
+                    out.println("模板站共 " + com.local.audiobook.core.engine.TemplateSites.all.size + " 个：")
+                    for (c in com.local.audiobook.core.engine.TemplateSites.all) {
+                        out.println("  [" + c.key + "] " + c.name + "  " + c.base + "  分类:" + c.cats.size)
+                    }
+                }
+                "cat" -> {
+                    val key = args.getOrElse(2) { "qmtsw" }
+                    val site = com.local.audiobook.core.engine.TemplateSites.byKey(key, KtorJsonFetcher(client), RequestThrottle(minIntervalMs = 1_000, clock = now))
+                        ?: throw IllegalStateException("没有这个站: " + key)
+                    val books = site.categoryBooks(0)
+                    out.println("TPL_CAT " + key + " books=" + books.size)
+                    for (b in books.take(8)) out.println("  " + b.title.take(36) + " | " + b.bookUrl)
+                }
+                "detail" -> {
+                    val key = args.getOrElse(2) { "qmtsw" }
+                    val url = args.getOrElse(3) { "" }
+                    val site = com.local.audiobook.core.engine.TemplateSites.byKey(key, KtorJsonFetcher(client), RequestThrottle(minIntervalMs = 1_000, clock = now))
+                        ?: throw IllegalStateException("没有这个站: " + key)
+                    val d = site.bookDetail(url, true, false)
+                    out.println("TPL_DETAIL title=" + d.book.title + " eps=" + d.episodes.size)
+                    for (e in d.episodes.take(3)) out.println("  #" + e.index + " " + e.url)
+                }
+                "audio" -> {
+                    val key = args.getOrElse(2) { "qmtsw" }
+                    val url = args.getOrElse(3) { "" }
+                    val site = com.local.audiobook.core.engine.TemplateSites.byKey(key, KtorJsonFetcher(client), RequestThrottle(minIntervalMs = 1_000, clock = now))
+                        ?: throw IllegalStateException("没有这个站: " + key)
+                    val a = site.audioExtractor().extract(url)
+                    out.println("TPL_AUDIO url=" + a.url)
+                }
+            }
+        }.onFailure { out.println("ERROR " + it::class.simpleName + " " + it.message) }
         "netease" -> runCatching {
             val n = com.local.audiobook.core.engine.NeteaseSource(
                 fetcher = KtorJsonFetcher(client),

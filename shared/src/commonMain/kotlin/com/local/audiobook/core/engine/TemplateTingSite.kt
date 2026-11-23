@@ -81,21 +81,40 @@ class TemplateTingSite(
 
     private fun parseBookList(html: String): List<Book> {
         val out = LinkedHashMap<String, Book>()
-        val hrefRe = Regex("<a[^>]+href=[\"']([^\"']+)[\"'][^>]*>([^<]{2,60})</a>")
         val idRe = Regex(bookHrefPattern)
-        for (m in hrefRe.findAll(html)) {
-            val href = m.groupValues[1]
-            val title = m.groupValues[2].trim()
-            if (title.length < 2) continue
+        val anchorRe = Regex("<a\\s+([^>]*)>", RegexOption.IGNORE_CASE)
+        val hrefRe = Regex("href=[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+        val titleRe = Regex("title=[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+
+        for (m in anchorRe.findAll(html)) {
+            val attrs = m.groupValues[1]
+            val href = hrefRe.find(attrs)?.groupValues?.get(1) ?: continue
             val idm = idRe.find(href) ?: continue
-            val id = idm.groupValues.getOrNull(1) ?: continue
-            if (id.isEmpty() || out.containsKey(id)) continue
+            val id = idm.groupValues.getOrNull(1)?.takeIf { it.isNotEmpty() } ?: continue
+            if (out.containsKey(id)) continue
+
+            var title = titleRe.find(attrs)?.groupValues?.get(1)?.trim() ?: ""
+            if (title.length < 2) {
+                // 文本节点只在 </a> 之前，不能越过标签边界
+                val afterIdx = m.range.last + 1
+                val endA = html.indexOf("</a>", afterIdx)
+                val stopAt = if (endA in 0..(afterIdx + 300)) endA else minOf(html.length, afterIdx + 200)
+                val tail = html.substring(afterIdx, stopAt)
+                title = tail.replace(Regex("<[^>]*>"), "").replace(Regex("\\s+"), " ").trim().take(60)
+            }
+            if (title.length < 2 || title.startsWith("http")) continue
+
+            val afterIdx2 = m.range.last + 1
+            val tail2 = html.substring(afterIdx2, minOf(html.length, afterIdx2 + 400))
+        val coverRe = Regex("(?:data-original|data-src|src)=[\"']([^\"']+\\.(?:jpg|jpeg|png|webp))", RegexOption.IGNORE_CASE)
+            val cover = coverRe.find(tail2)?.groupValues?.get(1)?.let { toAbs(it) } ?: ""
+
             out[id] = Book(
                 sourceId = sourceId,
                 bookUrl = toAbs(href),
                 title = title,
                 author = "",
-                coverUrl = "",
+                coverUrl = cover,
                 intro = "",
                 albumId = id.toLongOrNull() ?: 0L,
                 trackCount = 0L,

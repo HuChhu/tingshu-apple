@@ -80,9 +80,7 @@ object TemplateSites {
             base = "https://www.ebiaoyan.com",
             bookHrefPattern = "/ting/(\\d+)\\.html",
             cats = listOf(
-                "言情" to "https://www.ebiaoyan.com/list/1531.html", "武侠" to "https://www.ebiaoyan.com/list/1532.html",
-                "悬疑" to "https://www.ebiaoyan.com/list/1533.html", "历史" to "https://www.ebiaoyan.com/list/1534.html",
-                "军事" to "https://www.ebiaoyan.com/list/1535.html", "评书" to "https://www.ebiaoyan.com/list/1536.html",
+                "首页" to "https://www.ebiaoyan.com/list/1531.html",
             ),
         ),
         SiteConfig(
@@ -304,7 +302,9 @@ object TemplateSites {
             name = "Aj006",
             base = "http://aj006.com",
             bookHrefPattern = "/mp3/(\\d+)\\.html",
-            cats = listOf("玄幻" to "http://aj006.com/list/661.html", "言情" to "http://aj006.com/list/662.html", "都市" to "http://aj006.com/list/663.html"),
+            cats = listOf(
+                "首页" to "http://aj006.com/list/661.html",
+            ),
         ),
         SiteConfig(
             key = "jiongzei",

@@ -103,11 +103,14 @@ struct BrowseView: View {
     }
 
     private func loadCategory(_ idx: Int) {
+        requestGeneration += 1
+        let gen = requestGeneration
         loading = true
         hint = ""
         Task {
             let list = await SharedBridge.categoryBooks(sourceId: selectedId, catIndex: idx)
             await MainActor.run {
+                guard gen == requestGeneration else { return } // 旧代际回调，丢弃
                 books = list.map { SharedBridge.card(from: $0) }
                 loading = false
                 if books.isEmpty {

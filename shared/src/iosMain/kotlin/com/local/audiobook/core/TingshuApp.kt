@@ -7,6 +7,7 @@ import com.local.audiobook.core.engine.XimalayaOpenSource
 import com.local.audiobook.core.net.IosJsonFetcher
 import com.local.audiobook.data.ximalaya.RequestThrottle
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.engine.darwin.Darwin
 
 /**
@@ -26,7 +27,12 @@ class TingshuApp(
         override suspend fun refresh() {}
     },
 ) {
-    private val client: HttpClient = HttpClient(Darwin)
+    private val client: HttpClient = HttpClient(Darwin) {
+        install(HttpTimeout) {
+            requestTimeoutMillis = 20_000
+            connectTimeoutMillis = 15_000
+        }
+    }
 
     private val engine: SearchEngine = SearchEngine(
         fetcher = IosJsonFetcher(client),

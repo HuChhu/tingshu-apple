@@ -126,6 +126,16 @@ enum SharedBridge {
         }
     }
 
+    /// 带错误透传的 bridge（Swift 席 P0-3）：
+    /// 原来 error 被吞成 nil，UI 只能说「取不到播放地址」，
+    /// 分不清「需要登录」还是「网络断了」还是「章节下架」。
+    @discardableResult
+    private static func bridgeWithError<T>(_ body: (@escaping (T?, Error?) -> Void) -> Void) async -> (value: T?, error: Error?) {
+        await withCheckedContinuation { (cont: CheckedContinuation<(T?, Error?), Never>) in
+            body { value, error in cont.resume(returning: (value, error)) }
+        }
+    }
+
     /// 当前是否为已登录态（读 HTTPCookieStorage，规则与 Kotlin 侧一致）
     static var loggedIn: Bool { CookieStore.isLoggedInNow }
 
@@ -247,13 +257,32 @@ enum SharedBridge {
         }
     }
 
-    /// 按源取播放地址
+    /// 上一次取播放地址的失败原因（P0-3：让「需要登录」能区分于「网络断了」）。
+    /// Player 在 audio() 返回 nil 后读它，把真实原因显示给用户。
+    static var lastAudioError: String?
+
+    /// 按源取播放地址。失败返回 nil，同时把可读原因记进 lastAudioError。
     static func audio(sourceId: String, url: String) async -> ExtractedAudio? {
-        await bridge { done in
+        lastAudioError = nil
+        let result: ExtractedAudio? = await bridge { done in
             registry.audio(sourceId: sourceId, url: url, completionHandler: { a, e in
-                if e != nil { done(nil, e) } else { done(a, nil) }
+                if let a = a {
+                    done(a, nil)
+                } else {
+                    // K/N 桥：Kotlin 异常 → NSError(domain: "KotlinException")
+                    // 尝试按 SourceErrors 细分；不行就取 localizedDescription 兜底
+                    var reason = "未知错误"
+                    if let ke = e as? SourceErrors {
+                        reason = Self.message(for: ke)
+                    } else if let ns = e as? NSError {
+                        reason = ns.localizedDescription.isEmpty ? "未知错误" : ns.localizedDescription
+                    }
+                    await MainActor.run { Self.lastAudioError = reason }
+                    done(nil, e)
+                }
             })
         }
+        return result
     }
 
     /// 模板站分类浏览

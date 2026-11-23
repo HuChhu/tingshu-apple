@@ -146,10 +146,20 @@ struct WebViewRepresentable: UIViewRepresentable {
             fallback(webView)
         }
 
+        // P0-5（Swift 席）：302 跳转后 absoluteString 变化，
+        // 按「整串相等」判候选会误判未试过的候选 → 循环重载。
+        // 改成按 host 判定 + 8 次硬上限。
+        private var reloadCount = 0
+        private let maxReloads = 8
+
         private func fallback(_ webView: WKWebView) {
-            let current = webView.url?.absoluteString ?? ""
-            triedURLs.insert(current)
-            for candidate in urls where !triedURLs.contains(candidate.absoluteString) {
+            guard reloadCount < maxReloads else { return } // 无限重载熔断
+            reloadCount += 1
+            let currentHost = webView.url?.host ?? ""
+            let currentFull = webView.url?.absoluteString ?? ""
+            triedURLs.insert(currentFull)
+            for candidate in urls
+            where candidate.host != currentHost && !triedURLs.contains(candidate.absoluteString) {
                 triedURLs.insert(candidate.absoluteString)
                 webView.load(URLRequest(url: candidate))
                 return

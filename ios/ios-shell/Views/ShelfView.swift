@@ -169,9 +169,12 @@ struct ShelfView: View {
         if kw.hasPrefix("http") || (kw.count >= 4 && Int64(kw) != nil) {
             let id = SharedBridge.albumId(from: kw)
             if id > 0 {
+                // 占位卡：详情页会补全真实书名/作者/封面；
+                // 只有拉到详情（title 非「专辑 N」形态）才允许收藏（P0-4）
                 cards = [SharedBridge.BookCard(
                     bookUrl: "/album/\(id)", title: "专辑 \(id)", author: "",
                     coverUrl: "", albumId: id, trackCount: 0, playCount: 0, isFinished: nil)]
+                hint = "正在核对专辑信息…"
                 return
             }
         }
@@ -206,6 +209,8 @@ struct AlbumView: View {
     @State private var errorText: String?
     @State private var favorited = false
     @State private var lastPlayedTrackId: Int64 = -1
+    /// 占位卡解析后的真实卡（P0-4）
+    @State private var resolvedCard: SharedBridge.BookCard?
 
     var body: some View {
         Group {
@@ -245,9 +250,15 @@ struct AlbumView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    // P0-4：占位卡（title 形如「专辑 N」且未解析出真实卡）禁收藏，
+                    // 防止写入无封面死条目
+                    guard let favCard = resolvedCard ?? (card.title.hasPrefix("专辑 ") ? nil : card) else {
+                        errorText = "专辑信息还没加载完，稍等再收藏"
+                        return
+                    }
                     favorited = LocalStore.toggleFavorite(
-                        bookUrl: card.bookUrl, title: card.title, author: card.author,
-                        coverUrl: card.coverUrl, albumId: card.albumId,
+                        bookUrl: favCard.bookUrl, title: favCard.title, author: favCard.author,
+                        coverUrl: favCard.coverUrl, albumId: favCard.albumId,
                         sourceId: sourceId)
                 } label: {
                     Image(systemName: favorited ? "heart.fill" : "heart")
@@ -273,6 +284,11 @@ struct AlbumView: View {
         guard let detail = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl) else {
             errorText = "专辑加载失败（该源可能已下架或需要登录）"
             return
+        }
+        // P0-4：占位卡（title 形如「专辑 N」）拉到详情后回填真实信息，
+        // 防止收藏死条目（无封面无作者、sourceId 落错源）
+        if card.title.hasPrefix("专辑 "), detail.book.title != card.title {
+            resolvedCard = SharedBridge.card(from: detail.book)
         }
         episodes = SharedBridge.rows(from: detail)
         if episodes.isEmpty { errorText = "该专辑暂无曲目" }

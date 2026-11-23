@@ -120,7 +120,8 @@ final class Player: NSObject, ObservableObject {
         Task { @MainActor in
             guard let audio = await SharedBridge.audio(sourceId: sourceId, url: ep.url) else {
                 state = .error
-                errorText = "这个源取不到播放地址"
+                // P0-3：显示真实原因（登录失效/网络异常/触发限流），不再一律「取不到」
+                errorText = SharedBridge.lastAudioError ?? "这个源取不到播放地址"
                 return
             }
             guard let u = URL(string: audio.url) else {

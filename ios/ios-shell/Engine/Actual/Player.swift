@@ -396,6 +396,8 @@ final class Player: NSObject, ObservableObject {
         episodes: [SharedBridge.EpisodeRow]? = nil
     ) {
         currentSourceId = sourceId
+        // 关键：把整本集列表存进 currentEpisodes，否则自动连播/倒序永远拿不到"下一集"
+        if let list = episodes, !list.isEmpty { currentEpisodes = list }
         beginRequest(ep, book: book)
 
         let gen = requestGeneration

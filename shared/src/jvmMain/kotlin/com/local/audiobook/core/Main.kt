@@ -183,7 +183,7 @@ suspend fun main(args: Array<String>) {
                         " episodes=" + d.episodes.size)
                     for (e in d.episodes.take(5)) {
                         out.println("  #" + e.index + " " + e.title + " (" + (e.durationMs / 1000) + "s)")
-                        out.println("     url=" + e.url.take(90))
+                        out.println("     url=" + e.url)
                     }
                 }
                 "audio" -> {

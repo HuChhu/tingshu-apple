@@ -39,6 +39,8 @@ class TemplateTingSite(
     val cats: List<Pair<String, String>> = emptyList(),
     val bookHrefPattern: String = "/show/(\\d+)\\.html",
     val chapterPattern: String = "/play/(\\d+)-(\\d+)-(\\d+)\\.html",
+    /** 章节 URL 拼接前缀（默认 /play/；tingdada 用 /mp3/） */
+    val chapterPrefix: String = "/play/",
     val referrer: String = "",
     override val sourceId: String,
 ) : SourceActions {
@@ -160,7 +162,7 @@ class TemplateTingSite(
             if (!seen.add(key)) continue
             eps.add(Episode(
                 title = "第" + (eps.size + 1) + "集",
-                url = base.trimEnd('/') + "/play/" + key + ".html",
+                url = base.trimEnd('/') + chapterPrefix + key + ".html",
                 trackId = key.replace("-", "").toLongOrNull() ?: 0L,
                 index = eps.size + 1,
                 durationMs = 0L,

@@ -29,6 +29,16 @@ object TemplateSites {
         val base: String,
         val bookHrefPattern: String,
         val cats: List<Pair<String, String>>,
+        /**
+         * 章节链接正则（默认 /play/N-N-N.html）。
+         * 实测发现不同站差异很大：
+         *   tingdada 用 /mp3/N-N-N.html
+         *   ytysxs   章节就是 /N.html
+         * 之前这个参数没暴露，导致这几站 detail 返回 0 章。
+         */
+        val chapterPattern: String = "/play/(\\d+)-(\\d+)-(\\d+)\\.html",
+        /** 章节 URL 前缀（有的站章节不在 /play/ 下，要整段拼接） */
+        val chapterPrefix: String = "/play/",
     )
 
     val all: List<SiteConfig> = listOf(
@@ -263,6 +273,8 @@ object TemplateSites {
                 "都市" to "https://www.tingdada.com/html/553.html", "恐怖" to "https://www.tingdada.com/html/554.html",
                 "惊悚" to "https://www.tingdada.com/html/555.html", "推理" to "https://www.tingdada.com/html/556.html",
             ),
+            chapterPattern = "/mp3/(\\d+)-(\\d+)-(\\d+)\\.html",
+            chapterPrefix = "/mp3/",
         ),
         SiteConfig(
             key = "tingshuw",
@@ -356,6 +368,8 @@ object TemplateSites {
                 fetcher = fetcher, throttle = throttle,
                 base = c.base, siteName = c.name,
                 cats = c.cats, bookHrefPattern = c.bookHrefPattern,
+                chapterPattern = c.chapterPattern,
+                chapterPrefix = c.chapterPrefix,
                 sourceId = c.key,
             )
         }
@@ -366,6 +380,8 @@ object TemplateSites {
             fetcher = fetcher, throttle = throttle,
             base = c.base, siteName = c.name,
             cats = c.cats, bookHrefPattern = c.bookHrefPattern,
+            chapterPattern = c.chapterPattern,
+            chapterPrefix = c.chapterPrefix,
             sourceId = c.key,
         )
     }

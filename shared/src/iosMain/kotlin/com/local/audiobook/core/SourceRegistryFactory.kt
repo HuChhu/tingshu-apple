@@ -18,11 +18,15 @@ object SourceRegistryFactory {
         SourceRegistry(
             fetcher = IosJsonFetcher(
                 HttpClient(Darwin) {
-                    // 60 秒默认超时会把半死站点的 UI 卡死在「解析地址…」。
-                    // 15s 连接 + 20s 请求是听书场景的合理上限（Swift 席 P0-2）。
+                    // Swift 席 P0-2：默认 60s 会把半死站点卡死在「解析地址…」。
+                    // 实测席补充：aj006 播放页要 29.8s 才拉完（247KB 慢站），
+                    // 20s 会把本来能播的源判死。
+                    // 折中：连接 12s（连不上就是连不上），
+                    //       请求 32s（够慢站拉完，又不至于让用户干等一分钟）。
                     install(HttpTimeout) {
-                        requestTimeoutMillis = 20_000
-                        connectTimeoutMillis = 15_000
+                        requestTimeoutMillis = 32_000
+                        connectTimeoutMillis = 12_000
+                        socketTimeoutMillis = 32_000
                     }
                 }
             ),

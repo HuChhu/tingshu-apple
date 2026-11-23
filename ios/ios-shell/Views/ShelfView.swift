@@ -310,13 +310,27 @@ struct AlbumView: View {
     /// 正在/上次播放的是列表里第几行（-1 = 没有）。
     /// 原来用 trackId 判：源没给 trackId 时每集都是 0，于是整列变成「已播放」全红 —— 图一的 bug。
     @State private var playingRow: Int = -1
+    /// 分页：已加载的页 -> 该页集行
+    @State private var pageCache: [Int: [SharedBridge.EpisodeRow]] = [:]
+    @State private var pageSize = 50
+    @State private var lastLoadedPage = 1
+    @State private var loadedAll = false
+    @State private var totalChapters = 0
+    @State private var loadingMore = false
     @State private var lastPlayedTrackId: Int64 = -1
     @State private var lastPlayedRow: Int = -1
     /// 占位卡解析后的真实卡（P0-4）
     @State private var resolvedCard: SharedBridge.BookCard?
     /// 详情返回的专辑元信息（封面大图/简介/集数/播放量）
     @State private var detail: SharedBridge.BookCard?
+    /// 保留 bookDetail 结果，分页时复用同一份（不重复请求）
+    @State private var loadedDetail: BookDetail?
     @State private var introExpanded = false
+
+    /// 跨源唯一键（收藏/进度/分页都用它）
+    private var bookKey: BookKey {
+        BookKey(sourceId: sourceId, albumId: card.albumId, bookUrl: card.bookUrl)
+    }
 
     /// 展示用：优先用详情里的真实信息，其次累计卡，最后回退占位卡
     private var shown: SharedBridge.BookCard { detail ?? resolvedCard ?? card }
@@ -395,6 +409,19 @@ struct AlbumView: View {
                                     episodeRow(ep, row: idx)
                                 }
                                 .buttonStyle(.plain)
+                                // 滚到倒数第 5 条就预取下一页
+                                .onAppear {
+                                    if idx >= episodes.count - 5 { loadNextPageIfNeeded() }
+                                }
+                            }
+
+                            if loadingMore {
+                                HStack {
+                                    Spacer()
+                                    ProgressView().controlSize(.small)
+                                    Text("加载更多…").font(.caption).foregroundStyle(.secondary)
+                                    Spacer()
+                                }
                             }
                         }
                     } header: {
@@ -432,7 +459,9 @@ struct AlbumView: View {
             }
         }
         .task { await load() }
-        .onAppear { favorited = LocalStore.isFavorite(card.bookUrl) }
+        .onAppear {
+            favorited = LocalStore.isFavorite(sourceId: sourceId, albumId: card.albumId, bookUrl: card.bookUrl)
+        }
     }
 
     // MARK: - 专辑信息区
@@ -553,7 +582,7 @@ struct AlbumView: View {
             errorText = nil
         }
         defer { loading = false }
-        let saved = LocalStore.progress(for: card.bookUrl)
+        let saved = LocalStore.progress(for: bookKey)
         guard let d = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl) else {
             let why = SharedBridge.lastDetailError ?? ""
             errorText = why.isEmpty ? "专辑加载失败（该源可能已下架或需要登录）" : why
@@ -564,13 +593,43 @@ struct AlbumView: View {
             resolvedCard = SharedBridge.card(from: d.book)
         }
         detail = SharedBridge.card(from: d.book)
-        episodes = SharedBridge.rows(from: d)
+        loadedDetail = d
+        // 分页：只保留首页，其余页滚动到边界再拉（4820 集不再一次性进内存）
+        let all = SharedBridge.rows(from: d)
+        pageSize = min(ChapterPageMeta(albumKey: bookKey.id).pageSize, max(20, all.count))
+        totalChapters = Int(d.book.trackCount)
+        pageCache = [1: Array(all.prefix(pageSize))]
+        lastLoadedPage = 1
+        loadedAll = all.count <= pageSize
+        ChapterPager.recordPage(1, episodes: pageCache[1] ?? [], albumKey: bookKey.id,
+                                total: all.count, pageSize: pageSize)
+        episodes = pageCache[1] ?? []
         if episodes.isEmpty { errorText = "该专辑暂无曲目" }
         // 进度只存了 trackId，按它在列表里定位行号；trackId<=0 一律不标
         if let saved = saved, saved.trackId > 0 {
             lastPlayedTrackId = saved.trackId
             lastPlayedRow = episodes.firstIndex(where: { $0.trackId == saved.trackId }) ?? -1
         }
+    }
+
+    /// 滚动触底时加载下一页。已经在拉 / 已全加载 / 还没有首屏数据 → 直接返回
+    private func loadNextPageIfNeeded() {
+        guard !loadingMore, !loadedAll, !episodes.isEmpty else { return }
+        guard let d = loadedDetail else { return }
+        let all = SharedBridge.rows(from: d)
+        let next = lastLoadedPage + 1
+        let start = (next - 1) * pageSize
+        guard start < all.count else { loadedAll = true; return }
+
+        loadingMore = true
+        let slice = Array(all[start..<min(start + pageSize, all.count)])
+        pageCache[next] = slice
+        lastLoadedPage = next
+        episodes.append(contentsOf: slice)
+        ChapterPager.recordPage(next, episodes: slice, albumKey: bookKey.id,
+                                total: all.count, pageSize: pageSize)
+        if start + pageSize >= all.count { loadedAll = true }
+        loadingMore = false
     }
 
     private func dur(_ ms: Int64) -> String {

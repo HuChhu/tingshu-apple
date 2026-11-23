@@ -102,7 +102,10 @@ class TemplateTingSite(
                 val tail = html.substring(afterIdx, stopAt)
                 title = tail.replace(Regex("<[^>]*>"), "").replace(Regex("\\s+"), " ").trim().take(60)
             }
-            if (title.length < 2 || title.startsWith("http")) continue
+            // 书名一般不超过 40 字；超长的多半是简介文本
+            if (title.length < 2 || title.length > 40 || title.startsWith("http")) continue
+            // 过滤明显是正文的（含标点密集）
+            if (title.count { it == '，' || it == '。' } >= 2) continue
 
             val afterIdx2 = m.range.last + 1
             val tail2 = html.substring(afterIdx2, minOf(html.length, afterIdx2 + 400))

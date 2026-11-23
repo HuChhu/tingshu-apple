@@ -18,6 +18,8 @@
 		BF0000000000000000000009 /* BackgroundSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000009 /* BackgroundSession.swift */; };
 		BF000000000000000000000D /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000D /* SettingsView.swift */; };
 		BF000000000000000000000E /* LocalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000E /* LocalStore.swift */; };
+		BF410000000000000000000000 /* DiskCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE410000000000000000000000 /* DiskCache.swift */; };
+		BF400000000000000000000000 /* ChapterPager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE400000000000000000000000 /* ChapterPager.swift */; };
 		BF000000000000000000000F /* Layout.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000F /* Layout.swift */; };
 		BF0000000000000000000010 /* WebSearchBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000010 /* WebSearchBridge.swift */; };
 		BF0000000000000000000011 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000011 /* BrowseView.swift */; };
@@ -44,6 +46,8 @@
 		FE000000000000000000000C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FE000000000000000000000D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		FE000000000000000000000E /* LocalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalStore.swift; sourceTree = "<group>"; };
+		FE410000000000000000000000 /* DiskCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiskCache.swift; sourceTree = "<group>"; };
+		FE400000000000000000000000 /* ChapterPager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterPager.swift; sourceTree = "<group>"; };
 		FE000000000000000000000F /* Layout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Layout.swift; sourceTree = "<group>"; };
 		FE0000000000000000000010 /* WebSearchBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSearchBridge.swift; sourceTree = "<group>"; };
 		FE0000000000000000000011 /* BrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseView.swift; sourceTree = "<group>"; };
@@ -109,6 +113,8 @@
 			isa = PBXGroup;
 			children = (
 				FE000000000000000000000E /* LocalStore.swift */,
+				FE410000000000000000000000 /* DiskCache.swift */,
+				FE400000000000000000000000 /* ChapterPager.swift */,
 				FE000000000000000000000F /* Layout.swift */,
 				FE0000000000000000000012 /* LoginEndpoints.swift */,
 				FE0000000000000000000013 /* AudioCache.swift */,
@@ -260,6 +266,8 @@
 				BF0000000000000000000009 /* BackgroundSession.swift in Sources */,
 				BF000000000000000000000D /* SettingsView.swift in Sources */,
 				BF000000000000000000000E /* LocalStore.swift in Sources */,
+				BF410000000000000000000000 /* DiskCache.swift in Sources */,
+				BF400000000000000000000000 /* ChapterPager.swift in Sources */,
 				BF000000000000000000000F /* Layout.swift in Sources */,
 				BF0000000000000000000010 /* WebSearchBridge.swift in Sources */,
 				BF0000000000000000000011 /* BrowseView.swift in Sources */,

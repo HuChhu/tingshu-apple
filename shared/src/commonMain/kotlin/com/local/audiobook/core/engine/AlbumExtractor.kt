@@ -31,9 +31,8 @@ object AlbumExtractor {
      * 不让调用方各自猜字段名（之前就是这么错的）。
      */
     fun fromSearchFront(data: JsonObject?, sourceId: String): List<Book> {
-        val docs = data?.get("response")
-            ?.let { runCatching { it.jsonObject["docs"] }.getOrNull() }
-            ?.let { runCatching { it.jsonArray }.getOrNull() } ?: return emptyList()
+        val resp = (data?.get("response") as? JsonObject) ?: return emptyList()
+        val docs = (resp["docs"] as? JsonArray) ?: return emptyList()
         return docs.mapNotNull { el ->
             val o = el as? JsonObject ?: return@mapNotNull null
             val albumId = (o["id"] as? JsonPrimitive)?.content?.toLongOrNull() ?: return@mapNotNull null

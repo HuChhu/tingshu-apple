@@ -6,6 +6,8 @@ struct ShelfView: View {
     @State private var keyword = ""
     @State private var cards: [SharedBridge.BookCard] = []
     @State private var hint: String?
+    /// UI-03：搜索代际。连续提交时旧响应不能覆盖新结果。
+    @State private var searchGeneration = 0
     @State private var loading = false
     @State private var errorText: String?
     @State private var mode: Mode = .search
@@ -149,17 +151,25 @@ struct ShelfView: View {
             trackCount: 0, playCount: 0, isFinished: nil)
         // P1-07：优先用记录的 episodeUrl（模板集的 trackId 是数字，不能当 URL）
         // 老记录没有 episodeUrl 时回退到 trackId（登录版兼容），再不行用 bookUrl
-        let input = r.episodeUrl.isEmpty
-            ? (r.trackId > 0 ? String(r.trackId) : r.bookUrl)
-            : r.episodeUrl
+        // 老记录可能没有 episodeUrl：登录版能用 trackId 直接播，
+        // 但模板站的 trackId 也是数字，把它当 URL 会 ParseFailed。
+        // 判断依据：登录版的 url 形如纯数字是合法的；模板站必须要有页面 URL。
+        let isLoginSource = (r.sourceId == "ximalaya")
+        let input: String
+        if !r.episodeUrl.isEmpty {
+            input = r.episodeUrl
+        } else if isLoginSource && r.trackId > 0 {
+            input = String(r.trackId)
+        } else {
+            input = r.bookUrl      // 模板站缺 URL 时退到专辑页，至少不会拼出错误地址
+        }
         let ep = SharedBridge.episodeRow(
             title: r.episodeTitle, trackId: r.trackId, index: 1,
             durationMs: 0, coverUrl: "", url: input)
-        if r.sourceId == "ximalaya" || r.sourceId == "ximalaya-open" {
-            Player.shared.playEpisode(ep, book: card)
-        } else {
-            Player.shared.playEpisode(ep, book: card, sourceId: r.sourceId)
-        }
+        // UI-02：一律带 sourceId，不再对 ximalaya 特判。
+        // 之前 ximalaya-open（免登录）也被送进不带 sourceId 的重载，
+        // 播放器把 currentSourceId 写成 "ximalaya"，于是拿登录版去取地址 → 报「需要登录」。
+        Player.shared.playEpisode(ep, book: card, sourceId: r.sourceId)
         reloadLists()
     }
 
@@ -209,36 +219,41 @@ struct ShelfView: View {
     private func runSearch() async {
         let kw = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !kw.isEmpty else { return }
+
+        // UI-03：每次搜索递增代际，await 回来后校验，防止旧结果覆盖新关键词
+        searchGeneration += 1
+        let gen = searchGeneration
         loading = true; errorText = nil; hint = nil; cards = []
-        defer { loading = false }
+        defer { if gen == searchGeneration { loading = false } }
 
         if kw.hasPrefix("http") || (kw.count >= 4 && Int64(kw) != nil) {
             let id = SharedBridge.albumId(from: kw)
             if id > 0 {
-                // 占位卡：详情页会补全真实书名/作者/封面；
-                // 只有拉到详情（title 非「专辑 N」形态）才允许收藏（P0-4）
                 cards = [SharedBridge.BookCard(
                     bookUrl: "/album/\(id)", title: "专辑 \(id)", author: "",
-                    coverUrl: "", albumId: id, trackCount: 0, playCount: 0, isFinished: nil)]
+                    coverUrl: "", albumId: id,
+                    trackCount: 0, playCount: 0, isFinished: nil)]
                 hint = "正在核对专辑信息…"
                 return
             }
         }
 
-        // 第一路：浏览器搜索（真实 WebView，页面自己算 webtk、自己过风控）
+        // 第一路：浏览器搜索
         let web = await SharedBridge.browserSearch(keyword: kw, page: 1)
+        guard gen == searchGeneration else { return }   // 已被新搜索取代
         if !web.isEmpty {
             cards = web
             return
         }
-        // P1-9：网页搜索失败（busy / 超时 / 页面挂了）要说出原因，不能当成「没结果」
         let webError = SharedBridge.lastWebSearchError
 
-        // 第二路：引擎直连（常被风控拦，作为兜底）
+        // 第二路：引擎直连
         guard let res = await SharedBridge.search(keywords: kw, page: 1) else {
+            guard gen == searchGeneration else { return }
             errorText = webError ?? "搜索失败：浏览器与引擎两条路都没有结果"
             return
         }
+        guard gen == searchGeneration else { return }   // 旧结果直接丢弃
         cards = SharedBridge.books(from: res).map(SharedBridge.card(from:))
         let engineHint = SharedBridge.degradedHint(from: res)
         if cards.isEmpty {

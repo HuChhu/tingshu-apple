@@ -133,6 +133,8 @@ class SourceRegistry(
         }
     } catch (e: SourceErrors) {
         SearchResult(emptyList(), 0, "error", page, describe(e))
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e   // 协程取消必须透传，否则切源/退出时旧请求继续跑
     } catch (e: Throwable) {
         SearchResult(emptyList(), 0, "error", page, e.message ?: "未知错误")
     }
@@ -155,6 +157,8 @@ class SourceRegistry(
         BookDetailResult(detail = d)
     } catch (e: SourceErrors) {
         BookDetailResult(reason = describe(e))
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: Throwable) {
         BookDetailResult(reason = e.message ?: "未知错误")
     }
@@ -178,6 +182,8 @@ class SourceRegistry(
         AudioResult(audio = a)
     } catch (e: SourceErrors) {
         AudioResult(reason = describe(e))
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: Throwable) {
         AudioResult(reason = e.message ?: "未知错误")
     }
@@ -185,6 +191,8 @@ class SourceRegistry(
     /** 模板站的分类浏览。失败返回空列表，不抛异常（K/N fatal 防护）。 */
     suspend fun categoryBooks(sourceId: String, catIndex: Int): List<Book> = try {
         templates[sourceId]?.categoryBooks(catIndex) ?: emptyList()
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: Throwable) {
         emptyList()
     }

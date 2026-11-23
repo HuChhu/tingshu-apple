@@ -323,8 +323,9 @@ struct AlbumView: View {
     @State private var resolvedCard: SharedBridge.BookCard?
     /// 详情返回的专辑元信息（封面大图/简介/集数/播放量）
     @State private var detail: SharedBridge.BookCard?
-    /// 保留 bookDetail 结果，分页时复用同一份（不重复请求）
-    @State private var loadedDetail: BookDetail?
+    /// 分页用的全量集行（只在内存里存在一次，UI 只消费已加载的切片）。
+    /// 注意：不能存 BookDetail——那是 KMP 类型，Views 层禁止 import shared。
+    @State private var allEpisodes: [SharedBridge.EpisodeRow] = []
     @State private var introExpanded = false
 
     /// 跨源唯一键（收藏/进度/分页都用它）
@@ -593,9 +594,9 @@ struct AlbumView: View {
             resolvedCard = SharedBridge.card(from: d.book)
         }
         detail = SharedBridge.card(from: d.book)
-        loadedDetail = d
         // 分页：只保留首页，其余页滚动到边界再拉（4820 集不再一次性进内存）
         let all = SharedBridge.rows(from: d)
+        allEpisodes = all
         pageSize = min(ChapterPageMeta(albumKey: bookKey.id).pageSize, max(20, all.count))
         totalChapters = Int(d.book.trackCount)
         pageCache = [1: Array(all.prefix(pageSize))]
@@ -615,8 +616,8 @@ struct AlbumView: View {
     /// 滚动触底时加载下一页。已经在拉 / 已全加载 / 还没有首屏数据 → 直接返回
     private func loadNextPageIfNeeded() {
         guard !loadingMore, !loadedAll, !episodes.isEmpty else { return }
-        guard let d = loadedDetail else { return }
-        let all = SharedBridge.rows(from: d)
+        let all = allEpisodes
+        guard !all.isEmpty else { return }
         let next = lastLoadedPage + 1
         let start = (next - 1) * pageSize
         guard start < all.count else { loadedAll = true; return }

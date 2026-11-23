@@ -183,10 +183,14 @@ enum SharedBridge {
     }
 
     /// 搜索。引擎内部已限速(1/s)+预算(3次/30s)，失败降级返回空书单+hint，不抛。
+    ///
+    /// 2026-11-24：套 9s 硬超时。原来 Ktor Darwin 的 request 32s 会把风控/慢站拖满 32 秒，
+    /// 而搜索只要「有没有结果」，超时就当没有，让并发里另外两路接上。
     static func search(keywords: String, page: Int) async -> SearchResult? {
-        await bridge { done in
+        let call = { await bridge { done in
             app.search(keywords: keywords, page: Int32(page), completionHandler: { res, err in done(res, err) })
-        }
+        } }
+        return await withTimeout(seconds: searchTimeoutSeconds, call)
     }
 
     /// 浏览器搜索：走 WKWebView 打开喜马拉雅搜索页，抓结构化结果。
@@ -200,10 +204,11 @@ enum SharedBridge {
         set { webErrLock.lock(); defer { webErrLock.unlock() }; _lastWebSearchError = newValue }
     }
 
-    static func browserSearch(keyword: String, page: Int = 1) async -> [BookCard] {
+    static func browserSearch(keyword: String, page: Int = 1,
+                              timeout: Double = WebSearchBridge.webSoftSeconds) async -> [BookCard] {
         lastWebSearchError = nil
         do {
-            let raw = try await WebSearchBridge.shared.search(keyword: keyword, page: page)
+            let raw = try await WebSearchBridge.shared.search(keyword: keyword, page: page, timeout: timeout)
             return raw.compactMap { dict -> BookCard? in
                 guard let id = dict["albumId"] as? String, !id.isEmpty,
                       let title = dict["title"] as? String, !title.isEmpty else { return nil }
@@ -227,41 +232,197 @@ enum SharedBridge {
         }
     }
 
-    /// 两路搜索合并（修复「搜索不出来」）：
-    /// 之前是「浏览器先、失败就放弃第二路」，结果风控限流时整页空白。
-    /// 现在两路都跑、按 albumId 去重合并；两路都空时把最有信息量的那句原因交出去。
-    /// 先走引擎（不依赖 WebView，风控下仍可能成功），再走浏览器（绕开 riskLevel=5）。
-    static func searchBoth(keyword: String, page: Int = 1) async -> [BookCard] {
-        lastWebSearchError = nil
-        var merged: [BookCard] = []
-        var seen = Set<String>()
-        var reasons: [String] = []
+    // MARK: - 搜索（并发三路 + 早返回合并 + 缓存）
 
-        // 第一路：引擎直连（登录版通道，Cookie 已注入）
-        if let res = await search(keywords: keyword, page: page) {
-            for c in cards(from: res) {
+    /// 搜索总超时（秒）。引擎与网页两路都在这个时间内必须给出交代。
+    /// 依据：喜马拉雅 front 接口本机实测 0.4~2.5s；WKWebView 冷启动打开搜索页 3~6s。
+    /// 原来 32s(Ktor request) + 20s(WKWebView) 串行 = 最坏 52s，再加 open 兜底 32s ≈ 84s，
+    /// 对应用户报的「一分多钟」。
+    static let searchTimeoutSeconds: Double = 9
+
+    /// 网页那路的软上限：到点就用已经抓到的部分（可能是 0 条），不阻塞合并
+    static let webSoftTimeoutSeconds: Double = 6.5
+
+    /// 内存缓存 TTL 与磁盘缓存 schema（结构变了就 +1，旧缓存自动失效）
+    private static let searchCacheTTL: TimeInterval = 5 * 60
+    private static let searchCacheSchema = 1
+    private static let searchCacheNamespace = "search"
+
+    private struct CachedSearch: Codable {
+        var cards: [BookCard]
+        var savedAt: Date
+    }
+
+    /// 并发三路共用的累加器。TaskGroup 的 addTask 闭包是 @Sendable，
+    /// 结果只能往一个带锁的盒子里塞（不能用 var 捕获 —— Swift 6 语言模式会直接报错）。
+    private final class SearchBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _cards: [BookCard] = []
+        private var _reason: String?
+        private var _seen = Set<String>()
+
+        var cards: [BookCard] {
+            lock.lock(); defer { lock.unlock() }; return _cards
+        }
+
+        var reason: String? {
+            lock.lock(); defer { lock.unlock() }; return _reason
+        }
+
+        func add(_ items: [BookCard]) {
+            lock.lock(); defer { lock.unlock() }
+            for c in items {
                 let key = c.albumId > 0 ? String(c.albumId) : c.bookUrl
-                if seen.insert(key).inserted { merged.append(c) }
+                if _seen.insert(key).inserted { _cards.append(c) }
             }
-            if merged.isEmpty, let h = degradedHint(from: res) { reasons.append("引擎：" + h) }
-        } else {
-            reasons.append("引擎：请求失败")
         }
 
-        // 第二路：WKWebView 官方搜索页（拿得到真封面和播放量）
-        let web = await browserSearch(keyword: keyword, page: page)
-        for c in web {
-            let key = c.albumId > 0 ? String(c.albumId) : c.bookUrl
-            if seen.insert(key).inserted { merged.append(c) }
+        func note(_ why: String) {
+            lock.lock(); defer { lock.unlock() }
+            if _reason == nil { _reason = why }
         }
-        if web.isEmpty, let e = lastWebSearchError, !e.isEmpty { reasons.append("网页：" + e) }
+    }
 
-        if merged.isEmpty {
-            lastWebSearchError = reasons.isEmpty ? nil : reasons.joined(separator: " ／ ")
-        } else {
-            lastWebSearchError = nil
+    private static let cacheLock = NSLock()
+    private static var memCache: [String: (cards: [BookCard], at: Date)] = [:]
+
+    private static func cacheKey(_ keyword: String, _ page: Int) -> String {
+        keyword.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() + "#p" + String(page)
+    }
+
+    private static func cachedSearch(_ key: String) -> [BookCard]? {
+        cacheLock.lock()
+        let hit = memCache[key]
+        cacheLock.unlock()
+        if let hit, Date().timeIntervalSince(hit.at) < searchCacheTTL, !hit.cards.isEmpty {
+            return hit.cards
         }
+        // 磁盘缓存：跨启动也能命中（内存 5 分钟、磁盘同样 5 分钟，schema=1）
+        if let disk = DiskCache.read(CachedSearch.self, schema: searchCacheSchema,
+                                     namespace: searchCacheNamespace, key: key, ttl: searchCacheTTL),
+           !disk.isStale, !disk.value.cards.isEmpty {
+            cacheLock.lock(); memCache[key] = (disk.value.cards, disk.value.savedAt); cacheLock.unlock()
+            return disk.value.cards
+        }
+        return nil
+    }
+
+    private static func storeSearch(_ key: String, _ cards: [BookCard]) {
+        guard !cards.isEmpty else { return }
+        cacheLock.lock(); memCache[key] = (cards, Date()); cacheLock.unlock()
+        DiskCache.write(CachedSearch(cards: cards, savedAt: Date()), schema: searchCacheSchema,
+                        namespace: searchCacheNamespace, key: key)
+    }
+
+    /// 搜索（对外唯一入口，书架调这个）。
+    ///
+    /// 改造要点（2026-11-24，对应「搜索一分多钟」）：
+    ///   ① 命中缓存直接返回（5 分钟内同关键词 + 跨启动磁盘缓存）
+    ///   ② 未登录不再跑登录版引擎 / 网页两路（它们必失败，白耗 32s+20s），
+    ///      直接走免登录 search.ximalaya.com/front —— 实测这条不受 riskLevel 5 影响
+    ///   ③ 已登录时两条路（引擎直连 + WKWebView）真并发，谁先出结果谁先渲染，
+    ///      另一路最多再等 searchTimeoutSeconds，到点用已到的部分合并
+    ///   ④ 整体套 searchTimeoutSeconds 硬上限，任何一路卡死都不会拖住 UI
+    static func searchBoth(keyword: String, page: Int = 1) async -> [BookCard] {
+        await searchFast(keyword: keyword, page: page)
+    }
+
+    /// 带阶段回调的版本：每路一有结果就回调一次，UI 可以先渲染再追加
+    /// （书架用这个；其它调用方用 searchBoth 即可）
+    static func searchFast(keyword: String, page: Int = 1,
+                           onPartial: (@Sendable ([BookCard]) -> Void)? = nil) async -> [BookCard] {
+        lastWebSearchError = nil
+        let kw = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !kw.isEmpty else { return [] }
+
+        let key = cacheKey(kw, page)
+        if let hit = cachedSearch(key) {
+            CrashLog.search(kw, path: "cache", ms: 0, count: hit.count)
+            return hit
+        }
+
+        let t0 = Date()
+        let merged: [BookCard]
+        if !loggedIn {
+            // 未登录：登录版引擎与网页搜索都拿不到东西，跳过（这是原先最慢的一段）
+            merged = await searchOpenOnly(keyword: kw, page: page)
+        } else {
+            merged = await searchConcurrent(keyword: kw, page: page, onPartial: onPartial)
+        }
+        CrashLog.search(kw, path: loggedIn ? "concurrent" : "open-only",
+                        ms: Int(Date().timeIntervalSince(t0) * 1000), count: merged.count)
+        if !merged.isEmpty { storeSearch(key, merged) }
         return merged
+    }
+
+    /// 已登录：引擎直连 + WKWebView + 免登录 front 三路并发，先到的先用
+    private static func searchConcurrent(keyword: String, page: Int,
+                                         onPartial: (@Sendable ([BookCard]) -> Void)? = nil) async -> [BookCard] {
+        let box = SearchBox()
+        await withTaskGroup(of: (String, [BookCard], String?).self) { group in
+            group.addTask {
+                let t = Date()
+                let res = await search(keywords: keyword, page: page)
+                let cards = res.map { self.cards(from: $0) } ?? []
+                let why = res.flatMap { self.degradedHint(from: $0) }
+                CrashLog.search(keyword, path: "engine",
+                                ms: Int(Date().timeIntervalSince(t) * 1000), count: cards.count)
+                return ("engine", cards, why)
+            }
+            group.addTask {
+                let t = Date()
+                let cards = await browserSearch(keyword: keyword, page: page, timeout: webSoftTimeoutSeconds)
+                CrashLog.search(keyword, path: "web",
+                                ms: Int(Date().timeIntervalSince(t) * 1000), count: cards.count)
+                return ("web", cards, lastWebSearchError)
+            }
+            group.addTask {
+                let t = Date()
+                let cards = await searchOpenOnly(keyword: keyword, page: page)
+                CrashLog.search(keyword, path: "open",
+                                ms: Int(Date().timeIntervalSince(t) * 1000), count: cards.count)
+                return ("open", cards, nil)
+            }
+
+            // 硬上限：到点不管还有几路没回，直接用已合并的结果
+            let deadline = Task {
+                try? await Task.sleep(nanoseconds: UInt64(searchTimeoutSeconds * 1_000_000_000))
+                group.cancelAll()
+            }
+            for await (path, cards, why) in group {
+                box.add(cards)
+                if let why { box.note(path + "：" + why) }
+                if !cards.isEmpty, let onPartial { onPartial(box.cards) }   // 早返回：先到的先渲染
+            }
+            deadline.cancel()
+        }
+        lastWebSearchError = box.cards.isEmpty ? box.reason : nil
+        return box.cards
+    }
+
+    /// 未登录（或作为并发中的第三路）：只走免登录 front 接口，8~9s 内必有交代
+    private static func searchOpenOnly(keyword: String, page: Int) async -> [BookCard] {
+        let res = await withTimeout(seconds: searchTimeoutSeconds) {
+            await search(sourceId: "ximalaya-open", keywords: keyword, page: page)
+        }
+        guard let res else { return [] }
+        let cards = cards(from: res)
+        if cards.isEmpty, let h = degradedHint(from: res) { lastWebSearchError = "免登录源：" + h }
+        return cards
+    }
+
+    /// 给任意 async 调用套一个硬超时（超时返回 nil，不抛）
+    private static func withTimeout<T>(seconds: Double, _ op: @escaping () async -> T?) async -> T? {
+        await withTaskGroup(of: T?.self) { group in
+            group.addTask { await op() }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
     }
 
     /// 专辑详情 + 曲目。失败返回 nil。
@@ -356,12 +517,14 @@ enum SharedBridge {
 
     /// 按源搜索
     static func search(sourceId: String, keywords: String, page: Int) async -> SearchResult? {
-        await bridge { done in
+        let call = { await bridge { done in
             registry.search(sourceId: sourceId, keywords: keywords, page: Int32(page),
                             completionHandler: { r, e in
                 if e != nil { done(nil, e) } else { done(r, nil) }
             })
-        }
+        } }
+        // 同样套 9s 硬上限：模板站慢站（aj006 实测 29.8s）不该拖住搜索
+        return await withTimeout(seconds: searchTimeoutSeconds, call)
     }
 
     /// 按源详情。Kotlin 侧返回 BookDetailResult，失败时 reason 非空。

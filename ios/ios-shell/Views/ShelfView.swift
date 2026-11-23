@@ -275,13 +275,19 @@ struct ShelfView: View {
             }
         }
 
-        // 两条路都跑，按 albumId 去重合并（原来「浏览器失败就整体放弃」，风控时整页空白）
-        var merged = await SharedBridge.searchBoth(keyword: kw, page: 1)
-        guard gen == searchGeneration else { return }   // 旧结果直接丢弃
-        if merged.isEmpty {
-            merged = await searchOpenSource(kw)
+        // 2026-11-24 提速：searchBoth 内部已经是「缓存 → 并发三路 → 9s 硬上限」，
+        // 免登录兜底也在里面算作第三路，这里不再串行追加一次（原来那一次会再吃满 32s）。
+        let t0 = Date()
+        let merged = await SharedBridge.searchFast(keyword: kw, page: 1) { partial in
+            // 早返回：任一路先出结果就先上屏，后面那路到了再补
             guard gen == searchGeneration else { return }
+            Task { @MainActor in
+                guard gen == searchGeneration else { return }
+                if !partial.isEmpty { cards = partial; loading = false }
+            }
         }
+        CrashLog.search(kw, path: "total", ms: Int(Date().timeIntervalSince(t0) * 1000), count: merged.count)
+        guard gen == searchGeneration else { return }   // 旧结果直接丢弃
         if merged.isEmpty {
             let why = SharedBridge.lastWebSearchError
             hint = why ?? "没搜到结果。换个关键词，或去设置页登录喜马拉雅后再试"
@@ -291,14 +297,6 @@ struct ShelfView: View {
         hint = nil
     }
 
-    /// 喜马拉雅登录版两路都被风控时，免登录源走的是 search.ximalaya.com ——
-    /// 实测这个端点不受 riskLevel=5 影响，所以它是真正的兜底。
-    private func searchOpenSource(_ kw: String) async -> [SharedBridge.BookCard] {
-        guard let r = await SharedBridge.search(sourceId: "ximalaya-open", keywords: kw, page: 1) else {
-            return []
-        }
-        return SharedBridge.cards(from: r)
-    }
 }
 
 /// 专辑页：曲目列表，点集数播放。右上角收藏。

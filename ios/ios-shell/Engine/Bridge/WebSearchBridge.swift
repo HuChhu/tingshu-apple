@@ -19,8 +19,13 @@ import WebKit
 final class WebSearchBridge: NSObject {
     static let shared = WebSearchBridge()
 
-    /// P1-9：超时秒数只在一个地方定义，文案从这里取，避免文案和实际值各写各的
-    static let timeoutSeconds: Int = 20
+    /// P1-9：超时秒数只在一个地方定义，文案从这里取，避免文案和实际值各写各的。
+    /// 2026-11-24 搜索提速：默认降到 6s（原来 20s）——喜马拉雅搜索页冷启动 3~6s 就能出结果，
+    /// 20s 只会把「页面结构变了 / 风控要求登录」这类失败也拖满 20 秒。
+    static let timeoutSeconds: Int = 6
+
+    /// 实际等待秒数（可被调用方覆盖，并发场景下给软上限）
+    static let webSoftSeconds: Double = 6
 
     enum BridgeError: Error, LocalizedError {
         case busy
@@ -52,7 +57,8 @@ final class WebSearchBridge: NSObject {
     private static let handlerName = "tingshuSearch"
 
     /// 搜索关键词，返回原始字典数组（字段：albumId/title/author/cover/playCount/trackCount/isFinished）
-    func search(keyword: String, page: Int = 1) async throws -> [[String: Any]] {
+    func search(keyword: String, page: Int = 1,
+                timeout: Double = Double(WebSearchBridge.timeoutSeconds)) async throws -> [[String: Any]] {
         // P1-9：busy 以前被 ShellView 的 catch-all 吞成「没有结果」，
         // 现在是明确的 .busy（errorDescription 里带真实超时秒数），上层原样展示。
         guard pending == nil else { throw BridgeError.busy }
@@ -69,9 +75,15 @@ final class WebSearchBridge: NSObject {
             webView = view
 
             timeoutTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(Self.timeoutSeconds) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 guard let self, self.pending != nil else { return }
-                self.finish(.failure(BridgeError.timeout))
+                // 到点但已经抓到部分结果：交付部分结果，别当成失败
+                let partial = self.collected
+                if partial.isEmpty {
+                    self.finish(.failure(BridgeError.timeout))
+                } else {
+                    self.finish(.success(partial))
+                }
             }
 
             view.load(URLRequest(url: url))
@@ -254,6 +266,7 @@ extension WebSearchBridge: WKScriptMessageHandler {
               let body = message.body as? [String: Any],
               let items = body["items"] as? [[String: Any]] else { return }
         if items.isEmpty { return }
+        // 先存一份：万一后续又变空/超时，至少还有这次抓到的
         collected = items
         finish(.success(items))
     }

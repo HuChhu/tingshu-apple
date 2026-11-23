@@ -391,16 +391,21 @@ class TemplateTingSite(
         val out = mutableListOf<Episode>()
         val seen = mutableSetOf<String>()
         val linkRe = LINK_HREF
-        // P1-3：用本站的 chapterPattern 匹配章节链接，而不是硬编码 /v/
+        // P1-3：用本站的 chapterPattern 匹配章节链接。
+        // 但如果 chapterPattern 是默认的 /play/N-N-N.html 格式，而页面链接是 /v/ 格式（vbus），
+        // 需要回退到 PROGRAM_LINK（/v/）兜底，否则 vbus 的 HtmlPages 会失效。
         val chapterPatternRegex = runCatching { Regex(chapterPattern) }.getOrNull()
             ?: Regex("^(?:https?://[^/]+)?/v/(\\d+)/?$")
+        val isDefaultPlayPattern = chapterPattern.contains("/play/")
+        val vbusLinkRegex = Regex("^(?:https?://[^/]+)?/v/(\\d+)/?$")
         var html = firstHtml
         var page = 1
         while (page <= htmlMaxPages) {
             val links = mutableListOf<Pair<String, String>>()   // href -> 标题
             for (m in linkRe.findAll(html)) {
                 val href = m.groupValues[1]
-                if (!chapterPatternRegex.containsMatchIn(href)) continue
+                val matched = chapterPatternRegex.containsMatchIn(href) || (isDefaultPlayPattern && vbusLinkRegex.containsMatchIn(href))
+                if (!matched) continue
                 val abs = toAbs(unescape(href))
                 if (!seen.add(abs)) continue
                 val title = m.groupValues[2].replace(Regex("<[^>]*>"), " ").trim()
@@ -408,7 +413,8 @@ class TemplateTingSite(
             }
             if (links.isEmpty()) break
             for ((abs, t) in links) {
-                val id = chapterPatternRegex.find(abs)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+                val id = chapterPatternRegex.find(abs)?.groupValues?.get(1)?.toLongOrNull()
+                    ?: vbusLinkRegex.find(abs)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
                 out.add(Episode(
                     title = if (t.isBlank()) "第" + (out.size + 1) + "集" else unescape(t),
                     url = abs,
@@ -422,9 +428,21 @@ class TemplateTingSite(
             if (page > htmlMaxPages) break
             val pageVal = htmlPageStart + (page - 2) * htmlPageStep
             // P1-3：firstUrl 可能带页码后缀（如 /book/detail/<uuid>/0），
-            // 直接拼 {page} 会变成 /0/200，多了一个 /0。
-            // 先去掉末尾的纯数字页码段，再拼新页码。
-            val baseUrl = firstUrl.trimEnd('/').replace(Regex("/\\d+$"), "")
+            // 直接拼 {page} 会变成 /0/200。
+            // 但不能一刀切去掉末尾数字段——/album/1064 的 1064 是书籍 ID，不是页码。
+            // 只有末尾数字段等于 htmlPageStart 的初始值（即第一页的页码）时才去掉。
+            val trimmed = firstUrl.trimEnd('/')
+            val lastSeg = trimmed.substringAfterLast('/')
+            // 页码后缀的两种情形：
+            // ① 默认分页（htmlPageStart=2）：末尾数字段等于 2 才是页码（如 /album/1064/2）
+            // ② 自定义分页（htmlPageStart 非默认）：末尾数字段是页码（如 /book/detail/<uuid>/0）
+            //    此时书籍 ID 通常不是纯数字（如 UUID），所以末尾数字段一定是页码
+            val isPageSuffix = if (htmlPageStart == 2) {
+                lastSeg.toIntOrNull() == 2
+            } else {
+                lastSeg.toIntOrNull() != null
+            }
+            val baseUrl = if (isPageSuffix) trimmed.removeSuffix("/" + lastSeg) else trimmed
             html = getText(htmlPagePattern.replace("{url}", baseUrl).replace("{page}", pageVal.toString()), firstUrl)
                 ?: break
         }

@@ -42,7 +42,14 @@ struct SettingsView: View {
                         Text(cookieNames.joined(separator: "、"))
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)
-                        Text("只显示字段名，不显示值。")
+                        Text("只显示字段名，不显示值。
+                // 引擎侧 Cookie 注入状态：登录了却还提示「需要登录」时，一眼看出是这里的问题
+                if loggedIn {
+                    LabeledContent("引擎接管", value: SharedBridge.engineCookieLength > 0
+                        ? "已同步（\(SharedBridge.engineCookieLength) 字符）"
+                        : "未同步 · 点此重试")
+                        .onTapGesture { SharedBridge.injectCookie() }
+                }")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }

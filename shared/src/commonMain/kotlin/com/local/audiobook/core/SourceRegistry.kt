@@ -216,6 +216,7 @@ class SourceRegistry(
         is SourceErrors.RateLimited -> "触发限流，稍后再试"
         is SourceErrors.Network -> "网络异常：" + e.reason
         is SourceErrors.Auth -> "需要登录"
+        is SourceErrors.Vip -> e.reason
         is SourceErrors.Upstream -> "上游异常（HTTP " + e.status + "）"
     }
 }

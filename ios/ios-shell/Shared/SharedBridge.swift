@@ -153,7 +153,10 @@ enum SharedBridge {
     static var loggedIn: Bool { CookieStore.isLoggedInNow }
 
     /// 登录完成/登出后调用：清引擎侧 cookie 缓存，使下次请求重新读取
-    static func invalidateSession() { cookieProvider.invalidate() }
+    static func invalidateSession() {
+        cookieProvider.invalidate()
+        injectCookie()      // 登录态变了，重新灌给引擎
+    }
 
     /// 搜索。引擎内部已限速(1/s)+预算(3次/30s)，失败降级返回空书单+hint，不抛。
     static func search(keywords: String, page: Int) async -> SearchResult? {
@@ -232,6 +235,7 @@ enum SharedBridge {
         if error is SourceErrors.RateLimited { return "触发限流，稍后再试，不硬冲" }
         if let e = error as? SourceErrors.Network { return "网络异常：" + e.reason }  // v1.1: cause→reason
         if error is SourceErrors.Auth { return "登录态失效，请重新登录" }
+        if let e = error as? SourceErrors.Vip { return e.reason }
         if error is SourceErrors.Upstream { return "上游服务异常" }
         return "未知错误"
     }
@@ -239,7 +243,30 @@ enum SharedBridge {
     // ==================== 源管理（SourceRegistry） ====================
 
     /// 全局源注册表（38 个源：5 原生 + 1 登录版 + 32 模板站）
-    static let registry: SourceRegistry = SourceRegistryFactory().registry()
+    static let registry: SourceRegistry = {
+        let r = SourceRegistryFactory().registry()
+        // 启动即注入真实登录态（装机反馈：之前永远 null，导致登录版必报「需要登录」）
+        injectCookie()
+        return r
+    }()
+
+    /// 把 HTTPCookieStorage 里的喜马拉雅 Cookie 灌进引擎。
+    /// 登录成功、登出、启动时都要调。
+    static func injectCookie() {
+        let cookies = CookieStore.ximalayaCookies()
+        guard !cookies.isEmpty else {
+            SourceRegistryFactory().setCookie(nil)
+            return
+        }
+        // 拼成 "k=v; k2=v2" 形式
+        let header = cookies.map { $0.name + "=" + $0.value }.joined(separator: "; ")
+        SourceRegistryFactory().setCookie(header)
+    }
+
+    /// 供设置页显示：引擎当前拿到的 Cookie 长度（0 = 没注入）
+    static var engineCookieLength: Int {
+        Int(SourceRegistryFactory().currentCookieLength())
+    }
 
     /// 源描述（纯 Swift 类型，UI 层不碰 KMP 类型）
     struct SourceItem: Identifiable, Hashable {

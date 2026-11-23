@@ -14,11 +14,29 @@ import io.ktor.client.engine.darwin.Darwin
  */
 object SourceRegistryFactory {
 
-    /** 可选：由壳注入真实登录态（没有则匿名） */
+    /**
+     * 由壳注入的真实登录态。
+     *
+     * 关键修复（装机反馈 2026-11-23）：
+     * 之前这里写死返回 null —— 不管用户在设置页登没登录，
+     * 引擎永远拿不到 Cookie，登录版永远报「需要登录」。
+     * 现在改成可变实现：壳在启动和登录成功后调用 setCookie(...)，
+     * 把 CookieStore 里的真实 Cookie 灌进来。
+     */
+    private var injectedCookie: String? = null
+
     var cookieProvider: CookieProvider = object : CookieProvider {
-        override suspend fun cookie(): String? = null
+        override suspend fun cookie(): String? = injectedCookie
         override suspend fun refresh() {}
     }
+
+    /** 壳调用：把 HTTPCookieStorage 里的喜马拉雅 Cookie 串灌进引擎 */
+    fun setCookie(cookie: String?) {
+        injectedCookie = cookie
+    }
+
+    /** 供壳查询当前注入状态（排障用） */
+    fun currentCookieLength(): Int = injectedCookie?.length ?: 0
 
     private val singleton: SourceRegistry by lazy {
         SourceRegistry(

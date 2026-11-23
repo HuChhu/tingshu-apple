@@ -76,7 +76,14 @@ class XimalayaAudioExtractor(
             cookieProvider.refresh()   // 一次，不重试请求本身
             throw err ?: SourceErrors.Auth("需要登录")
         }
-        if (status != "ok") throw err ?: SourceErrors.ParseFailed("播放接口分类异常：" + status)
+        if (status != "ok") {
+            // 区分「要会员」和「其它异常」：上游常见文案/字段
+            val raw = json.toString()
+            if (raw.contains("vip", true) || raw.contains("付费", true) || raw.contains("会员", true)) {
+                throw err ?: SourceErrors.Vip("这一章需要喜马拉雅会员")
+            }
+            throw err ?: SourceErrors.ParseFailed("播放接口分类异常：" + status)
+        }
 
         val inner = json["data"] as? JsonObject
         val audioUrl = AlbumNormalizer.str(inner, "src", "url", "playUrl")

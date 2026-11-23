@@ -114,6 +114,8 @@ sealed class SourceErrors : RuntimeException() {
     data class RateLimited(val needVerification: Boolean) : SourceErrors()
     data class Network(val reason: String) : SourceErrors()
     data class Auth(val reason: String) : SourceErrors()
+    /** 需要付费会员（与「未登录」区分开，提示文案不同） */
+    data class Vip(val reason: String) : SourceErrors()
     data class Upstream(val status: Int) : SourceErrors()
 }
 

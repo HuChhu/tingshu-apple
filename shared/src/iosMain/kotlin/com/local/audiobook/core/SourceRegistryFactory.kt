@@ -13,7 +13,7 @@ import io.ktor.client.engine.darwin.Darwin
  */
 object SourceRegistryFactory {
 
-    private val instance: SourceRegistry by lazy {
+    private val singleton: SourceRegistry by lazy {
         SourceRegistry(
             fetcher = IosJsonFetcher(HttpClient(Darwin)),
             nowMs = { PlatformClock.nowMs() },
@@ -21,5 +21,5 @@ object SourceRegistryFactory {
     }
 
     /** 全局单例（共用连接池） */
-    fun shared(): SourceRegistry = instance
+    fun registry(): SourceRegistry = singleton
 }

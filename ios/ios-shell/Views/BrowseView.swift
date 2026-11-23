@@ -9,7 +9,7 @@ struct BrowseView: View {
     @State private var sources: [SharedBridge.SourceItem] = []
     @State private var selectedId: String = ""
     @State private var categories: [(String, String)] = []
-    @State private var books: [BookCard] = []
+    @State private var books: [SharedBridge.BookCard] = []
     @State private var loading = false
     @State private var hint: String = ""
 
@@ -120,7 +120,7 @@ struct BrowseView: View {
 
 /// 书单行
 struct BookRow: View {
-    let card: BookCard
+    let card: SharedBridge.BookCard
     let sourceId: String
 
     var body: some View {
@@ -159,10 +159,10 @@ struct BookRow: View {
 
 /// 章节列表
 struct EpisodeListView: View {
-    let card: BookCard
+    let card: SharedBridge.BookCard
     let sourceId: String
 
-    @State private var episodes: [EpisodeRow] = []
+    @State private var episodes: [SharedBridge.EpisodeRow] = []
     @State private var loading = true
     @State private var errorText: String = ""
 
@@ -208,7 +208,7 @@ struct EpisodeListView: View {
         }
     }
 
-    private func play(_ ep: EpisodeRow) {
+    private func play(_ ep: SharedBridge.EpisodeRow) {
         Player.shared.playEpisode(ep, book: card, sourceId: sourceId)
     }
 

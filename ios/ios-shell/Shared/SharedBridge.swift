@@ -204,7 +204,7 @@ enum SharedBridge {
     // ==================== 源管理（SourceRegistry） ====================
 
     /// 全局源注册表（38 个源：5 原生 + 1 登录版 + 32 模板站）
-    static let registry: SourceRegistry = SourceRegistryFactory.shared()
+    static let registry: SourceRegistry = SourceRegistryFactory().registry()
 
     /// 源描述（纯 Swift 类型，UI 层不碰 KMP 类型）
     struct SourceItem: Identifiable, Hashable {

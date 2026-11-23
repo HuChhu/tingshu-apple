@@ -241,9 +241,14 @@ final class Player: NSObject, ObservableObject {
     deinit {
         // Player.shared 是单例，deinit 实际只在「有代码 new 了第二个 Player」时触发；
         // 即便如此，也把最后一条进度和 observer 收拾干净，避免多实例场景留下脏 token。
-        let lastMs = Int64(queue.currentTime().seconds * 1000)   // synchronous，deinit 里可安全调
-        Player.persistOnDrop(item: current, book: currentBook, positionMs: lastMs,
-                            fallbackDurationMs: current?.durationMs ?? 0)
+        // deinit 是 nonisolated，不能调 @MainActor 方法。
+        // 直接写 UserDefaults（线程安全，无需主线程）。
+        if let b = currentBook, let ep = current {
+            let lastMs = Int64(queue.currentTime().seconds * 1000)
+            UserDefaults.standard.set(
+                ["trackId": ep.trackId, "positionMs": lastMs, "bookUrl": b.bookUrl],
+                forKey: "lastPlayback_" + b.bookUrl)
+        }
         NotificationCenter.default.removeObserver(self)          // 闭包式 addObserver 的 token 已由系统回收
     }
     // MARK: - 播放
@@ -612,7 +617,9 @@ final class Player: NSObject, ObservableObject {
         removeItemTimeObserver()
         installTimeObserver()              // 实例 observer 若已被摘，这里补回
         guard let item = observedItem else { return }
-        itemObserver = item.addPeriodicTimeObserver(
+        // AVPlayerItem 没有 addPeriodicTimeObserver，只能向 AVPlayer 注册；
+        // 用 observedItem 校验回调仍属于当前 item，换章后旧回调自动忽略。
+        itemObserver = queue.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main
         ) { [weak self] t in
             Task { @MainActor in
@@ -628,8 +635,8 @@ final class Player: NSObject, ObservableObject {
     }
 
     private func removeItemTimeObserver() {
-        if let t = itemObserver, let item = observedItem {
-            item.removeTimeObserver(t)      // 必须对同一个 item 实例摘，否则 AVFoundation 会崩
+        if let t = itemObserver {
+            queue.removeTimeObserver(t)
         }
         itemObserver = nil
     }

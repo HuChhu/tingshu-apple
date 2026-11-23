@@ -200,4 +200,74 @@ enum SharedBridge {
         if error is SourceErrors.Upstream { return "上游服务异常" }
         return "未知错误"
     }
+
+    // ==================== 源管理（SourceRegistry） ====================
+
+    /// 全局源注册表（38 个源：5 原生 + 1 登录版 + 32 模板站）
+    static let registry: SourceRegistry = SourceRegistryFactory.shared()
+
+    /// 源描述（纯 Swift 类型，UI 层不碰 KMP 类型）
+    struct SourceItem: Identifiable, Hashable {
+        let id: String
+        let name: String
+        let desc: String
+        /// "native" / "template" / "login"
+        let kind: String
+    }
+
+    /// 源清单（给 UI 列表用）
+    static func allSources() -> [SourceItem] {
+        registry.list().map { info in
+            SourceItem(
+                id: info.id,
+                name: info.name,
+                desc: info.desc,
+                kind: info.kind,
+            )
+        }
+    }
+
+    /// 按源搜索
+    static func search(sourceId: String, keywords: String, page: Int) async -> SearchResult? {
+        await bridge { done in
+            registry.search(sourceId: sourceId, keywords: keywords, page: Int32(page),
+                            completionHandler: { r, e in
+                if e != nil { done(nil, e) } else { done(r, nil) }
+            })
+        }
+    }
+
+    /// 按源详情
+    static func bookDetail(sourceId: String, bookUrl: String) async -> BookDetail? {
+        await bridge { done in
+            registry.bookDetail(sourceId: sourceId, bookUrl: bookUrl, loadEpisodes: true,
+                                completionHandler: { d, e in
+                if e != nil { done(nil, e) } else { done(d, nil) }
+            })
+        }
+    }
+
+    /// 按源取播放地址
+    static func audio(sourceId: String, url: String) async -> ExtractedAudio? {
+        await bridge { done in
+            registry.audio(sourceId: sourceId, url: url, completionHandler: { a, e in
+                if e != nil { done(nil, e) } else { done(a, nil) }
+            })
+        }
+    }
+
+    /// 模板站分类浏览
+    static func categoryBooks(sourceId: String, catIndex: Int) async -> [Book] {
+        let r = await bridge { done in
+            registry.categoryBooks(sourceId: sourceId, catIndex: Int32(catIndex),
+                                   completionHandler: { list, e in done(list, e) })
+        }
+        return r ?? []
+    }
+
+    /// 模板站分类名列表
+    static func categories(sourceId: String) -> [(String, String)] {
+        registry.categories(sourceId: sourceId).map { (String(describing: $0.first ?? ""), String(describing: $0.second ?? "")) }
+    }
+
 }

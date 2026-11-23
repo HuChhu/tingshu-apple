@@ -36,6 +36,42 @@ final class Player: NSObject, ObservableObject {
     // MARK: - 播放
 
     /// 点一集：先向引擎要播放地址，拿到再起播。地址有时效，不缓存。
+    /// 按源播放：先按 sourceId 取真实地址，再交给 AVPlayer。
+    /// 和 playEpisode 的区别是取地址走 SourceRegistry 而不是登录版引擎，
+    /// 这样 35 个源（含 29 个模板站）都能播。
+    func playEpisode(
+        _ ep: SharedBridge.EpisodeRow,
+        book: SharedBridge.BookCard? = nil,
+        sourceId: String
+    ) {
+        state = .loading
+        nowPlaying = ep.title
+        errorText = nil
+        current = ep
+        if let b = book { currentBook = b }
+
+        Task { @MainActor in
+            guard let audio = await SharedBridge.audio(sourceId: sourceId, url: ep.url) else {
+                state = .error
+                errorText = "这个源取不到播放地址"
+                return
+            }
+            guard let u = URL(string: audio.url) else {
+                state = .error
+                errorText = "返回的地址无法解析"
+                return
+            }
+            play(url: u, headers: audio.headers, expectedDurationMs: ep.durationMs)
+
+            LocalStore.pushRecent(.init(
+                bookUrl: currentBook?.bookUrl ?? "",
+                bookTitle: currentBook?.title ?? "",
+                trackId: ep.trackId,
+                episodeTitle: ep.title,
+                playedAt: Date()))
+        }
+    }
+
     func playEpisode(_ ep: SharedBridge.EpisodeRow, book: SharedBridge.BookCard? = nil) {
         state = .loading
         nowPlaying = ep.title

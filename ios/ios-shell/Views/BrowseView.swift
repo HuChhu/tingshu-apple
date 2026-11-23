@@ -1,153 +1,219 @@
 import SwiftUI
-import WebKit
 
-/// 在 App 内置浏览器里打开喜马拉雅，用户自己搜、自己点。
-///
-/// 为什么要有这个：
-///   引擎直连会被风控拦（riskLevel=5），WebView 自动抓取在未登录时页面也是空的。
-///   但用户手动操作时 —— 真人点击、真人登录、页面自己算 webtk —— 一切都能走通。
-///   所以提供这条手动通道：用户搜到专辑，点「使用此专辑」，我们只取 albumId。
-///
-/// 取到 albumId 之后，曲目列表和播放都走我们已有的链路。
+/// 浏览：选源 → 分类 → 书单
 struct BrowseView: View {
-    let initialKeyword: String
-    var onPick: (Int64, String) -> Void
-    var onCancel: () -> Void
 
-    @State private var pickedId: Int64?
-    @State private var pickedTitle: String = ""
+    @AppStorage("enabledSources") private var enabledRaw: String = ""
+    @AppStorage("lastSourceId") private var lastSourceId: String = "ximalaya-open"
+
+    @State private var sources: [SharedBridge.SourceItem] = []
+    @State private var selectedId: String = ""
+    @State private var categories: [(String, String)] = []
+    @State private var books: [BookCard] = []
+    @State private var loading = false
+    @State private var hint: String = ""
+
+    private var enabledSources: [SharedBridge.SourceItem] {
+        guard !enabledRaw.isEmpty else { return sources }
+        let set = Set(enabledRaw.split(separator: ",").map(String.init))
+        return sources.filter { set.contains($0.id) }
+    }
+
+    private var currentSource: SharedBridge.SourceItem? {
+        sources.first { $0.id == selectedId }
+    }
+
+    private var isTemplate: Bool {
+        currentSource?.kind == "template"
+    }
 
     var body: some View {
         NavigationStack {
-            Group {
-                if let id = pickedId {
-                    ConfirmView(
-                        albumId: id,
-                        title: pickedTitle.isEmpty ? "专辑 \(id)" : pickedTitle,
-                        onUse: { onPick(id, pickedTitle) },
-                        onBack: { pickedId = nil }
-                    )
-                } else {
-                    XimalayaBrowseWebView(
-                        initialKeyword: initialKeyword,
-                        onPickAlbum: { id, title in
-                            pickedId = id
-                            pickedTitle = title
+            List {
+                Section("源") {
+                    Picker("当前源", selection: $selectedId) {
+                        ForEach(enabledSources, id: \.id) { s in
+                            Text(s.name).tag(s.id)
                         }
-                    )
+                    }
+                    .onChange(of: selectedId) { _, newValue in
+                        lastSourceId = newValue
+                        reload()
+                    }
+                }
+
+                if isTemplate && !categories.isEmpty {
+                    Section("分类") {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(Array(categories.enumerated()), id: \.offset) { idx, cat in
+                                    Button(cat.0) {
+                                        loadCategory(idx)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .font(.caption)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                }
+
+                if loading {
+                    Section {
+                        HStack {
+                            Spacer()
+                            ProgressView("加载中…")
+                            Spacer()
+                        }
+                    }
+                } else if !hint.isEmpty {
+                    Section {
+                        Text(hint).font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+
+                if !books.isEmpty {
+                    Section("共 \(books.count) 本") {
+                        ForEach(books) { b in
+                            BookRow(card: b, sourceId: selectedId)
+                        }
+                    }
                 }
             }
-            .navigationTitle(pickedId == nil ? "在网页里找专辑" : "确认专辑")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { onCancel() }
+            .navigationTitle("浏览")
+            .onAppear {
+                if sources.isEmpty { sources = SharedBridge.allSources() }
+                if selectedId.isEmpty { selectedId = lastSourceId }
+                reload()
+            }
+            .refreshable { reload() }
+        }
+    }
+
+    private func reload() {
+        categories = SharedBridge.categories(sourceId: selectedId).map { ($0.0, $0.1) }
+        books = []
+        hint = ""
+        if isTemplate && !categories.isEmpty {
+            loadCategory(0)
+        } else {
+            hint = "点上面的『搜索』标签搜书，或在设置里挑一个模板站浏览。"
+        }
+    }
+
+    private func loadCategory(_ idx: Int) {
+        loading = true
+        hint = ""
+        Task {
+            let list = await SharedBridge.categoryBooks(sourceId: selectedId, catIndex: idx)
+            await MainActor.run {
+                books = list.map { SharedBridge.card(from: $0) }
+                loading = false
+                if books.isEmpty {
+                    hint = "这个分类没抓到书，换一个试试。"
                 }
             }
         }
     }
 }
 
-private struct ConfirmView: View {
-    let albumId: Int64
-    let title: String
-    var onUse: () -> Void
-    var onBack: () -> Void
+/// 书单行
+struct BookRow: View {
+    let card: BookCard
+    let sourceId: String
 
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "checkmark.circle").font(.system(size: 48)).foregroundStyle(.tint)
-            Text("已选中专辑").font(.headline)
-            Text(title).font(.subheadline).multilineTextAlignment(.center).lineLimit(3)
-            Text("专辑 ID：\(albumId)").font(.caption).foregroundStyle(.secondary)
+        NavigationLink {
+            EpisodeListView(card: card, sourceId: sourceId)
+        } label: {
+            HStack(spacing: 12) {
+                AsyncImage(url: URL(string: card.coverUrl)) { img in
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.secondary.opacity(0.15))
+                        .overlay(Image(systemName: "book.closed").foregroundStyle(.secondary))
+                }
+                .frame(width: 52, height: 52)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
 
-            Button("使用此专辑", action: onUse)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-
-            Button("重新选择", action: onBack)
-                .buttonStyle(.bordered)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(card.title).font(.body).lineLimit(2)
+                    if !card.author.isEmpty {
+                        Text(card.author).font(.caption).foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 8) {
+                        if card.trackCount > 0 {
+                            Text("\(card.trackCount) 集").font(.caption2).foregroundStyle(.secondary)
+                        }
+                        if card.playCount > 0 {
+                            Text("\(card.playCount) 播放").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
         }
-        .padding(28)
     }
 }
 
-private struct XimalayaBrowseWebView: UIViewRepresentable {
-    let initialKeyword: String
-    var onPickAlbum: (Int64, String) -> Void
+/// 章节列表
+struct EpisodeListView: View {
+    let card: BookCard
+    let sourceId: String
 
-    func makeUIView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration()
-        config.websiteDataStore = .default()          // 复用登录态
-        let uc = config.userContentController
-        uc.add(context.coordinator, name: "tingshuPick")
+    @State private var episodes: [EpisodeRow] = []
+    @State private var loading = true
+    @State private var errorText: String = ""
 
-        let view = WKWebView(frame: .zero, configuration: config)
-        view.navigationDelegate = context.coordinator
-        view.allowsBackForwardNavigationGestures = true
-        view.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-
-        // 回灌已登录 cookie
-        Task {
-            for host in CookieStore.hosts {
-                await CookieStore.restore(into: view, host: host)
+    var body: some View {
+        Group {
+            if loading {
+                ProgressView("读取章节…")
+            } else if !errorText.isEmpty {
+                ContentUnavailableView("读不到章节", systemImage: "exclamationmark.triangle", description: Text(errorText))
+            } else {
+                List(episodes) { ep in
+                    Button {
+                        play(ep)
+                    } label: {
+                        HStack {
+                            Text("\(ep.index).").font(.caption).foregroundStyle(.secondary)
+                                .frame(width: 28, alignment: .trailing)
+                            Text(ep.title).lineLimit(1)
+                            Spacer()
+                            if ep.durationMs > 0 {
+                                Text(fmt(ep.durationMs)).font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
             }
         }
-
-        let q = initialKeyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        // 移动端搜索页：在移动 UA 下渲染更完整，且专辑链接同样是 /album/{id}
-        if let url = URL(string: "https://m.ximalaya.com/search?keyword=\(q)") {
-            view.load(URLRequest(url: url))
-        }
-        return view
+        .navigationTitle(card.title)
+        .task { await load() }
     }
 
-    func updateUIView(_ view: WKWebView, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(onPickAlbum: onPickAlbum) }
-
-    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
-        let onPickAlbum: (Int64, String) -> Void
-        private var fired = false
-
-        init(onPickAlbum: @escaping (Int64, String) -> Void) { self.onPickAlbum = onPickAlbum }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            // 页面加载完挂点击拦截：点到 /album/{id} 链接就回传，不跳走
-            webView.evaluateJavaScript(Self.pickScript, completionHandler: nil)
+    private func load() async {
+        guard let detail = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl) else {
+            await MainActor.run {
+                errorText = "这个源暂时取不到章节"
+                loading = false
+            }
+            return
         }
-
-        func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == "tingshuPick",
-                  let body = message.body as? [String: Any],
-                  let idStr = body["albumId"] as? String, let id = Int64(idStr) else { return }
-            if fired { return }
-            fired = true
-            onPickAlbum(id, (body["title"] as? String) ?? "")
+        await MainActor.run {
+            episodes = SharedBridge.rows(from: detail)
+            loading = false
         }
+    }
 
-        /// 拦截专辑链接：阻止默认跳转，把 albumId 和标题回传 Swift
-        static let pickScript = #"""
-        (function(){
-          if (window.__tingshuPickInstalled) return;
-          window.__tingshuPickInstalled = true;
-          document.addEventListener('click', function(e){
-            var a = e.target.closest('a[href*="/album/"]');
-            if (!a) return;
-            var m = (a.getAttribute('href')||'').match(/\/album\/(\d+)/);
-            if (!m) return;
-            e.preventDefault();
-            e.stopPropagation();
-            var card = a.closest('li, div[class*="item"], div[class*="card"]') || a;
-            var txt = (card.innerText||'').split('\n').map(function(s){return s.trim();}).filter(Boolean);
-            try {
-              window.webkit.messageHandlers.tingshuPick.postMessage({
-                albumId: m[1],
-                title: txt[0] || a.getAttribute('title') || ''
-              });
-            } catch(err){}
-          }, true);
-        })();
-        """#
+    private func play(_ ep: EpisodeRow) {
+        Player.shared.playEpisode(ep, book: card, sourceId: sourceId)
+    }
+
+    private func fmt(_ ms: Int64) -> String {
+        let s = ms / 1000
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 }

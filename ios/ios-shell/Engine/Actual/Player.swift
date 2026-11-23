@@ -27,6 +27,11 @@ final class Player: NSObject, ObservableObject {
     @Published private(set) var durationText: String = "0:00"
 
     private let queue = AVQueuePlayer()
+    /// AVQueuePlayer 没有 .duration；统一从 currentItem 取（换章时随 item 更新）
+    private var currentDuration: Double {
+        guard let d = queue.currentItem?.duration.seconds, d.isFinite, d > 0 else { return 0 }
+        return d
+    }
     private var current: SharedBridge.EpisodeRow?
     private var currentBook: SharedBridge.BookCard?
 
@@ -57,7 +62,7 @@ final class Player: NSObject, ObservableObject {
         }
         cc.changePlaybackPositionCommand.addTarget { [weak self] ev in
             guard let self, let e = ev as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            self.seek(toFraction: e.positionTime / max(self.queue.duration.seconds, 1))
+            self.seek(toFraction: e.positionTime / max(self.currentDuration, 1))
             return .success
         }
     }
@@ -67,7 +72,7 @@ final class Player: NSObject, ObservableObject {
         info[MPMediaItemPropertyTitle] = current?.title ?? ""
         info[MPMediaItemPropertyArtist] = currentBook?.title ?? ""
         info[MPNowPlayingInfoPropertyPlaybackRate] = state == .playing ? 1.0 : 0.0
-        let dur = queue.duration.seconds
+        let dur = currentDuration
         if dur.isFinite && dur > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = dur
             info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = queue.currentTime().seconds

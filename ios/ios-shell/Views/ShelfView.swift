@@ -52,7 +52,9 @@ struct ShelfView: View {
             } else {
                 List(favorites) { f in
                     NavigationLink {
-                        AlbumView(card: SharedBridge.BookCard(
+                        AlbumView(
+                            sourceId: f.sourceId,
+                            card: SharedBridge.BookCard(
                             bookUrl: f.bookUrl, title: f.title, author: f.author,
                             coverUrl: f.coverUrl, albumId: f.albumId,
                             trackCount: 0, playCount: 0, isFinished: nil))
@@ -197,6 +199,8 @@ struct ShelfView: View {
 /// 专辑页：曲目列表，点集数播放。右上角收藏。
 struct AlbumView: View {
     let card: SharedBridge.BookCard
+    /// 该书所属源：选集播放和取曲目都按它走；默认喜马拉雅登录版（书架搜索流）
+    var sourceId: String = "ximalaya"
     @State private var episodes: [SharedBridge.EpisodeRow] = []
     @State private var loading = true
     @State private var errorText: String?
@@ -221,7 +225,7 @@ struct AlbumView: View {
                     let ep = episodes[i]
                     Button {
                         lastPlayedTrackId = ep.trackId
-                        Player.shared.playEpisode(ep, book: card)
+                        Player.shared.playEpisode(ep, book: card, sourceId: sourceId)
                     } label: {
                         HStack {
                             Text("\(ep.index)").font(.caption).foregroundStyle(.secondary).frame(width: 32, alignment: .trailing)
@@ -243,7 +247,8 @@ struct AlbumView: View {
                 Button {
                     favorited = LocalStore.toggleFavorite(
                         bookUrl: card.bookUrl, title: card.title, author: card.author,
-                        coverUrl: card.coverUrl, albumId: card.albumId)
+                        coverUrl: card.coverUrl, albumId: card.albumId,
+                        sourceId: sourceId)
                 } label: {
                     Image(systemName: favorited ? "heart.fill" : "heart")
                         .foregroundStyle(favorited ? Color.pink : Color.secondary)
@@ -265,8 +270,8 @@ struct AlbumView: View {
         if let saved = LocalStore.progress(for: card.bookUrl) {
             lastPlayedTrackId = saved.trackId
         }
-        guard let detail = await SharedBridge.bookDetail(bookUrl: card.bookUrl) else {
-            errorText = "专辑加载失败（可能已下架或需要登录）"
+        guard let detail = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl) else {
+            errorText = "专辑加载失败（该源可能已下架或需要登录）"
             return
         }
         episodes = SharedBridge.rows(from: detail)

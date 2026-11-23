@@ -140,9 +140,10 @@ class SourceRegistry(
         }
     }
 
-    /** 模板站的分类浏览 */
+    /** 模板站的分类浏览。失败时抛 SourceErrors，调用方转成提示。 */
     suspend fun categoryBooks(sourceId: String, catIndex: Int): List<Book> {
-        return templates[sourceId]?.categoryBooks(catIndex) ?: emptyList()
+        return templates[sourceId]?.categoryBooks(catIndex)
+            ?: throw SourceErrors.ParseFailed("没有这个源或不是模板站：" + sourceId)
     }
 
     /** 模板站的分类列表 */

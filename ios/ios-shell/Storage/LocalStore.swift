@@ -60,6 +60,24 @@ enum LocalStore {
         let coverUrl: String
         let albumId: Int64
         let addedAt: Date
+        /// 收藏时用的源（多源支持；旧数据缺字段时回落 ximalaya-open）
+        let sourceId: String
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            bookUrl = try c.decode(String.self, forKey: .bookUrl)
+            title = try c.decode(String.self, forKey: .title)
+            author = try c.decode(String.self, forKey: .author)
+            coverUrl = try c.decode(String.self, forKey: .coverUrl)
+            albumId = try c.decode(Int64.self, forKey: .albumId)
+            addedAt = try c.decode(Date.self, forKey: .addedAt)
+            sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
+        }
+        init(bookUrl: String, title: String, author: String, coverUrl: String, albumId: Int64, addedAt: Date, sourceId: String) {
+            self.bookUrl = bookUrl; self.title = title; self.author = author
+            self.coverUrl = coverUrl; self.albumId = albumId
+            self.addedAt = addedAt; self.sourceId = sourceId
+        }
     }
 
     static func loadFavorites() -> [Favorite] {
@@ -69,16 +87,21 @@ enum LocalStore {
     }
 
     @discardableResult
-    static func toggleFavorite(bookUrl: String, title: String, author: String,
-                               coverUrl: String, albumId: Int64) -> Bool {
+    static func toggleFavorite(
+        bookUrl: String, title: String, author: String,
+        coverUrl: String, albumId: Int64,
+        sourceId: String = "ximalaya"
+    ) -> Bool {
         var list = loadFavorites()
         if let i = list.firstIndex(where: { $0.bookUrl == bookUrl }) {
             list.remove(at: i)
             persist(list, favoriteKey)
             return false
         }
-        list.insert(Favorite(bookUrl: bookUrl, title: title, author: author,
-                             coverUrl: coverUrl, albumId: albumId, addedAt: Date()), at: 0)
+        list.insert(Favorite(
+            bookUrl: bookUrl, title: title, author: author,
+            coverUrl: coverUrl, albumId: albumId,
+            addedAt: Date(), sourceId: sourceId), at: 0)
         persist(list, favoriteKey)
         return true
     }
@@ -96,6 +119,24 @@ enum LocalStore {
         let trackId: Int64
         let episodeTitle: String
         let playedAt: Date
+        /// 用哪个源播的（多源支持；旧记录没有此字段时默认 ximalaya-open）
+        let sourceId: String
+
+        /// 兼容旧数据：缺 sourceId 字段时不崩，回落到喜马拉雅免登录源
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            bookUrl = try c.decode(String.self, forKey: .bookUrl)
+            bookTitle = try c.decode(String.self, forKey: .bookTitle)
+            trackId = try c.decode(Int64.self, forKey: .trackId)
+            episodeTitle = try c.decode(String.self, forKey: .episodeTitle)
+            playedAt = try c.decode(Date.self, forKey: .playedAt)
+            sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
+        }
+        init(bookUrl: String, bookTitle: String, trackId: Int64, episodeTitle: String, playedAt: Date, sourceId: String) {
+            self.bookUrl = bookUrl; self.bookTitle = bookTitle
+            self.trackId = trackId; self.episodeTitle = episodeTitle
+            self.playedAt = playedAt; self.sourceId = sourceId
+        }
     }
 
     static func pushRecent(_ r: Recent) {

@@ -8,6 +8,8 @@ import AVFoundation
 ///   - 播放进度每 5 秒落一次 LocalStore，退出/切后台也能续上
 @MainActor
 final class Player: NSObject, ObservableObject {
+    var currentSourceId: String = "ximalaya-open"
+
     static let shared = Player()
 
     enum PlayerState: String {
@@ -44,6 +46,7 @@ final class Player: NSObject, ObservableObject {
         book: SharedBridge.BookCard? = nil,
         sourceId: String
     ) {
+        currentSourceId = sourceId
         state = .loading
         nowPlaying = ep.title
         errorText = nil
@@ -68,11 +71,13 @@ final class Player: NSObject, ObservableObject {
                 bookTitle: currentBook?.title ?? "",
                 trackId: ep.trackId,
                 episodeTitle: ep.title,
-                playedAt: Date()))
+                playedAt: Date(),
+                sourceId: currentSourceId))
         }
     }
 
     func playEpisode(_ ep: SharedBridge.EpisodeRow, book: SharedBridge.BookCard? = nil) {
+        currentSourceId = "ximalaya"
         state = .loading
         nowPlaying = ep.title
         errorText = nil
@@ -99,7 +104,8 @@ final class Player: NSObject, ObservableObject {
                 bookTitle: currentBook?.title ?? "",
                 trackId: ep.trackId,
                 episodeTitle: ep.title,
-                playedAt: Date()))
+                playedAt: Date(),
+                sourceId: currentSourceId))
         }
     }
 

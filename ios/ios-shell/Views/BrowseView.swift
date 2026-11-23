@@ -13,9 +13,18 @@ struct BrowseView: View {
     @State private var loading = false
     @State private var hint: String = ""
 
+    /// 与 SourcesView 的 defaultEnabled 保持同一份语义（P1-1）：
+    /// 「空」= 默认启用集，不是全部。否则点「全关」后这里仍冒出 38 个源。
+    private static let defaultEnabled: Set<String> = [
+        "ximalaya-open", "kuwo", "bilibili", "qingting", "netease",
+        "leting8", "jiongzei", "ytysxs", "gushiya", "ihonghai",
+        "tianxiatingshu", "picfxapp", "yitingshu", "aj006", "music189",
+    ]
+
     private var enabledSources: [SharedBridge.SourceItem] {
-        guard !enabledRaw.isEmpty else { return sources }
-        let set = Set(enabledRaw.split(separator: ",").map(String.init))
+        let set = enabledRaw.isEmpty
+            ? Self.defaultEnabled
+            : Set(enabledRaw.split(separator: ",").map(String.init))
         return sources.filter { set.contains($0.id) }
     }
 
@@ -92,6 +101,7 @@ struct BrowseView: View {
     }
 
     private func reload() {
+        guard !selectedId.isEmpty else { return } // P1-2：首帧未选中不打空源
         categories = SharedBridge.categories(sourceId: selectedId).map { ($0.0, $0.1) }
         books = []
         hint = ""

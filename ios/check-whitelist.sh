@@ -14,7 +14,7 @@ if [ -n "$hits" ]; then echo "FAIL: Swift 内出现引擎栈禁词"; echo "$hits
 for f in $(find "$SRC" -name '*.swift' -not -path '*/.*'); do
   for imp in $(grep -E '^import[[:space:]]+[A-Za-z_][A-Za-z0-9_.]*' "$f" | sed 's/import[[:space:]]*//' | sort -u); do
     case "$imp" in
-      Foundation|SwiftUI|Combine|AVFoundation|WebKit|os) ;;
+      Foundation|SwiftUI|UIKit|Combine|AVFoundation|MediaPlayer|WebKit|os) ;;
       shared) [ "$(basename "$f")" = "SharedBridge.swift" ] || { echo "FAIL: $f 非法 import shared（仅 SharedBridge.swift 允许）"; fail=1; } ;;
       *) echo "FAIL: $f 白名单外 import: $imp"; fail=1 ;;
     esac

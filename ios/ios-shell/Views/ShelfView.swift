@@ -53,11 +53,11 @@ struct ShelfView: View {
                 List(favorites) { f in
                     NavigationLink {
                         AlbumView(
-                            sourceId: f.sourceId,
                             card: SharedBridge.BookCard(
                             bookUrl: f.bookUrl, title: f.title, author: f.author,
                             coverUrl: f.coverUrl, albumId: f.albumId,
-                            trackCount: 0, playCount: 0, isFinished: nil))
+                            trackCount: 0, playCount: 0, isFinished: nil),
+                            sourceId: f.sourceId)
                     } label: {
                         favRow(f, width: width)
                     }

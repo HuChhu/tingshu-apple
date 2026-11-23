@@ -1,5 +1,7 @@
 import Foundation
 import AVFoundation
+import MediaPlayer
+import UIKit
 
 /// 播放器。契约四态 → PlayerState。
 /// 纪律：
@@ -27,6 +29,62 @@ final class Player: NSObject, ObservableObject {
     private let queue = AVQueuePlayer()
     private var current: SharedBridge.EpisodeRow?
     private var currentBook: SharedBridge.BookCard?
+
+    // ---------- 锁屏/控制中心/耳机线控 ----------
+    // IPA 质检发现：全工程 0 处 MPRemoteCommandCenter，装上后锁屏无播放信息、
+    // 耳机线控失效。听书 App 这是体验硬伤（开车/运动场景全靠线控）。
+
+    private func installRemoteCommands() {
+        let cc = MPRemoteCommandCenter.shared()
+        cc.playCommand.addTarget { [weak self] _ in
+            self?.resume(); return .success
+        }
+        cc.pauseCommand.addTarget { [weak self] _ in
+            self?.pause(); return .success
+        }
+        cc.togglePlayPauseCommand.addTarget { [weak self] _ in
+            guard let self else { return .commandFailed }
+            if self.state == .playing { self.pause() } else { self.resume() }
+            return .success
+        }
+        cc.skipForwardCommand.preferredIntervals = [10]
+        cc.skipBackwardCommand.preferredIntervals = [10]
+        cc.skipForwardCommand.addTarget { [weak self] _ in
+            self?.skip(true); return .success
+        }
+        cc.skipBackwardCommand.addTarget { [weak self] _ in
+            self?.skip(false); return .success
+        }
+        cc.changePlaybackPositionCommand.addTarget { [weak self] ev in
+            guard let self, let e = ev as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            self.seek(toFraction: e.positionTime / max(self.queue.duration.seconds, 1))
+            return .success
+        }
+    }
+
+    private func updateNowPlayingInfo() {
+        var info: [String: Any] = [:]
+        info[MPMediaItemPropertyTitle] = current?.title ?? ""
+        info[MPMediaItemPropertyArtist] = currentBook?.title ?? ""
+        info[MPNowPlayingInfoPropertyPlaybackRate] = state == .playing ? 1.0 : 0.0
+        let dur = queue.duration.seconds
+        if dur.isFinite && dur > 0 {
+            info[MPMediaItemPropertyPlaybackDuration] = dur
+            info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = queue.currentTime().seconds
+        }
+        if let u = currentBook?.coverUrl, let url = URL(string: u) {
+            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: CGSize(width: 400, height: 400)) { _ in
+                // 同步取图（锁屏场景可接受；失败给空图不影响主流程）
+                if let d = try? Data(contentsOf: url), let img = UIImage(data: d) { return img }
+                return UIImage()
+            }
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func clearNowPlaying() {
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    }
     private var timeObserver: Any?
     private var lastSavedMs: Int64 = 0
 
@@ -124,6 +182,7 @@ final class Player: NSObject, ObservableObject {
         queue.removeAllItems()
         queue.insert(item, after: nil)
         queue.play()
+        updateNowPlayingInfo()
         state = .playing
         durationText = fmt(expectedDurationMs)
 
@@ -141,16 +200,19 @@ final class Player: NSObject, ObservableObject {
 
     func pause() {
         queue.pause()
+        updateNowPlayingInfo()
         if state == .playing { state = .paused }
         saveProgress(force: true)
     }
 
     func resume() {
         queue.play()
+        updateNowPlayingInfo()
         state = .playing
     }
 
     func stop() {
+        clearNowPlaying()
         saveProgress(force: true)
         queue.removeAllItems()
         state = .stopped
@@ -161,6 +223,7 @@ final class Player: NSObject, ObservableObject {
 
     /// 按偏好秒数快进/快退（对应安卓「快进快退秒数」，默认 10 秒）
     func skip(_ forward: Bool) {
+        defer { updateNowPlayingInfo() }
         guard let item = queue.currentItem, item.duration.isNumeric else { return }
         let secs = Double(LocalStore.loadPlayPrefs().seekSeconds)
         let target = item.currentTime().seconds + (forward ? secs : -secs)
@@ -180,6 +243,7 @@ final class Player: NSObject, ObservableObject {
     func resumeAfterInterruption() {
         guard !queue.items().isEmpty else { return }
         queue.play()
+        updateNowPlayingInfo()
         state = .playing
     }
 

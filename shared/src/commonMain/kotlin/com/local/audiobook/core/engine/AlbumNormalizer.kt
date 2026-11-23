@@ -30,7 +30,21 @@ object AlbumNormalizer {
         intro = str(a, "intro", "description", "shortIntro"),
         albumId = lng(a, "albumId", "id"),
         trackCount = lng(a, "tracks", "trackCount", "totalCount", "albumTrackCount"),
-        playCount = lng(a, "playCount", "albumPlayCount"),
-        isFinished = boo(a, "isFinished"),
+        playCount = lng(a, "playCount", "albumPlayCount", "playTimes", "play_cnt"),
+        isFinished = finishedFlag(a),
     )
+
+    /**
+     * 喜马拉雅的 isFinished 是数字：1=连载中，2=已完结（实测 76301417 返回 2）。
+     * 其它源可能给 bool 或 "true"/"1"。统一转成 Boolean?
+     */
+    private fun finishedFlag(a: JsonObject): Boolean? {
+        val e = a["isFinished"] ?: return null
+        val s = (e as? JsonPrimitive)?.content ?: return null
+        return when (s.lowercase()) {
+            "true", "1", "2", "finished", "complete" -> true
+            "false", "0", "3", "ongoing" -> false
+            else -> null
+        }
+    }
 }

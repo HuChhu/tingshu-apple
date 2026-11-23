@@ -252,6 +252,7 @@ struct AlbumView: View {
     let card: SharedBridge.BookCard
     /// 该书所属源：选集播放和取曲目都按它走；默认喜马拉雅登录版（书架搜索流）
     var sourceId: String = "ximalaya"
+
     @State private var episodes: [SharedBridge.EpisodeRow] = []
     @State private var loading = true
     @State private var errorText: String?
@@ -259,11 +260,17 @@ struct AlbumView: View {
     @State private var lastPlayedTrackId: Int64 = -1
     /// 占位卡解析后的真实卡（P0-4）
     @State private var resolvedCard: SharedBridge.BookCard?
+    /// 详情返回的专辑元信息（封面大图/简介/集数/播放量）
+    @State private var detail: SharedBridge.BookCard?
+    @State private var introExpanded = false
+
+    /// 展示用：优先用详情里的真实信息，其次累计卡，最后回退占位卡
+    private var shown: SharedBridge.BookCard { detail ?? resolvedCard ?? card }
 
     var body: some View {
         Group {
             if loading {
-                ProgressView("加载曲目…")
+                ProgressView("加载中…")
             } else if let errorText {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 36)).foregroundStyle(.secondary)
@@ -272,7 +279,6 @@ struct AlbumView: View {
                         Text("提示：未登录时专辑接口返回 status=76，去设置页登录后再试")
                             .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     }
-                    // P2-5：失败态给「重试」按钮，重新走 load()
                     Button {
                         Task { await load() }
                     } label: {
@@ -282,32 +288,49 @@ struct AlbumView: View {
                     .disabled(loading)
                 }.padding()
             } else {
-                // P1-4 同源问题：模板站多页追加时下标会变，用 url 当稳定 key（每集播放页唯一）
-                List(episodes, id: \.url) { ep in
-                    Button {
-                        lastPlayedTrackId = ep.trackId
-                        Player.shared.playEpisode(ep, book: card, sourceId: sourceId, episodes: episodes)
-                    } label: {
+                List {
+                    // ===== 专辑信息区 =====
+                    Section {
+                        albumHeader
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                    }
+
+                    // ===== 章节列表 =====
+                    Section {
+                        if episodes.isEmpty {
+                            Text("该专辑暂无曲目").font(.footnote).foregroundStyle(.secondary)
+                        } else {
+                            ForEach(episodes, id: \.url) { ep in
+                                Button {
+                                    lastPlayedTrackId = ep.trackId
+                                    Player.shared.playEpisode(ep, book: shown, sourceId: sourceId, episodes: episodes)
+                                } label: {
+                                    episodeRow(ep)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    } header: {
                         HStack {
-                            Text("\(ep.index)").font(.caption).foregroundStyle(.secondary).frame(width: 32, alignment: .trailing)
-                            Text(ep.title).lineLimit(1)
-                                .foregroundStyle(lastPlayedTrackId == ep.trackId ? Color.accentColor : Color.primary)
+                            Text("节目列表")
                             Spacer()
-                            if ep.durationMs > 0 {
-                                Text(dur(ep.durationMs)).font(.caption).foregroundStyle(.secondary)
+                            if !episodes.isEmpty {
+                                Text("共 \(episodes.count) 集")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                     }
-                    .buttonStyle(.plain)
                 }
+                .listStyle(.plain)
             }
         }
-        .navigationTitle(card.title)
+        .navigationTitle(shown.title)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    // P0-4：占位卡（title 形如「专辑 N」且未解析出真实卡）禁收藏，
-                    // 防止写入无封面死条目
                     guard let favCard = resolvedCard ?? (card.title.hasPrefix("专辑 ") ? nil : card) else {
                         errorText = "专辑信息还没加载完，稍等再收藏"
                         return
@@ -326,14 +349,112 @@ struct AlbumView: View {
         .onAppear { favorited = LocalStore.isFavorite(card.bookUrl) }
     }
 
-    private func dur(_ ms: Int64) -> String {
-        let s = ms / 1000
-        if s >= 3600 { return String(format: "%d:%02d:%02d", s/3600, (s%3600)/60, s%60) }
-        return String(format: "%d:%02d", s/60, s%60)
+    // MARK: - 专辑信息区
+
+    private var albumHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // 封面 + 标题 + 主播
+            HStack(alignment: .top, spacing: 14) {
+                AsyncImage(url: URL(string: shown.coverUrl)) { img in
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.secondary.opacity(0.15))
+                        .overlay(Image(systemName: "book.closed").foregroundStyle(.secondary))
+                }
+                .frame(width: 96, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(shown.title)
+                        .font(.headline)
+                        .lineLimit(3)
+                    if !shown.author.isEmpty {
+                        Label(shown.author, systemImage: "person.crop.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    HStack(spacing: 14) {
+                        if episodes.count > 0 {
+                            stat("\(episodes.count)", "集数")
+                        } else if shown.trackCount > 0 {
+                            stat("\(shown.trackCount)", "集数")
+                        }
+                        if shown.playCount > 0 {
+                            stat(playText(shown.playCount), "播放")
+                        }
+                        if shown.isFinished == true {
+                            Text("已完结").font(.caption2)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Capsule().fill(Color.green.opacity(0.15)))
+                                .foregroundStyle(.green)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+
+            // 简介
+            if !shown.intro.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("简介")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(shown.intro)
+                        .font(.footnote)
+                        .lineLimit(introExpanded ? nil : 3)
+                        .foregroundStyle(.primary.opacity(0.85))
+                    Button(introExpanded ? "收起" : "更多") {
+                        withAnimation { introExpanded.toggle() }
+                    }
+                    .font(.caption)
+                }
+                .padding(.horizontal, 16)
+            }
+
+            Divider().padding(.horizontal, 16)
+        }
+    }
+
+    private func stat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value).font(.subheadline).fontWeight(.semibold)
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func episodeRow(_ ep: SharedBridge.EpisodeRow) -> some View {
+        HStack(spacing: 10) {
+            Text("\(ep.index)")
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(width: 30, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ep.title)
+                    .lineLimit(2)
+                    .foregroundStyle(lastPlayedTrackId == ep.trackId ? Color.accentColor : Color.primary)
+                if lastPlayedTrackId == ep.trackId {
+                    Text("上次播放到")
+                        .font(.caption2)
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            Spacer()
+            if ep.durationMs > 0 {
+                Text(dur(ep.durationMs)).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func playText(_ n: Int64) -> String {
+        if n >= 100_000_000 { return String(format: "%.1f亿", Double(n) / 100_000_000) }
+        if n >= 10_000 { return String(format: "%.1f万", Double(n) / 10_000) }
+        return "\(n)"
     }
 
     private func load() async {
-        // P2-5：可重入 —— 重试前先把上一轮的失败态清掉，否则 loading 时还挂着错误文字
         await MainActor.run {
             loading = true
             errorText = nil
@@ -342,16 +463,22 @@ struct AlbumView: View {
         if let saved = LocalStore.progress(for: card.bookUrl) {
             lastPlayedTrackId = saved.trackId
         }
-        guard let detail = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl) else {
+        guard let d = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl) else {
             errorText = "专辑加载失败（该源可能已下架或需要登录）"
             return
         }
-        // P0-4：占位卡（title 形如「专辑 N」）拉到详情后回填真实信息，
-        // 防止收藏死条目（无封面无作者、sourceId 落错源）
-        if card.title.hasPrefix("专辑 "), detail.book.title != card.title {
-            resolvedCard = SharedBridge.card(from: detail.book)
+        // 回填真实元信息（封面/简介/集数/播放量都在 d.book 里）
+        if d.book.title != card.title {
+            resolvedCard = SharedBridge.card(from: d.book)
         }
-        episodes = SharedBridge.rows(from: detail)
+        detail = SharedBridge.card(from: d.book)
+        episodes = SharedBridge.rows(from: d)
         if episodes.isEmpty { errorText = "该专辑暂无曲目" }
+    }
+
+    private func dur(_ ms: Int64) -> String {
+        let s = ms / 1000
+        if s >= 3600 { return String(format: "%d:%02d:%02d", s/3600, (s%3600)/60, s%60) }
+        return String(format: "%d:%02d", s/60, s%60)
     }
 }

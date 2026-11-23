@@ -205,6 +205,8 @@ suspend fun main(args: Array<String>) {
             val d = engine.bookDetail(args.getOrElse(1) { "" }, loadEpisodes = true, loadFullPages = full)
             out.println("DETAIL albumId=" + d.book.albumId + " title=" + d.book.title +
                 " author=" + d.book.author + " trackCount=" + d.book.trackCount +
+                " playCount=" + d.book.playCount + " isFinished=" + d.book.isFinished +
+                " introLen=" + d.book.intro.length +
                 " loaded=" + d.episodes.size + " cookieNames=" + cookieProvider.loadedCookieNames())
             for (e in d.episodes.take(10)) out.println(trackRow(e))
             if (d.episodes.size > 10) out.println("TRACK ... 共 " + d.episodes.size + " 条")

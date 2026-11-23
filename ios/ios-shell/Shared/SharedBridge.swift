@@ -259,7 +259,14 @@ enum SharedBridge {
 
     /// 上一次取播放地址的失败原因（P0-3：让「需要登录」能区分于「网络断了」）。
     /// Player 在 audio() 返回 nil 后读它，把真实原因显示给用户。
-    static var lastAudioError: String?
+    /// 跨线程读写（回调线程写、@MainActor 读），用锁保护。
+    /// Swift 5 语言模式下不用 nonisolated(unsafe)（那是 5.10+ 才有）。
+    private static let audioErrLock = NSLock()
+    private static var _lastAudioError: String?
+    static var lastAudioError: String? {
+        get { audioErrLock.lock(); defer { audioErrLock.unlock() }; return _lastAudioError }
+        set { audioErrLock.lock(); defer { audioErrLock.unlock() }; _lastAudioError = newValue }
+    }
 
     /// 按源取播放地址。失败返回 nil，同时把可读原因记进 lastAudioError。
     static func audio(sourceId: String, url: String) async -> ExtractedAudio? {
@@ -277,7 +284,7 @@ enum SharedBridge {
                     } else if let ns = e as? NSError {
                         reason = ns.localizedDescription.isEmpty ? "未知错误" : ns.localizedDescription
                     }
-                    await MainActor.run { Self.lastAudioError = reason }
+                    Self.lastAudioError = reason
                     done(nil, e)
                 }
             })

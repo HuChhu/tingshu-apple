@@ -11,7 +11,6 @@ struct ShelfView: View {
     @State private var mode: Mode = .search
     @State private var favorites: [LocalStore.Favorite] = []
     @State private var recent: [LocalStore.Recent] = []
-    @State private var showBrowse = false
 
     enum Mode: String, CaseIterable { case search = "搜索", favorites = "收藏", recent = "最近" }
 
@@ -39,23 +38,6 @@ struct ShelfView: View {
             .onSubmit(of: .search) { Task { await runSearch() } }
             .onAppear { reloadLists() }
             .onChange(of: mode) { _, _ in reloadLists() }
-            .sheet(isPresented: $showBrowse) {
-                BrowseView(
-                    initialKeyword: keyword.trimmingCharacters(in: .whitespaces),
-                    onPick: { id, title in
-                        showBrowse = false
-                        cards = [SharedBridge.BookCard(
-                            bookUrl: "/album/\(id)",
-                            title: title.isEmpty ? "专辑 \(id)" : title,
-                            author: "",
-                            coverUrl: "",
-                            albumId: id,
-                            trackCount: 0, playCount: 0, isFinished: nil)]
-                        hint = nil
-                    },
-                    onCancel: { showBrowse = false }
-                )
-            }
         }
     }
 
@@ -106,16 +88,7 @@ struct ShelfView: View {
             VStack(spacing: 16) {
                 placeholder(icon: "books.vertical",
                             title: hint ?? "输入关键词开始搜索",
-                            detail: hint == nil ? "来自喜马拉雅官方接口，不硬冲风控" : "也可直接粘贴专辑分享链接")
-                if !keyword.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Button {
-                        showBrowse = true
-                    } label: {
-                        Label("在网页里找「\(keyword)」", systemImage: "safari")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .padding(.bottom, 40)
-                }
+                            detail: hint == nil ? "来自喜马拉雅官方接口，不硬冲风控" : "也可直接粘贴专辑分享链接；点底部「浏览」可按源找书")
             }
         } else {
             List {

@@ -160,11 +160,31 @@ struct BrowseView: View {
             }
             loadCategory(0)
         } else if currentSource != nil {
-            loading = false
-            hint = "点上面的『搜索』标签搜书。"
+            // 原生源没有分类接口：用通用热词预搜一批，给用户可点的起点
+            loadNativeRecommend()
         } else {
             loading = false
             hint = "先在上面挑一个源；一个都没有就去「源管理」勾上。"
+        }
+    }
+
+
+    /// 原生源（喜马拉雅/酷我/B站/蜻蜓/网易云）没有分类接口，
+    /// 用通用热词预搜一批，避免「浏览页一片空白」。
+    private func loadNativeRecommend() {
+        requestGeneration += 1
+        let gen = requestGeneration
+        let src = selectedId
+        Task {
+            let r = await SharedBridge.search(sourceId: src, keywords: "有声书", page: 1)
+            await MainActor.run {
+                guard gen == requestGeneration else { return }
+                books = (r?.books as? [Book])?.map { SharedBridge.card(from: $0) } ?? []
+                loading = false
+                if books.isEmpty {
+                    hint = "这个源没有分类浏览，点上面的搜索框搜书名。"
+                }
+            }
         }
     }
 

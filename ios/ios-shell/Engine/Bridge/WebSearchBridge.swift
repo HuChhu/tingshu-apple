@@ -202,7 +202,19 @@ final class WebSearchBridge: NSObject {
           var txt = (card.innerText || a.innerText || '').trim();
           var lines = txt.split('\n').map(function(s){return s.trim();}).filter(Boolean);
 
-          var title = lines[0] || (a.getAttribute('title') || '');
+          // 喜马拉雅搜索卡片里第一行常常是播放量（"23万"/"8562"/"12.3万"），
+          // 书名在它后面。跳过纯数字/带万或亿/带"播放"的行，取第一个像书名的。
+          function looksLikeCount(s){
+            if (!s) return true;
+            if (/^[\d.,]+\s*(万|亿|w|W|千)?$/.test(s)) return true;
+            if (/^(播放|订阅|集数|更新至|共)\s*[\d.]+/.test(s)) return true;
+            return false;
+          }
+          var title = '';
+          for (var k=0;k<lines.length;k++){
+            if (!looksLikeCount(lines[k])) { title = lines[k]; break; }
+          }
+          if (!title) title = (a.getAttribute('title') || '').trim();
           var author = '';
           for (var j=1;j<lines.length;j++){
             if (/作者|主播|播讲|演播/.test(lines[j])) { author = lines[j].replace(/^(作者|主播|播讲|演播)[:：]?\s*/, ''); break; }

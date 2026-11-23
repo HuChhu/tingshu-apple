@@ -30,6 +30,13 @@ struct PlayerView: View {
                     .font(.subheadline).foregroundStyle(.secondary)
                     .padding(.horizontal, 12).padding(.vertical, 5)
                     .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                if player.nowPlaying.isEmpty {
+                    Text("先去「书架」搜索，或到「浏览」按源找书")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 4)
+                }
             }
             .padding(.horizontal)
 

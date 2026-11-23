@@ -41,6 +41,24 @@ suspend fun main(args: Array<String>) {
         cookieProvider = cookieProvider,
     )
     when (mode) {
+        "sources" -> runCatching {
+            val reg = com.local.audiobook.core.SourceRegistry(KtorJsonFetcher(client), now)
+            val op = args.getOrNull(1) ?: "list"
+            when (op) {
+                "list" -> {
+                    val all = reg.list()
+                    out.println("SOURCES total=" + all.size)
+                    for (s0 in all) out.println("  [" + s0.kind + "] " + s0.id + "  " + s0.name)
+                }
+                "search" -> {
+                    val id = args.getOrElse(2) { "ximalaya-open" }
+                    val kw = args.getOrElse(3) { "三体" }
+                    val r = reg.search(id, kw, 1)
+                    out.println("SRC_SEARCH id=" + id + " books=" + r.books.size + " hint=" + (r.hint ?: ""))
+                    for (b in r.books.take(5)) out.println("  " + b.title.take(36) + " | " + b.bookUrl.take(50))
+                }
+            }
+        }.onFailure { out.println("ERROR " + it::class.simpleName + " " + it.message) }
         "tpl" -> runCatching {
             val op = args.getOrNull(1) ?: "list"
             when (op) {

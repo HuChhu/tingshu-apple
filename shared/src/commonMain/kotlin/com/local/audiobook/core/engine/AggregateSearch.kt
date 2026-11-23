@@ -121,7 +121,10 @@ object AggregateSearch {
         val byKey = LinkedHashMap<String, Book>()
         for (r in results) {
             for (b in r.books) {
-                val key = if (b.albumId > 0) "album:${b.albumId}" else "url:${b.bookUrl}"
+                // P1-7：跨源 albumId 可能相同（不同站的 ID 空间独立），
+                // 只用 albumId 去重会把喜马拉雅 123 和酷我 123 误合并。
+                // 加 sourceId 前缀，确保同书只在同源内去重。
+                val key = if (b.albumId > 0) "${b.sourceId}:album:${b.albumId}" else "${b.sourceId}:url:${b.bookUrl}"
                 val existing = byKey[key]
                 byKey[key] = if (existing == null) b else richer(existing, b)
             }

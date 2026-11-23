@@ -370,8 +370,12 @@ object TemplateSites {
             chapterPathGroup = -1,
             chapterMode = TemplateTingSite.ChapterMode.HtmlPages,
             htmlPagePattern = "{url}/{page}",
-            htmlPageStart = 40,
-            htmlPageStep = 40,
+            // P1-3：实测这本书 931 集，分页是 /0、/200、/400、/600、/800。
+            // 每页 200 集，不是 40。之前配 40 会请求不存在的页（302 回第 0 页），
+            // 导致永远只抓到第一页的 200 集。
+            htmlPageStart = 200,
+            htmlPageStep = 200,
+            htmlMaxPages = 10,   // 2000 集封顶，够用了
             // 播放器也是 JS：GET /api/app/docs-listen/<tingId>/audio-url 响应正文就是 mp3 直链
             audioApiUrlPattern = "/api/app/docs-listen/{id}/audio-url",
             cats = listOf("首页" to "http://www.yuetingba.cn/"),

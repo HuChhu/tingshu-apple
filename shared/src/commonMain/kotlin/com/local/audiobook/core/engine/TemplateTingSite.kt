@@ -221,10 +221,17 @@ class TemplateTingSite(
             ChapterMode.Html -> episodesFromHtml(html, book.coverUrl)
             ChapterMode.Playlist -> episodesFromPlaylists(html, bookUrl, book.coverUrl)
             ChapterMode.Json -> episodesFromJsonApi(bookUrl, book.coverUrl)
-            // 页面里已有章节链接就不再请第二页（yuetingba 首页 40 条就是完整列表时不要白跑）
-            ChapterMode.HtmlPages ->
-                if (html.contains(chapterToken) && chapterToken.isNotEmpty()) episodesFromHtml(html, book.coverUrl)
-                else episodesFromHtmlPages(bookUrl, html, book.coverUrl)
+            // P1-3：原逻辑是「页面包含章节链接就走单页」，导致 Yuetingba 永远只抓第一页。
+            // 改为：如果明确配置了 htmlPageStart/htmlPageStep（非默认值），强制走分页。
+            // 只有未配置分页参数时，才用「页面有链接就不翻页」的优化。
+            ChapterMode.HtmlPages -> {
+                val hasCustomPaging = htmlPageStart != 2 || htmlPageStep != 1
+                if (!hasCustomPaging && html.contains(chapterToken) && chapterToken.isNotEmpty()) {
+                    episodesFromHtml(html, book.coverUrl)
+                } else {
+                    episodesFromHtmlPages(bookUrl, html, book.coverUrl)
+                }
+            }
         }
         // 书名里的 "xxx集" / span.bz 是站点自己标的集数，比章节数可信；章节拿不到时至少别显示 0
         book = book.copy(trackCount = if (eps.isNotEmpty()) eps.size.toLong() else book.trackCount)
@@ -384,13 +391,16 @@ class TemplateTingSite(
         val out = mutableListOf<Episode>()
         val seen = mutableSetOf<String>()
         val linkRe = LINK_HREF
+        // P1-3：用本站的 chapterPattern 匹配章节链接，而不是硬编码 /v/
+        val chapterPatternRegex = runCatching { Regex(chapterPattern) }.getOrNull()
+            ?: Regex("^(?:https?://[^/]+)?/v/(\\d+)/?$")
         var html = firstHtml
         var page = 1
         while (page <= htmlMaxPages) {
             val links = mutableListOf<Pair<String, String>>()   // href -> 标题
             for (m in linkRe.findAll(html)) {
                 val href = m.groupValues[1]
-                if (!PROGRAM_LINK.containsMatchIn(href)) continue
+                if (!chapterPatternRegex.containsMatchIn(href)) continue
                 val abs = toAbs(unescape(href))
                 if (!seen.add(abs)) continue
                 val title = m.groupValues[2].replace(Regex("<[^>]*>"), " ").trim()
@@ -398,7 +408,7 @@ class TemplateTingSite(
             }
             if (links.isEmpty()) break
             for ((abs, t) in links) {
-                val id = PROGRAM_LINK.find(abs)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+                val id = chapterPatternRegex.find(abs)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
                 out.add(Episode(
                     title = if (t.isBlank()) "第" + (out.size + 1) + "集" else unescape(t),
                     url = abs,
@@ -411,7 +421,11 @@ class TemplateTingSite(
             page += 1
             if (page > htmlMaxPages) break
             val pageVal = htmlPageStart + (page - 2) * htmlPageStep
-            html = getText(htmlPagePattern.replace("{url}", firstUrl.trimEnd('/')).replace("{page}", pageVal.toString()), firstUrl)
+            // P1-3：firstUrl 可能带页码后缀（如 /book/detail/<uuid>/0），
+            // 直接拼 {page} 会变成 /0/200，多了一个 /0。
+            // 先去掉末尾的纯数字页码段，再拼新页码。
+            val baseUrl = firstUrl.trimEnd('/').replace(Regex("/\\d+$"), "")
+            html = getText(htmlPagePattern.replace("{url}", baseUrl).replace("{page}", pageVal.toString()), firstUrl)
                 ?: break
         }
         return out
@@ -647,6 +661,7 @@ class TemplateTingSite(
         private val PROGRAM_LINK = Regex("^(?:https?://[^/]+)?/v/(\\d+)/?$")
         /** <a ... href="/v/5893" ...>标题</a> */
         private val LINK_HREF = Regex("<a\\s[^>]*href=[\"']([^\"']+)[\"'][^>]*>([^<]{0,80})</a>", RegexOption.IGNORE_CASE)
+
         private val AUDIO_RE = listOf(
             Regex("https?://[^\\s\"'<>]+?\\.m4a[^\\s\"'<>]*", RegexOption.IGNORE_CASE),
             Regex("https?://[^\\s\"'<>]+?\\.mp3[^\\s\"'<>]*", RegexOption.IGNORE_CASE),

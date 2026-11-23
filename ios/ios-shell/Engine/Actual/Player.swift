@@ -316,6 +316,24 @@ final class Player: NSObject, ObservableObject {
         return LocalStore.effective(for: key, prefs: LocalStore.loadPlayPrefs())
     }
 
+    // ===== 供 UI 读取的只读快照 =====
+
+    /// 当前生效倍速（UI 显示）
+    var currentSpeed: Double { effectivePlayback.speed }
+    /// 当前是否倒序
+    var isReverseOrder: Bool { effectivePlayback.reverseOrder }
+    /// 当前播放的书（播放页读取配置用）
+    var currentBookCard: SharedBridge.BookCard? { currentBook }
+    /// 定时剩余文案：按时间显示 "mm:ss"，按章节显示 "剩 N 章"，没启用返回 nil
+    var sleepRemainingText: String? {
+        if let d = sleepDeadline {
+            let left = Int(max(0, d.timeIntervalSinceNow))
+            return String(format: "定时 %d:%02d", left / 60, left % 60)
+        }
+        if sleepChaptersLeft > 0 { return "剩 \(sleepChaptersLeft) 章" }
+        return nil
+    }
+
     /// 运行时改倍速（播放页调用，同时写回专辑配置）
     func setSpeed(_ v: Double) {
         let clamped = min(3.0, max(0.5, v))

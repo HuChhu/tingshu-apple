@@ -80,9 +80,10 @@ struct HomeView: View {
             .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.08)))
             .contentShape(Rectangle())
             .onTapGesture {
-                if let ep = LocalStore.recentEpisode(r) {
-                    Player.shared.playEpisode(ep, book: LocalStore.recentBook(r), sourceId: r.sourceId)
-                }
+                Player.shared.playEpisode(LocalStore.recentEpisode(r),
+                                          book: LocalStore.recentBook(r),
+                                          sourceId: r.sourceId)
+                Player.shared.showFullScreen = true
             }
         }
         .padding(.horizontal)

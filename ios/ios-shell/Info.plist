@@ -27,6 +27,16 @@
 		<string>audio</string>
 	</array>
 
+	<!-- ATS 例外：书源里存在 http:// 端点（酷我 antiserver/tingshu、
+	     模板站 aj006/inetover/seotianxia/tingworld、喜马拉雅音频 CDN 返回 http 直链）。
+	     iOS 默认禁止明文 HTTP，不加此项时这些源在 AVPlayer/URLSession 层
+	     静默失败（表现为"搜得到但播不了/某个站打不开"）。 -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+
 	<!-- 仅竖屏：听书场景不需要横屏，避免旋转打乱播放页布局 -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>

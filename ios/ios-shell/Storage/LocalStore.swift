@@ -3,12 +3,38 @@ import Foundation
 /// 本地持久化：播放进度 / 书架收藏 / 最近播放。
 /// 用 UserDefaults + JSON，不引第三方依赖。
 /// 键名带前缀 dsh.tingshu. 便于排查与清理。
+/// 跨源唯一标识（修复 UI-04：以前只拿 bookUrl 当主键，不同源的同一本书会串车）。
+/// 取值优先级：albumId > 0 用它，否则退回 bookUrl。sourceId 永远参与，保证跨源隔离。
+struct BookKey: Hashable, Codable {
+    let sourceId: String
+    let albumId: Int64
+    let bookUrl: String
+
+    init(sourceId: String, albumId: Int64, bookUrl: String) {
+        self.sourceId = sourceId
+        self.albumId = albumId
+        self.bookUrl = bookUrl
+    }
+
+    /// 存储用字符串键
+    var id: String {
+        let body = albumId > 0 ? String(albumId) : bookUrl
+        return sourceId + ":" + body
+    }
+}
+
 enum LocalStore {
 
     // MARK: - 播放进度
 
     struct Progress: Codable {
         let bookUrl: String
+        /// 用哪个源播的（旧数据缺字段时回落 ximalaya-open）
+        var sourceId: String = "ximalaya-open"
+        /// 专辑 ID（>0 时与 sourceId 一起构成唯一键）
+        var albumId: Int64 = 0
+
+        var bookKey: BookKey { BookKey(sourceId: sourceId, albumId: albumId, bookUrl: bookUrl) }
         let title: String
         let trackId: Int64
         let episodeTitle: String
@@ -19,6 +45,29 @@ enum LocalStore {
         var fraction: Double {
             guard durationMs > 0 else { return 0 }
             return min(1.0, Double(positionMs) / Double(durationMs))
+        }
+
+        /// 旧数据没有 sourceId / albumId，必须 decodeIfPresent 才不会整条丢
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            bookUrl = try c.decode(String.self, forKey: .bookUrl)
+            title = try c.decode(String.self, forKey: .title)
+            trackId = try c.decode(Int64.self, forKey: .trackId)
+            episodeTitle = try c.decode(String.self, forKey: .episodeTitle)
+            positionMs = try c.decode(Int64.self, forKey: .positionMs)
+            durationMs = try c.decode(Int64.self, forKey: .durationMs)
+            updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+            sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
+            albumId = try c.decodeIfPresent(Int64.self, forKey: .albumId) ?? 0
+        }
+
+        init(bookUrl: String, title: String, trackId: Int64, episodeTitle: String,
+             positionMs: Int64, durationMs: Int64, updatedAt: Date,
+             sourceId: String = "ximalaya-open", albumId: Int64 = 0) {
+            self.bookUrl = bookUrl; self.title = title; self.trackId = trackId
+            self.episodeTitle = episodeTitle; self.positionMs = positionMs
+            self.durationMs = durationMs; self.updatedAt = updatedAt
+            self.sourceId = sourceId; self.albumId = albumId
         }
     }
 
@@ -34,6 +83,8 @@ enum LocalStore {
 
     static func saveProgress(_ p: Progress) {
         var all = loadProgress()
+        // 新键优先（跨源隔离），旧键同时写一份，方便回滚
+        all[p.bookKey.id] = p
         all[p.bookUrl] = p
         if let data = try? encoder.encode(all) {
             UserDefaults.standard.set(data, forKey: progressKey)
@@ -46,6 +97,19 @@ enum LocalStore {
         return dict
     }
 
+    /// 按 BookKey 读（跨源正确）
+    static func progress(for key: BookKey) -> Progress? {
+        let all = loadProgress()
+        if let p = all[key.id] { return p }
+        // 旧数据只有 bookUrl 键：读到了再补上 sourceId/albumId，下次写入就是新键
+        if var legacy = all[key.bookUrl] {
+            legacy.sourceId = key.sourceId
+            legacy.albumId = key.albumId
+            return legacy
+        }
+        return nil
+    }
+
     static func progress(for bookUrl: String) -> Progress? {
         loadProgress()[bookUrl]
     }
@@ -53,7 +117,9 @@ enum LocalStore {
     // MARK: - 收藏
 
     struct Favorite: Codable, Identifiable {
-        var id: String { bookUrl }
+        /// 兼容旧 id（旧数据没有 sourceId 时等价于 bookUrl）
+        var id: String { bookKey.id }
+        var bookKey: BookKey { BookKey(sourceId: sourceId, albumId: albumId, bookUrl: bookUrl) }
         let bookUrl: String
         let title: String
         let author: String
@@ -92,8 +158,9 @@ enum LocalStore {
         coverUrl: String, albumId: Int64,
         sourceId: String = "ximalaya"
     ) -> Bool {
+        let probe = BookKey(sourceId: sourceId, albumId: albumId, bookUrl: bookUrl)
         var list = loadFavorites()
-        if let i = list.firstIndex(where: { $0.bookUrl == bookUrl }) {
+        if let i = list.firstIndex(where: { $0.bookKey == probe }) {
             list.remove(at: i)
             persist(list, favoriteKey)
             return false
@@ -108,6 +175,12 @@ enum LocalStore {
 
     static func isFavorite(_ bookUrl: String) -> Bool {
         loadFavorites().contains { $0.bookUrl == bookUrl }
+    }
+
+    /// 按 BookKey 判重（跨源隔离）
+    static func isFavorite(sourceId: String, albumId: Int64, bookUrl: String) -> Bool {
+        let probe = BookKey(sourceId: sourceId, albumId: albumId, bookUrl: bookUrl)
+        return loadFavorites().contains { $0.bookKey == probe }
     }
 
     // MARK: - 最近播放
@@ -167,6 +240,48 @@ enum LocalStore {
 
     // MARK: - 播放偏好（对应安卓设置页第 7/8 项）
 
+    /// 专辑维度的播放配置（对标摸鱼听书每本书独立记住倍速/跳过片头）。
+    /// 空白专辑（没设置过）返回 nil，播放器就回落全局默认。
+    struct AlbumPlayback: Codable {
+        var speed: Double = 1.0
+        var skipIntroSec: Int = 0
+        var skipOutroSec: Int = 0
+        var reverseOrder: Bool = false
+        var volumeGainDb: Double = 0
+        /// 记录时间，用于排障与「最近改过」排序
+        var updatedAt: Date = Date()
+    }
+
+    private static let albumPlaybackKey = "albumPlayback.v1"
+
+    static func loadAlbumPlaybacks() -> [String: AlbumPlayback] {
+        guard let data = UserDefaults.standard.data(forKey: albumPlaybackKey),
+              let map = try? Self.decoder.decode([String: AlbumPlayback].self, from: data) else { return [:] }
+        return map
+    }
+
+    static func albumPlayback(for key: BookKey) -> AlbumPlayback? {
+        loadAlbumPlaybacks()[key.id]
+    }
+
+    static func saveAlbumPlayback(_ value: AlbumPlayback, for key: BookKey) {
+        var map = loadAlbumPlaybacks()
+        var v = value
+        v.updatedAt = Date()
+        map[key.id] = v
+        if let data = try? Self.encoder.encode(map) {
+            UserDefaults.standard.set(data, forKey: albumPlaybackKey)
+        }
+    }
+
+    static func clearAlbumPlayback(for key: BookKey) {
+        var map = loadAlbumPlaybacks()
+        map.removeValue(forKey: key.id)
+        if let data = try? encoder.encode(map) {
+            UserDefaults.standard.set(data, forKey: albumPlaybackKey)
+        }
+    }
+
     struct PlayPrefs: Codable {
         /// 快进快退秒数（安卓默认 10，重启生效）
         var seekSeconds: Int = 10
@@ -178,6 +293,66 @@ enum LocalStore {
         var skipSilence: Bool = false
         /// 忽略其它 App 音频焦点（普通模式：接电话仍暂停）
         var ignoreAudioFocus: Bool = false
+
+        // ===== v1.3.0 新增：全局默认值 + 作用域开关（对标摸鱼 is_global_*）=====
+
+        /// 全局默认倍速
+        var defaultSpeed: Double = 1.0
+        /// true = 所有专辑都用全局倍速，忽略专辑自己的设置
+        var useGlobalSpeed: Bool = true
+        /// 全局默认跳过片头（秒）
+        var defaultSkipIntroSec: Int = 0
+        /// 全局默认跳过片尾（秒）
+        var defaultSkipOutroSec: Int = 0
+        /// true = 跳过片头片尾用全局值
+        var useGlobalSkip: Bool = true
+        /// true = 音量增益用全局值
+        var useGlobalVolume: Bool = true
+        /// 全局音量增益（dB，-12 ~ +12）
+        var volumeGainDb: Double = 0
+
+        // ===== 睡眠定时 =====
+
+        /// 重启 App 后按上次设置重新定时
+        var sleepAutoEnable: Bool = false
+        /// 上次「按时间」的分钟数
+        var sleepLastMinutes: Int = 30
+        /// 上次「按章节」的章节数
+        var sleepLastChapters: Int = 3
+
+        /// 旧数据没有这些新键，必须手写 decode 兜底
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            seekSeconds = try c.decodeIfPresent(Int.self, forKey: .seekSeconds) ?? 10
+            resumeRewindSeconds = try c.decodeIfPresent(Int.self, forKey: .resumeRewindSeconds) ?? 0
+            autoPlayOnOpen = try c.decodeIfPresent(Bool.self, forKey: .autoPlayOnOpen) ?? false
+            skipSilence = try c.decodeIfPresent(Bool.self, forKey: .skipSilence) ?? false
+            ignoreAudioFocus = try c.decodeIfPresent(Bool.self, forKey: .ignoreAudioFocus) ?? false
+            defaultSpeed = try c.decodeIfPresent(Double.self, forKey: .defaultSpeed) ?? 1.0
+            useGlobalSpeed = try c.decodeIfPresent(Bool.self, forKey: .useGlobalSpeed) ?? true
+            defaultSkipIntroSec = try c.decodeIfPresent(Int.self, forKey: .defaultSkipIntroSec) ?? 0
+            defaultSkipOutroSec = try c.decodeIfPresent(Int.self, forKey: .defaultSkipOutroSec) ?? 0
+            useGlobalSkip = try c.decodeIfPresent(Bool.self, forKey: .useGlobalSkip) ?? true
+            useGlobalVolume = try c.decodeIfPresent(Bool.self, forKey: .useGlobalVolume) ?? true
+            volumeGainDb = try c.decodeIfPresent(Double.self, forKey: .volumeGainDb) ?? 0
+            sleepAutoEnable = try c.decodeIfPresent(Bool.self, forKey: .sleepAutoEnable) ?? false
+            sleepLastMinutes = try c.decodeIfPresent(Int.self, forKey: .sleepLastMinutes) ?? 30
+            sleepLastChapters = try c.decodeIfPresent(Int.self, forKey: .sleepLastChapters) ?? 3
+        }
+
+        init() {}
+    }
+
+    /// 解析某本书最终生效的播放参数（专辑值 > 全局默认）
+    static func effective(for key: BookKey, prefs: PlayPrefs) -> AlbumPlayback {
+        let album = albumPlayback(for: key)
+        var out = AlbumPlayback()
+        out.speed = prefs.useGlobalSpeed ? prefs.defaultSpeed : (album?.speed ?? prefs.defaultSpeed)
+        out.skipIntroSec = prefs.useGlobalSkip ? prefs.defaultSkipIntroSec : (album?.skipIntroSec ?? 0)
+        out.skipOutroSec = prefs.useGlobalSkip ? prefs.defaultSkipOutroSec : (album?.skipOutroSec ?? 0)
+        out.volumeGainDb = prefs.useGlobalVolume ? prefs.volumeGainDb : (album?.volumeGainDb ?? 0)
+        out.reverseOrder = album?.reverseOrder ?? false
+        return out
     }
 
     private static let playPrefsKey = "dsh.tingshu.playPrefs"

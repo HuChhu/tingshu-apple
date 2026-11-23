@@ -299,6 +299,55 @@ object TemplateSites {
                 "军事" to "https://www.yitingshu.com/yi/5.html", "评书" to "https://www.yitingshu.com/yi/6.html",
             ),
         ),
+        SiteConfig(
+            key = "aj006",
+            name = "Aj006",
+            base = "http://aj006.com",
+            bookHrefPattern = "/mp3/(\\d+)\\.html",
+            cats = listOf("玄幻" to "http://aj006.com/list/661.html", "言情" to "http://aj006.com/list/662.html", "都市" to "http://aj006.com/list/663.html"),
+        ),
+        SiteConfig(
+            key = "jiongzei",
+            name = "Jiongzei",
+            base = "https://jiongzei.com",
+            bookHrefPattern = "/tingshu/(\\d+)\\.html",
+            cats = listOf("首页" to "https://jiongzei.com/"),
+        ),
+        SiteConfig(
+            key = "leting8",
+            name = "Leting8",
+            base = "https://www.leting8.com",
+            bookHrefPattern = "/so/(\\d+)\\.html",
+            cats = listOf("首页" to "https://www.leting8.com/"),
+        ),
+        SiteConfig(
+            key = "yuetingba",
+            name = "Yuetingba",
+            base = "https://www.yuetingba.cn",
+            bookHrefPattern = "/book/detail/([A-Za-z0-9-]+)/1",
+            cats = listOf("首页" to "https://www.yuetingba.cn/"),
+        ),
+        SiteConfig(
+            key = "ting15",
+            name = "Ting15",
+            base = "https://m.ting15.com",
+            bookHrefPattern = "/(\\d+)\\.html",
+            cats = listOf("武侠玄幻" to "https://m.ting15.com/wuxiaxuanhuan/1.html", "都市言情" to "https://m.ting15.com/dushiyanqing/1.html"),
+        ),
+        SiteConfig(
+            key = "vbus",
+            name = "VBUS",
+            base = "https://www.vbus.cc",
+            bookHrefPattern = "/album/(\\d+)",
+            cats = listOf("首页" to "https://www.vbus.cc/"),
+        ),
+        SiteConfig(
+            key = "ytysxs",
+            name = "Ytysxs",
+            base = "https://www.ytysxs.com",
+            bookHrefPattern = "/(\\d+)\\.html",
+            cats = listOf("首页" to "https://www.ytysxs.com/"),
+        ),
     )
 
     fun build(fetcher: JsonFetcher, throttle: RequestThrottle): List<TemplateTingSite> =

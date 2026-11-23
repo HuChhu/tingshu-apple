@@ -48,6 +48,8 @@ struct RootTabView: View {
             // 迷你播放条：只在有播放内容时出现，点开进全屏播放页
             MiniPlayerBar()
         }
+        // 绑定 player.* 而不是 Player.shared.*：RootTabView 订阅的是自己的 player，
+        // 只有订阅对象的 @Published 变化才会推动这里重算（全屏页的关闭按钮依赖它）
         .fullScreenCover(isPresented: Binding(
             get: { player.showFullScreen },
             set: { player.showFullScreen = $0 }

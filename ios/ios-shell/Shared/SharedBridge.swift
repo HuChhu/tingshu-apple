@@ -184,7 +184,7 @@ enum SharedBridge {
 
     /// 搜索。引擎内部已限速(1/s)+预算(3次/30s)，失败降级返回空书单+hint，不抛。
     ///
-    /// 2026-11-24：套 9s 硬超时。原来 Ktor Darwin 的 request 32s 会把风控/慢站拖满 32 秒，
+    /// 2026-11-24：套 9s 硬超时。原来底层请求超时 32s 会把风控/慢站拖满 32 秒，
     /// 而搜索只要「有没有结果」，超时就当没有，让并发里另外两路接上。
     static func search(keywords: String, page: Int) async -> SearchResult? {
         let call = { await bridge { done in
@@ -236,7 +236,7 @@ enum SharedBridge {
 
     /// 搜索总超时（秒）。引擎与网页两路都在这个时间内必须给出交代。
     /// 依据：喜马拉雅 front 接口本机实测 0.4~2.5s；WKWebView 冷启动打开搜索页 3~6s。
-    /// 原来 32s(Ktor request) + 20s(WKWebView) 串行 = 最坏 52s，再加 open 兜底 32s ≈ 84s，
+    /// 原来 32s(引擎请求) + 20s(WKWebView) 串行 = 最坏 52s，再加 open 兜底 32s ≈ 84s，
     /// 对应用户报的「一分多钟」。
     static let searchTimeoutSeconds: Double = 9
 

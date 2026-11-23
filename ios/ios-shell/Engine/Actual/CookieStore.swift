@@ -2,7 +2,7 @@ import Foundation
 import WebKit
 
 /// 触点 3/5：Cookie 显式拷贝（iOS席纪律：两处存储互不相通）。
-/// WKWebView 的 Cookie 落在 WKHTTPCookieStore；网络层（Darwin 引擎）读的是
+/// WKWebView 的 Cookie 落在 WKHTTPCookieStore；底层网络层读的是
 /// URLSession 共享的 HTTPCookieStorage.shared。方向 1：登录/过码后 WebView → 共享存储；
 /// 方向 2：需要 WebView 复用既有登录态时共享存储 → WebView 回灌。
 enum CookieStore {

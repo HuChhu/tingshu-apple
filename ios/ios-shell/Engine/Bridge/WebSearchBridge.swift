@@ -14,7 +14,7 @@ import WebKit
 ///   ② 打开前把 HTTPCookieStorage 的 cookie 回灌进 WebView
 ///   ③ 用 WKScriptMessageHandler 收结构化 JSON，不轮询 evaluateJavaScript
 ///   ④ 一次一个搜索，并发抛 busy
-///   ⑤ 超时 20s（Self.timeoutSeconds），超时即失败不猜
+///   ⑤ 超时 6s（Self.timeoutSeconds / webSoftSeconds）：到点有部分结果就交部分，没有才判失败
 @MainActor
 final class WebSearchBridge: NSObject {
     static let shared = WebSearchBridge()
@@ -36,11 +36,11 @@ final class WebSearchBridge: NSObject {
         var errorDescription: String? {
             switch self {
             case .busy:
-                return "上一次网页搜索还没结束，等它返回（最多 " + String(WebSearchBridge.timeoutSeconds) + " 秒）再搜"
+                return "上一次网页搜索还没结束，等它返回（最多 6 秒）再搜"
             case .badURL:
                 return "搜索地址无效"
             case .timeout:
-                return "网页搜索超时（" + String(WebSearchBridge.timeoutSeconds) + " 秒内没拿到结果）"
+                return "网页搜索超时（6 秒内没拿到结果）"
             case .pageFailed:
                 return "页面加载失败"
             case .parseFailed(let detail):

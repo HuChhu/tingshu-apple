@@ -75,7 +75,7 @@ struct BrowseView: View {
 
                 if !books.isEmpty {
                     Section("共 \(books.count) 本") {
-                        ForEach(books) { b in
+                        ForEach(books, id: \.bookUrl) { b in
                             BookRow(card: b, sourceId: selectedId)
                         }
                     }
@@ -173,7 +173,7 @@ struct EpisodeListView: View {
             } else if !errorText.isEmpty {
                 ContentUnavailableView("读不到章节", systemImage: "exclamationmark.triangle", description: Text(errorText))
             } else {
-                List(episodes) { ep in
+                List(episodes, id: \.index) { ep in
                     Button {
                         play(ep)
                     } label: {

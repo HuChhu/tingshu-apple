@@ -46,7 +46,11 @@ struct HomeView: View {
             .navigationTitle("发现")
             .refreshable { await load(force: true) }
             .task { await load(force: false) }
-            .onAppear { recent = LocalStore.loadRecent() }
+            .onAppear {
+                CrashLog.write("UI", "home appear")
+                recent = LocalStore.loadRecent()
+            }
+            .onDisappear { CrashLog.write("UI", "home disappear") }
         }
     }
 
@@ -202,7 +206,12 @@ struct HomeView: View {
 
         for (kw, title, sub) in feeds {
             if let r = await SharedBridge.search(sourceId: src, keywords: kw, page: 1) {
-                let books = SharedBridge.cards(from: r)
+                let books = SharedBridge.cards(from: r).map { card in
+                    SharedBridge.BookCard(bookUrl: card.bookUrl, title: card.title,
+                                          author: card.author, coverUrl: card.coverUrl,
+                                          albumId: card.albumId, trackCount: card.trackCount,
+                                          playCount: card.playCount, isFinished: card.isFinished)
+                }
                 if !books.isEmpty {
                     out.append(FeedSection(id: kw, title: title, subtitle: sub, books: Array(books.prefix(20))))
                 }

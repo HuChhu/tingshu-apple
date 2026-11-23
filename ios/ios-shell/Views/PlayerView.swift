@@ -160,6 +160,8 @@ struct PlayerView: View {
                 }
             }
         }
+        .onAppear { CrashLog.write("UI", "player appear track=\(player.nowPlaying)") }
+        .onDisappear { CrashLog.write("UI", "player disappear track=\(player.nowPlaying)") }
         .sheet(isPresented: $showSpeed) { speedSheet }
         .sheet(isPresented: $showSleep) { sleepSheet }
     }

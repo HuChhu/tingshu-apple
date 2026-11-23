@@ -409,6 +409,7 @@ struct AlbumView: View {
                                     playingRow = idx
                                     lastPlayedRow = idx
                                     lastPlayedTrackId = ep.trackId
+                                    CrashLog.write("UI", "album select track=\(ep.trackId) src=\(sourceId) row=\(idx)")
                                     Player.shared.playEpisode(ep, book: shown, sourceId: sourceId, episodes: episodes)
                                 } label: {
                                     episodeRow(ep, row: idx)
@@ -471,7 +472,11 @@ struct AlbumView: View {
             await load()
         }
         .onAppear {
+            CrashLog.write("UI", "album appear album=\(card.albumId) src=\(sourceId)")
             favorited = LocalStore.isFavorite(sourceId: sourceId, albumId: card.albumId, bookUrl: card.bookUrl)
+        }
+        .onDisappear {
+            CrashLog.write("UI", "album disappear album=\(card.albumId) src=\(sourceId)")
         }
     }
 
@@ -588,6 +593,7 @@ struct AlbumView: View {
     }
 
     private func load() async {
+        CrashLog.write("UI", "album load begin album=\(card.albumId) src=\(sourceId)")
         await MainActor.run {
             loading = true
             errorText = nil
@@ -597,6 +603,7 @@ struct AlbumView: View {
         guard let d = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl) else {
             let why = SharedBridge.lastDetailError ?? ""
             errorText = why.isEmpty ? "专辑加载失败（该源可能已下架或需要登录）" : why
+            CrashLog.write("UI", "album load failed album=\(card.albumId) reason=\(errorText ?? "")")
             return
         }
         // 回填真实元信息（封面/简介/集数/播放量都在 d.book 里）
@@ -609,15 +616,16 @@ struct AlbumView: View {
         allEpisodes = all
         // 分页大小：不能超过总集数，也不能为 0（空专辑 prefix(0) 会让列表空指针）
         let baseSize = ChapterPageMeta(albumKey: bookKey.id).pageSize
-        pageSize = all.isEmpty ? 20 : max(1, min(baseSize, all.count))
+        pageSize = ChapterPager.firstPageSize(totalCount: all.count, requested: baseSize)
         totalChapters = Int(d.book.trackCount)
-        pageCache = [1: Array(all.prefix(pageSize))]
+        pageCache = [1: ChapterPager.firstPage(all, requested: baseSize)]
         lastLoadedPage = 1
         loadedAll = all.count <= pageSize
         ChapterPager.recordPage(1, episodes: pageCache[1] ?? [], albumKey: bookKey.id,
                                 total: all.count, pageSize: pageSize)
         episodes = pageCache[1] ?? []
         if episodes.isEmpty { errorText = "该专辑暂无曲目" }
+        CrashLog.write("UI", "album load ok album=\(card.albumId) episodes=\(episodes.count) all=\(all.count)")
         // 进度只存了 trackId，按它在列表里定位行号；trackId<=0 一律不标
         if let saved = saved, saved.trackId > 0 {
             lastPlayedTrackId = saved.trackId
@@ -632,11 +640,12 @@ struct AlbumView: View {
         guard !all.isEmpty else { return }
         let next = lastLoadedPage + 1
         let start = (next - 1) * pageSize
-        // 防御：pageSize 异常（0/负数）或已到末尾，直接收工，绝不让下标越界
-        guard pageSize > 0, start >= 0, start < all.count else { loadedAll = true; return }
+        guard let slice = ChapterPager.page(all, number: next, pageSize: pageSize) else {
+            loadedAll = true
+            return
+        }
 
         loadingMore = true
-        let slice = Array(all[start..<min(start + pageSize, all.count)])
         pageCache[next] = slice
         lastLoadedPage = next
         episodes.append(contentsOf: slice)

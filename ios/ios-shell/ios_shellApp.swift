@@ -56,5 +56,7 @@ struct RootTabView: View {
         )) {
             PlayerView()
         }
+        .onAppear { CrashLog.write("UI", "root appear tab=\(tab) fullscreen=\(player.showFullScreen)") }
+        .onDisappear { CrashLog.write("UI", "root disappear tab=\(tab) fullscreen=\(player.showFullScreen)") }
     }
 }

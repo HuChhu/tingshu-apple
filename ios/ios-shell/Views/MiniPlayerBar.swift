@@ -65,6 +65,8 @@ struct MiniPlayerBar: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: shouldShow)
+        .onAppear { CrashLog.write("UI", "mini appear") }
+        .onDisappear { CrashLog.write("UI", "mini disappear") }
     }
 
     /// Player 是 @Published 的 ObservableObject：状态一变 body 自己重算，

@@ -199,6 +199,10 @@ enum LocalStore {
         /// 封面（首页「继续收听」展示用）
         var coverUrl: String = ""
 
+        private enum CodingKeys: String, CodingKey {
+            case bookUrl, bookTitle, trackId, episodeTitle, playedAt, sourceId, episodeUrl, coverUrl
+        }
+
         /// 兼容旧数据：缺 sourceId 字段时不崩，回落到喜马拉雅免登录源
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)

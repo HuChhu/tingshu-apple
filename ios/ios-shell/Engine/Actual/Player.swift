@@ -527,24 +527,36 @@ final class Player: NSObject, ObservableObject {
         let bookUrl = book.bookUrl
         let trackId = ep.trackId
         let ext = url.pathExtension.isEmpty ? "m4a" : url.pathExtension
-        
+
         Task.detached(priority: .utility) {
             var req = URLRequest(url: url)
             for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+            let dest = AudioCache.file(bookUrl: bookUrl, trackId: trackId, ext: ext)
+            let temp = dest.appendingPathExtension(UUID().uuidString + ".part")
             do {
-                let (data, _) = try await URLSession.shared.data(for: req)
-                let dest = AudioCache.file(bookUrl: bookUrl, trackId: trackId, ext: ext)
+                let (download, response) = try await URLSession.shared.download(for: req)
+                guard let http = response as? HTTPURLResponse,
+                      (200...299).contains(http.statusCode) else {
+                    try? FileManager.default.removeItem(at: download)
+                    return
+                }
+                defer { try? FileManager.default.removeItem(at: temp) }
                 try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try data.write(to: dest)
+                try FileManager.default.moveItem(at: download, to: temp)
+                if FileManager.default.fileExists(atPath: dest.path) {
+                    try FileManager.default.removeItem(at: dest)
+                }
+                try FileManager.default.moveItem(at: temp, to: dest)
                 AudioCache.trimBook(bookUrl: bookUrl, keep: 3)
             } catch {
-                // 缓存失败不影响播放
+                try? FileManager.default.removeItem(at: temp)
             }
         }
     }
     
     /// 用本地文件起播（缓存命中时走这里）
     private func startItemWithLocalFile(_ item: AVPlayerItem, ep: SharedBridge.EpisodeRow) {
+        CrashLog.write("PLAY", "start local track=\(ep.trackId) src=\(currentSourceId) scheme=file host=")
         let prefs = LocalStore.loadPlayPrefs()
         if prefs.skipSilence, #available(iOS 16.4, *) {
             item.audioTimePitchAlgorithm = .timeDomain
@@ -562,7 +574,7 @@ final class Player: NSObject, ObservableObject {
         let sp = effectivePlayback.speed
         queue.rate = Float(sp.isFinite && sp > 0 ? min(3.0, max(0.5, sp)) : 1.0)
         apply(.playing)
-        CrashLog.write("PLAY", "start ok ep=\(ep.title) track=\(ep.trackId) src=\(currentSourceId) url=\(url.absoluteString.prefix(80))")
+        CrashLog.write("PLAY", "start ready track=\(ep.trackId) src=\(currentSourceId)")
         
         if let b = currentBook,
            let saved = LocalStore.progress(for: BookKey(sourceId: currentSourceId, albumId: b.albumId, bookUrl: b.bookUrl)),
@@ -586,6 +598,7 @@ final class Player: NSObject, ObservableObject {
     }
 
     private func startItem(url: URL, headers: [String: String], ep: SharedBridge.EpisodeRow) {
+        CrashLog.write("PLAY", "start remote track=\(ep.trackId) src=\(currentSourceId) scheme=\(url.scheme ?? "") host=\(url.host ?? "")")
         requestingEpisode = false
         BackgroundSession.activateForPlayback()
         
@@ -657,6 +670,7 @@ final class Player: NSObject, ObservableObject {
     /// P0-01：自然播完 → 自动续下一集
     private func handleItemDidEnd() {
         guard let ep = current else { return }
+        CrashLog.write("PLAY", "item ended track=\(ep.trackId) src=\(currentSourceId)")
         // 定时·按章节停：听完当前章就停，不再往下播
         if consumeSleepChapter() {
             apply(.paused)

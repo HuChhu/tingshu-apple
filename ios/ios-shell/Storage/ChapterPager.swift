@@ -71,6 +71,24 @@ enum ChapterPager {
         save(m)
     }
 
+    /// 首屏大小与首屏切片；空列表保持空，pageSize 始终为正。
+    static func firstPageSize(totalCount: Int, requested: Int = 50) -> Int {
+        guard totalCount > 0 else { return 20 }
+        return max(1, min(max(1, requested), totalCount))
+    }
+
+    static func firstPage<Element>(_ all: [Element], requested: Int = 50) -> [Element] {
+        Array(all.prefix(firstPageSize(totalCount: all.count, requested: requested)))
+    }
+
+    /// 页码从 1 开始；空页与越界页返回 nil，不构造非法范围。
+    static func page<Element>(_ all: [Element], number: Int, pageSize: Int) -> [Element]? {
+        guard number > 0, pageSize > 0 else { return nil }
+        let (start, overflow) = (number - 1).multipliedReportingOverflow(by: pageSize)
+        guard !overflow, start >= 0, start < all.count else { return nil }
+        return Array(all[start..<min(start + pageSize, all.count)])
+    }
+
     /// 清某本书的分页缓存（下拉刷新时用）
     static func clear(albumKey: String) {
         var map = loadAll()

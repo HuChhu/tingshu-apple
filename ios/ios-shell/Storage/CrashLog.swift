@@ -41,11 +41,20 @@ enum CrashLog {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = currentFile
         if let h = try? FileHandle(forWritingTo: file) {
-            h.seekToEndOfFile()
-            h.write(data)
-            try? h.close()
+            defer { try? h.close() }
+            do {
+                try h.seekToEnd()
+                try h.write(contentsOf: data)
+                try h.synchronize()
+            } catch {
+                return
+            }
         } else {
             try? data.write(to: file)
+            if let h = try? FileHandle(forWritingTo: file) {
+                defer { try? h.close() }
+                try? h.synchronize()
+            }
         }
     }
 

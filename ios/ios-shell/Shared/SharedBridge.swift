@@ -45,6 +45,12 @@ enum SharedBridge {
     }
 
     // MARK: - 搜索结果消费（防御转换 + 降级 hint 直显，不自己拼文案）
+    /// SearchResult → [BookCard]，Views 层不碰 KMP 的 Book 类型
+    static func cards(from result: SearchResult?) -> [BookCard] {
+        guard let result = result else { return [] }
+        return books(from: result).map(card(from:))
+    }
+
     static func books(from result: SearchResult) -> [Book] {
         (result.books as? [Book]) ?? []      // NSArray → [Book] 防御转换
     }

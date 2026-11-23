@@ -179,7 +179,7 @@ struct BrowseView: View {
             let r = await SharedBridge.search(sourceId: src, keywords: "有声书", page: 1)
             await MainActor.run {
                 guard gen == requestGeneration else { return }
-                books = (r?.books as? [Book])?.map { SharedBridge.card(from: $0) } ?? []
+                books = SharedBridge.cards(from: r)
                 loading = false
                 if books.isEmpty {
                     hint = "这个源没有分类浏览，点上面的搜索框搜书名。"

@@ -241,6 +241,109 @@ final class Player: NSObject, ObservableObject {
     /// 远程命令/后台回调只对活着的那个实例生效
     private var isLive: Bool { Player.shared === self }
 
+    // ===== 睡眠定时 =====
+    /// 按时间停：到点执行的截止时刻
+    private var sleepDeadline: Date?
+    /// 按章节停：还剩几章（<0 表示没启用）
+    private var sleepChaptersLeft: Int = -1
+
+    /// 启动定时（minutes > 0 用时间；chapters > 0 用章节，二者取一个）
+    func startSleepTimer(minutes: Int, chapters: Int) {
+        var prefs = LocalStore.loadPlayPrefs()
+        if minutes > 0 {
+            sleepDeadline = Date().addingTimeInterval(TimeInterval(minutes * 60))
+            sleepChaptersLeft = -1
+            prefs.sleepLastMinutes = minutes
+        } else if chapters > 0 {
+            sleepDeadline = nil
+            sleepChaptersLeft = chapters
+            prefs.sleepLastChapters = chapters
+        }
+        LocalStore.savePlayPrefs(prefs)
+        scheduleSleepCheck()
+    }
+
+    /// 取消定时
+    func cancelSleepTimer() {
+        sleepDeadline = nil
+        sleepChaptersLeft = -1
+        sleepTimer?.invalidate()
+        sleepTimer = nil
+    }
+
+    /// 按章节：消耗一章；返回 true 表示该停了
+    private func consumeSleepChapter() -> Bool {
+        guard sleepChaptersLeft > 0 else { return false }
+        sleepChaptersLeft -= 1
+        return sleepChaptersLeft == 0
+    }
+
+    private var sleepTimer: Timer?
+
+    private func scheduleSleepCheck() {
+        sleepTimer?.invalidate()
+        guard let deadline = sleepDeadline else { sleepTimer = nil; return }
+        let interval = deadline.timeIntervalSinceNow
+        guard interval > 0 else { pause(); cancelSleepTimer(); return }
+        sleepTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            self.pause()
+            self.cancelSleepTimer()
+        }
+    }
+
+    /// 重启 App 后按上次设置重新定时（prefs.sleepAutoEnable）
+    func restoreSleepTimerIfNeeded() {
+        let prefs = LocalStore.loadPlayPrefs()
+        guard prefs.sleepAutoEnable else { return }
+        if prefs.sleepLastMinutes > 0 {
+            startSleepTimer(minutes: prefs.sleepLastMinutes, chapters: 0)
+        }
+    }
+
+    /// 当前书生效的播放配置（专辑值 > 全局默认）
+    private var effectivePlayback: LocalStore.AlbumPlayback {
+        guard let b = currentBook else {
+            let prefs = LocalStore.loadPlayPrefs()
+            var d = LocalStore.AlbumPlayback()
+            d.speed = prefs.defaultSpeed
+            d.skipIntroSec = prefs.defaultSkipIntroSec
+            d.skipOutroSec = prefs.defaultSkipOutroSec
+            d.volumeGainDb = prefs.volumeGainDb
+            return d
+        }
+        let key = BookKey(sourceId: currentSourceId, albumId: b.albumId, bookUrl: b.bookUrl)
+        return LocalStore.effective(for: key, prefs: LocalStore.loadPlayPrefs())
+    }
+
+    /// 运行时改倍速（播放页调用，同时写回专辑配置）
+    func setSpeed(_ v: Double) {
+        let clamped = min(3.0, max(0.5, v))
+        queue.rate = Float(clamped)
+        persistPlayback { $0.speed = clamped }
+    }
+
+    /// 运行时改跳过片头/片尾
+    func setSkip(intro: Int?, outro: Int?) {
+        persistPlayback {
+            if let i = intro { $0.skipIntroSec = max(0, i) }
+            if let o = outro { $0.skipOutroSec = max(0, o) }
+        }
+    }
+
+    /// 倒序播放
+    func setReverseOrder(_ on: Bool) {
+        persistPlayback { $0.reverseOrder = on }
+    }
+
+    private func persistPlayback(_ mutate: (inout LocalStore.AlbumPlayback) -> Void) {
+        guard let b = currentBook else { return }
+        let key = BookKey(sourceId: currentSourceId, albumId: b.albumId, bookUrl: b.bookUrl)
+        var cur = LocalStore.albumPlayback(for: key) ?? effectivePlayback
+        mutate(&cur)
+        LocalStore.saveAlbumPlayback(cur, for: key)
+    }
+
     override init() {
         super.init()
         installTimeObserver()
@@ -422,9 +525,12 @@ final class Player: NSObject, ObservableObject {
         queue.play()
         errorText = nil
         durationText = fmt(ep.durationMs)
+        // 倍速：专辑值 > 全局默认
+        queue.rate = Float(effectivePlayback.speed)
         apply(.playing)
         
-        if let b = currentBook, let saved = LocalStore.progress(for: b.bookUrl),
+        if let b = currentBook,
+           let saved = LocalStore.progress(for: BookKey(sourceId: currentSourceId, albumId: b.albumId, bookUrl: b.bookUrl)),
            saved.trackId == (current?.trackId ?? -1), saved.positionMs > 3000,
            saved.durationMs > 0, Double(saved.positionMs) / Double(saved.durationMs) < 0.95 {
             let rewind = Int64(LocalStore.loadPlayPrefs().resumeRewindSeconds) * 1000
@@ -492,6 +598,11 @@ final class Player: NSObject, ObservableObject {
             queue.seek(to: t)
             position = min(1.0, Double(targetMs) / Double(max(saved.durationMs, 1)))
             elapsedText = fmt(targetMs)
+        } else if effectivePlayback.skipIntroSec > 0 {
+            // 跳过片头（每集开头常有一段片头/广告）
+            let skip = CMTime(value: CMTimeValue(effectivePlayback.skipIntroSec), timescale: 1)
+            queue.seek(to: skip)
+            elapsedText = fmt(Int64(effectivePlayback.skipIntroSec) * 1000)
         }
 
         LocalStore.pushRecent(.init(
@@ -509,23 +620,28 @@ final class Player: NSObject, ObservableObject {
     /// P0-01：自然播完 → 自动续下一集
     private func handleItemDidEnd() {
         guard let ep = current else { return }
-        // 末章处理：没有下一集就暂停
-        guard let next = nextEpisode(after: ep) else {
+        // 定时·按章节停：听完当前章就停，不再往下播
+        if consumeSleepChapter() {
             apply(.paused)
             updateNowPlayingInfo()
             return
         }
-        // 有下一集：自动播放
+        guard let next = nextEpisode(after: ep, forward: !effectivePlayback.reverseOrder) else {
+            apply(.paused)
+            updateNowPlayingInfo()
+            return
+        }
         playEpisode(next, book: currentBook, sourceId: currentSourceId)
     }
     
     /// 找当前集的下一集（Player 需要持有当前书的章节列表）
     private var currentEpisodes: [SharedBridge.EpisodeRow] = []
     
-    private func nextEpisode(after ep: SharedBridge.EpisodeRow) -> SharedBridge.EpisodeRow? {
+    /// 方向由倒序播放决定：forward=false 时「下一集」其实是上一集
+    private func nextEpisode(after ep: SharedBridge.EpisodeRow, forward: Bool = true) -> SharedBridge.EpisodeRow? {
         guard let idx = currentEpisodes.firstIndex(where: { $0.trackId == ep.trackId }) else { return nil }
-        let nextIdx = idx + 1
-        guard nextIdx < currentEpisodes.count else { return nil }
+        let nextIdx = forward ? idx + 1 : idx - 1
+        guard nextIdx >= 0, nextIdx < currentEpisodes.count else { return nil }
         return currentEpisodes[nextIdx]
     }
 
@@ -773,6 +889,12 @@ final class Player: NSObject, ObservableObject {
                 if d.isNumeric, d.seconds > 0 {
                     self.position = min(1.0, max(0, t.seconds / d.seconds))
                     self.elapsedText = self.fmt(Int64(t.seconds * 1000))
+                    // 跳过片尾：到达「总长 - skipOutro」就主动结束本集
+                    let outro = Double(self.effectivePlayback.skipOutroSec)
+                    if outro > 0, d.seconds - t.seconds <= outro, d.seconds - t.seconds > 0 {
+                        self.handleItemDidEnd()
+                        return
+                    }
                 }
                 self.saveProgress(force: false)
             }

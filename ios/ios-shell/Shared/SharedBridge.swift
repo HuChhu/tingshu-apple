@@ -449,7 +449,7 @@ enum SharedBridge {
 
     /// 专辑详情 + 曲目。失败返回 nil。
     static func bookDetail(bookUrl: String) async -> BookDetail? {
-        let r = await bridge { (done: @escaping (BookDetailResult?, Error?) -> Void) in
+        let r = await bridge { (done: @escaping (SourceRegistry.BookDetailResult?, Error?) -> Void) in
             app.bookDetailSafe(bookUrl: bookUrl, loadEpisodes: true, loadFullPages: false,
                                completionHandler: { res, err in done(res, err) })
         }
@@ -459,7 +459,7 @@ enum SharedBridge {
 
     /// 取播放地址（级1→级3 提取链）。
     static func extract(url: String) async -> ExtractedAudio? {
-        let r = await bridge { (done: @escaping (AudioResult?, Error?) -> Void) in
+        let r = await bridge { (done: @escaping (SourceRegistry.AudioResult?, Error?) -> Void) in
             app.extractSafe(url: url, timeoutMs: 15_000, completionHandler: { res, err in done(res, err) })
         }
         if let r, r.audio == nil { lastAudioError = r.reason }

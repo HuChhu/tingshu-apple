@@ -371,7 +371,8 @@ final class Player: NSObject, ObservableObject {
     private func applyVolumeGain() {
         let db = effectivePlayback.volumeGainDb
         let linear = db.isFinite ? pow(10.0, db / 20.0) : 1.0
-        queue.currentItem?.volume = Float(min(1.0, max(0.0, linear)))
+        // 注意：volume 在 AVPlayer 上，不在 AVPlayerItem 上（后者只有 audioMix）
+        queue.volume = Float(min(1.0, max(0.0, linear)))
     }
 
     /// 设置里改完音量增益，立即生效（不用等下一集）

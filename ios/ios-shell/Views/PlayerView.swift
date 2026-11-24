@@ -70,9 +70,10 @@ struct PlayerView: View {
                     // 固定内容宽度，禁止按理想宽度或 maxWidth 撑出屏幕。
                     .frame(width: contentWidth, alignment: .center)
                     .padding(.bottom, 28)
-                    .frame(width: geo.size.width,
-                           minHeight: geo.size.height,
-                           alignment: .top)
+                    // frame(width:minHeight:alignment:) 这个重载不存在（只有 width/height 或
+                    // minWidth/idealWidth/maxWidth…），必须拆成两次 frame。
+                    .frame(width: geo.size.width)
+                    .frame(minHeight: geo.size.height, alignment: .top)
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
                 .scrollBounceBehavior(.basedOnSize)

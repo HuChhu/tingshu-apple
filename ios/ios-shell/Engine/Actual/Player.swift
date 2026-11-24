@@ -41,8 +41,9 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
     static let sep: String = "//"
 
     private let headers: [String: String]
-    private let session: URLSession
-    // 回填没有独立队列：resourceLoader 与 URLSession 都落在主队列，见 init 注释。
+    /// var 而不是 let：init 里要先建一个占位 session，super.init() 之后才能用 self 当 delegate。
+    /// 回填没有独立队列：resourceLoader 与 URLSession 都落在主队列，见 init 注释。
+    private var session: URLSession
 
     init(headers: [String: String]) {
         self.headers = headers
@@ -82,7 +83,7 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
     static func wrap(_ u: URL) -> URL? {
         let s = (u.scheme ?? "").lowercased()
         guard s == "http" || s == "https" else { return nil }
-        guard let marker = u.absoluteString.range(of: URL.sep) else { return nil }
+        guard let marker = u.absoluteString.range(of: Self.sep) else { return nil }
         let tail = String(u.absoluteString[marker.lowerBound...])
         let prefix = (s == "https") ? "dshmedias" : "dshmedia"
         return URL(string: prefix + ":" + tail)
@@ -92,7 +93,7 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
     static func unwrap(_ u: URL) -> URL? {
         let s = (u.scheme ?? "").lowercased()
         guard s == "dshmedia" || s == "dshmedias" else { return nil }
-        guard let marker = u.absoluteString.range(of: URL.sep) else { return nil }
+        guard let marker = u.absoluteString.range(of: Self.sep) else { return nil }
         let tail = String(u.absoluteString[marker.lowerBound...])
         let prefix = (s == "dshmedias") ? "https" : "http"
         return URL(string: prefix + ":" + tail)
@@ -147,7 +148,7 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
         if let r = req.value(forHTTPHeaderField: "Range") {
             originalRange[ObjectIdentifier(task)] = r
         }
-        pendingRequests[task.taskIdentifier] = Pending(lr: loadingRequest, resp: nil, base: 0, written: 0)
+        pendingRequests[task.taskIdentifier] = Pending(lr: loadingRequest, base: 0, written: 0, fulfilled: false)
         task.resume()
         return true
     }
@@ -164,9 +165,12 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
     /// 每个任务的状态。acc 是「字节流里已经处理到哪」，不需要缓存整段 Data。
     private struct Pending {
         let lr: AVAssetResourceLoadingRequest
-        let resp: URLResponse?
         let base: Int64        // 本次响应 0 字节对应文件里的偏移（206 从 Content-Range 取，200 为 0）
         var written: Int64     // 已经向 dataRequest 写过去的字节数
+        /// 已经写够 AVFoundation 要的区间，是**我们自己**主动 cancel 的。
+        /// 那种情况 didCompleteWithError 会带一个 -999 进来 —— 那是取消不是失败，
+        /// 必须按成功收尾，否则 item 被判 failed，界面报「请求被系统中断」，又播不了。
+        var fulfilled: Bool
     }
     private var pendingRequests: [Int: Pending] = [:]
 
@@ -197,7 +201,7 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
         let acrText = httpInfo?.value(forHTTPHeaderField: "Accept-Ranges") ?? "-"
         CrashLog.write("PLAY", "loader resp code=" + codeText + " mime=" + mimeText
                         + " cr=" + crText + " acr=" + acrText)
-        st = Pending(lr: st.lr, resp: response, base: base, written: 0)
+        st = Pending(lr: st.lr, base: base, written: 0, fulfilled: false)
         pendingRequests[dataTask.taskIdentifier] = st
 
         // 关键：contentLength 必须是整个文件长度（Content-Range 的 /total），
@@ -252,9 +256,14 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
                 dr.respond(with: data.subdata(in: off..<end))
             }
         }
-        // 已经写够了就不用再等剩下的字节（只有明确的区间请求才提前掐断）
+        // 已经写够了就不用再等剩下的字节（只有明确的区间请求才提前掐断）。
+        // 掐之前先打 fulfilled：cancel 会让 didCompleteWithError 带一个 -999 回来，
+        // 不标记的话会被当成真失败，界面直接跳「请求被系统中断」。
         if dr.requestsAllDataToEndOfResource == false, dr.requestedLength > 0,
            st.written >= (wantLo - st.base) + dr.requestedLength {
+            var done = pendingRequests[dataTask.taskIdentifier] ?? st
+            done.fulfilled = true
+            pendingRequests[dataTask.taskIdentifier] = done
             dataTask.cancel()
         }
     }
@@ -265,7 +274,7 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
-        guard var st = pendingRequests[task.taskIdentifier] else { completionHandler(nil); return }
+        guard let st = pendingRequests[task.taskIdentifier] else { completionHandler(nil); return }
         let hop = (redirectHops[ObjectIdentifier(task)] ?? 0) + 1
         redirectHops[ObjectIdentifier(task)] = hop
         guard hop <= 5 else {
@@ -285,7 +294,6 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
             r2.setValue(range, forHTTPHeaderField: "Range")
         }
         CrashLog.write("PLAY", "redirect hop=\(hop) -> \(request.url?.host ?? "?")")
-        redirectHops[ObjectIdentifier(task)] = hop
         completionHandler(r2)
     }
 
@@ -298,10 +306,15 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
         guard let st = pendingRequests.removeValue(forKey: task.taskIdentifier) else { return }
         // didCancel 已经把它从表里摘掉，这里就不再回调（避免 finishLoading 两次）
         tasks.removeValue(forKey: ObjectIdentifier(st.lr))
-        if let e = error as NSError?, e.code == NSURLErrorCancelled, st.lr.isFinished {
-            return
+        if let e = error as NSError?, e.code == NSURLErrorCancelled {
+            if st.lr.isFinished { return }
+            if st.fulfilled {
+                // 我们自己写够了才掐的，-999 只是取消通知，按成功收尾
+                st.lr.finishLoading()
+                return
+            }
         }
-        if let error = error {
+        if let error = error, !st.fulfilled {
             st.lr.finishLoading(with: error)
             return
         }

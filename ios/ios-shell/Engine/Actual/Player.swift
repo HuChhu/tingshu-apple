@@ -634,6 +634,8 @@ final class Player: NSObject, ObservableObject {
     private var fallbackTriedTrack: Int64 = -1
     /// 当前 item 的请求头（降级重试要用）
     private var currentHeaders: [String: String] = [:]
+    /// 当前这次起播走的哪条路（local / remote / remote-loader），失败时决定回退策略
+    private var viaOfCurrent: String = ""
     /// 当前 item 的源地址（重建立 AVURLAsset 用）
     private var currentAssetURL: URL?
     /// 未包装的原始 http(s) URL（loader 场景下 currentAssetURL 可能被 scheme 替换前的副本）
@@ -1082,9 +1084,20 @@ final class Player: NSObject, ObservableObject {
         // 缓存优先：已缓存的集直接播本地文件（离线可用）。
         // 本地文件同样要挂 status 观察 —— 以前走 startItemWithLocalFile 时状态停在 .playing，
         // 文件被系统清掉/截断时界面永远卡「播放中」，也是「点第一集没反应」的一条来源。
-        if let cached = cachedURL(for: url), FileManager.default.fileExists(atPath: cached.path),
-           let size = (try? FileManager.default.attributesOfItem(atPath: cached.path))?[.size] as? NSNumber,
-           size.int64Value > 16 * 1024 {
+        // 【P0 v1.4.8】缓存命中必须做内容校验。
+        // 真机日志：命中缓存 → start local → status 永远 0 →「轮盘一直转但没声音」。
+        // 缓存里存的是错误页 HTML（模板站对无 Referer 请求回 200 + text/html），
+        // 旧代码只判 size>16KB，9780079 字节的 HTML 轻松过关；cachedFile 每次命中还刷 mtime，
+        // LRU 永远清不掉，于是每次都播同一个坏文件。
+        if let cached = AudioCache.playableCachedFile(bookUrl: currentBook?.bookUrl ?? "",
+                                                 trackId: ep.trackId) {
+            // 必须先记下这一集的远程 URL 与 headers ——
+            // 下面的 beginPlayback 会拿 headers=[:] 覆盖 currentHeaders，
+            // 而 currentOriginalURL 只有 remote 分支才赋值（在 return 之后）。
+            // 不在这里补，本地播放失败要回退远程时用的是上一集的陈旧 URL ——
+            // 轻则播错书，重则取不到地址。
+            currentOriginalURL = url
+            currentHeaders = headers
             let litem = AVPlayerItem(url: cached)
             beginPlayback(litem, ep: ep, via: "local", headers: [:], sourceURL: cached)
             return
@@ -1151,6 +1164,7 @@ final class Player: NSObject, ObservableObject {
         }
         currentHeaders = headers
         currentAssetURL = sourceURL
+        viaOfCurrent = via
         // 原样核对引擎给的 header：重复 key（大小写不同）、空值、非法字段都会让
         // AVFoundation 整份丢弃。这里只记 key + 值长度，不落敏感值。
         let hdrDump = headers.sorted { $0.key.lowercased() < $1.key.lowercased() }
@@ -1344,6 +1358,10 @@ final class Player: NSObject, ObservableObject {
     }
 
     private func detachItem() {
+        // 登记「是我们主动摘的」—— 只有这些 item 的失败才该被忽略。
+        // AVQueuePlayer 自己踢掉的 failed item 不进这个集合，它们的错误必须报出来。
+        if let cur = observedItem { orphanedItems.insert(ObjectIdentifier(cur)) }
+        if orphanedItems.count > 8 { orphanedItems.removeAll() }   // 防止无限增长
         itemObservation?.invalidate()
         itemObservation = nil
         let n = NotificationCenter.default
@@ -1385,6 +1403,20 @@ final class Player: NSObject, ObservableObject {
             if let ns = item.error as NSError?, ns.code == NSURLErrorCancelled {
                 // 当前 item 真被取消：先降级去掉 header 重试一次，不行再报
                 if fallbackWithoutHeadersIfPossible(reason: "status cancelled") { return }
+            }
+            // 本地缓存坏了（status=.failed）→ 删掉这个文件并立刻改走网络，
+            // 否则用户点「重试」每次都命中同一个坏文件，永远播不了。
+            if viaOfCurrent == "local", let cached = currentAssetURL {
+                try? FileManager.default.removeItem(at: cached)
+                CrashLog.write("PLAY", "bad local cache deleted track=" + String(current?.trackId ?? 0))
+                if let ep = current, let src = currentOriginalURL {
+                    startItem(url: src, headers: currentHeaders, ep: ep)
+                    return
+                }
+                if let ep = current {
+                    playEpisode(ep, book: currentBook, sourceId: currentSourceId)
+                    return
+                }
             }
             failPlayback(Self.describe(item.error))
         default:
@@ -1428,10 +1460,15 @@ final class Player: NSObject, ObservableObject {
     /// 判断一个报错的 item 是不是「已经被我们换掉/清掉」的那个。
     /// -999 不带语境，但身份是可靠的：队列里已经不是它，或它已不是 observedItem，
     /// 就说明这个失败属于上一轮操作，不该写进当前界面的 errorText。
+    /// 我们**主动**摘掉的 item 集合（detachItem 时登记）。
+    /// 判「-999 是不是我们自己造成的」只能看这个集合，不能看「队列里还有没有它」——
+    /// AVQueuePlayer 在 item 解码失败时会**自己**把它踢出队列，那种情况 currentItem 也会变 nil，
+    /// 用它当判据就会把真实错误当成「换台残响」吞掉（真机日志：ignore stale item failure + 永远转圈）。
+    private var orphanedItems = Set<ObjectIdentifier>()
+
+    /// 判断一个报错的 item 是不是「我们已经主动换掉/清掉」的那一个。
     private func isSelfInflictedCancel(_ item: AVPlayerItem) -> Bool {
-        guard item === observedItem else { return true }   // 已被 detach：上一轮的残响
-        if queue.currentItem !== item { return true }       // 已被 removeAllItems 摘掉
-        return false
+        orphanedItems.contains(ObjectIdentifier(item))
     }
 
     /// 起播看门狗。**单一 deadline 驱动**，不是嵌套 sleep + return ——

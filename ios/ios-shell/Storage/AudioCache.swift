@@ -87,6 +87,44 @@ enum AudioCache {
         return f
     }
 
+    /// 这个缓存文件是不是真的音频。
+    ///
+    /// 【P0 v1.4.8】真机日志：trackId 命中缓存 → 走 local → status 永远 0 →「轮盘一直转但没声音」。
+    /// 原因是缓存里存的是**错误页 HTML**：模板站对不带 Referer 的请求回 200 + text/html，
+    /// 旧代码只判 `size > 16KB`，9780079 字节的 HTML 轻松过关；而且 cachedFile 每次命中都刷新 mtime，
+    /// LRU 永远清不掉它，于是每次都播同一个坏文件。
+    ///
+    /// 判据：读前 12 字节，认音频容器的魔数。认不出就不当缓存用（调用方负责删掉它重下）。
+    /// 命中缓存后做一次内容校验：不是音频就删掉返回 nil，让调用方走网络重新下载。
+    static func playableCachedFile(bookUrl: String, trackId: Int64) -> URL? {
+        guard let f = cachedFile(bookUrl: bookUrl, trackId: trackId) else { return nil }
+        let size = (try? FileManager.default.attributesOfItem(atPath: f.path))?[.size] as? NSNumber
+        if (size?.int64Value ?? 0) < 16 * 1024 || !looksLikeAudio(f) {
+            // 坏文件必须删：不删的话下次还会命中，用户永远播不了这一集
+            try? FileManager.default.removeItem(at: f)
+            return nil
+        }
+        return f
+    }
+
+    static func looksLikeAudio(_ url: URL) -> Bool {
+        guard let fh = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? fh.close() }
+        guard let head = try? fh.read(upToCount: 12), let d = head, d.count >= 4 else { return false }
+        let b = [UInt8](d)
+        // ID3v2（mp3 带标签）
+        if b[0] == 0x49, b[1] == 0x44, b[2] == 0x33 { return true }
+        // MPEG 帧同步：FF Ex / FF Fx
+        if b[0] == 0xFF, (b[1] & 0xE0) == 0xE0 { return true }
+        // ftyp（mp4/m4a/m4s）：第 4~7 字节是 "ftyp"
+        if b.count >= 8, b[4] == 0x66, b[5] == 0x74, b[6] == 0x79, b[7] == 0x70 { return true }
+        // OggS / fLaC / RIFF(WAV)
+        if b[0] == 0x4F, b[1] == 0x67, b[2] == 0x67, b[3] == 0x53 { return true }
+        if b[0] == 0x66, b[1] == 0x4C, b[2] == 0x61, b[3] == 0x43 { return true }
+        if b[0] == 0x52, b[1] == 0x49, b[2] == 0x46, b[3] == 0x46 { return true }
+        return false
+    }
+
     /// 确保目录存在
     @discardableResult
     static func ensureDir(bookUrl: String) -> Bool {

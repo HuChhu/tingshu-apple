@@ -27,11 +27,18 @@ struct PlayerView: View {
     }
 
     var body: some View {
-        // 背景挂在全屏坐标层，内容继续使用 safeArea 内的 GeometryReader。
-        ImmersivePosterBackground(url: coverURL)
-            .ignoresSafeArea(.all, edges: .all)
-            .overlay {
-                GeometryReader { geo in
+        // 【v1.4.8 修「播放页整屏发白」】
+        // 原来把背景当主体、内容是它的 overlay：overlay 的布局提议受背景尺寸影响，
+        // 而背景又 ignoresSafeArea 撑到全屏 —— 某些尺寸下内容区被算成 0，整页只剩底色。
+        // 改成同级 ZStack：背景沉底（zIndex 0、不吃触摸），内容在上层按 safeArea 排。
+        ZStack(alignment: .top) {
+            ImmersivePosterBackground(url: coverURL)
+                .ignoresSafeArea(.all, edges: .all)
+                .zIndex(0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+
+            GeometryReader { geo in
                     let contentWidth = min(max(0, geo.size.width - 40), 560)
                     let posterSize = min(max(0, geo.size.width - 72), 528)
 
@@ -77,11 +84,10 @@ struct PlayerView: View {
                     // （配合 .clipped() 直接看不到底部控件）；这里让 ScrollView 自己撑。
                     .frame(width: geo.size.width)
                     .scrollBounceBehavior(.basedOnSize)
-                }
             }
-            // 底色也要铺满：overlay 里的内容在安全区内，黑色底必须自己 ignoresSafeArea，
-            // 否则状态栏与 Home 条区域会露出播放页下面那一层的颜色（深色下就是纯黑一条）。
-            .background(Color.black.ignoresSafeArea(.all, edges: .all))
+            .zIndex(1)
+        }
+        .background(Color.black.ignoresSafeArea(.all, edges: .all))
             .toolbar(.hidden, for: .navigationBar)
             .onAppear {
                 refreshFavorite()

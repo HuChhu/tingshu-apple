@@ -74,15 +74,30 @@ struct RootTabView: View {
     // MARK: - ① 自绘 dock（iPhone 竖屏）
 
     private var customDockLayout: some View {
-        tabContents
-            .toolbar(.hidden, for: .tabBar)
+        // 用**参数**告诉 tabContents 藏系统 TabBar，而不是静态变量。
+        // 静态变量的坑：本档设成 true 之后没人改回去，用户转到 iPad/横屏（走系统档）时
+        // tabContents() 读到的还是 true，系统档的 TabBar 也被一起藏掉，连切 Tab 都没了。
+        // 参数随调用点取值，零跨分支状态。
+        tabContents(hidesSystemTabBar: true)
+            // 【v1.4.8 双栏修法（定稿）】
+            //
+            // 旧写法把 `.toolbar(.hidden, for: .tabBar)` 挂在 TabView 自己身上 ——
+            // Apple 文档：「可见性偏好向上流向最近一个渲染栏的容器」，TabView 就是那个容器，
+            // 挂在它身上等于没人接，系统 TabBar 照常渲染 → 底部两套导航栏重叠。
+            //
+            // 正确位置是每个 Tab 的**内容根**（文档示例写法），这里在 tabContents() 里
+            // 对四个 Tab 各挂一次 `.toolbar(hidesSystemTabBar ? .hidden : .automatic, for: .tabBar)`。
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                // 迷你条 + dock 作为一整块占位：高度由系统算进 safe area，
-                // 页面内容自然让位，不会出现「迷你条浮在内容上面挡住章节列表」。
-                // 迷你条显隐由 BottomDock 自己处理（它已把两段高度算进 frame），
-                // 这里绝不能再 if 一次 —— 否则高度算两遍，迷你条会压住导航键。
+                // 迷你条 + dock 作为一整块占位。
+                // 迷你条显隐由 BottomDock 自己处理（固定占位、只改透明度），
+                // 这里不能再 if 一次 —— 否则高度算两遍，迷你条会压住导航键。
                 BottomDock(selection: $tab)
             }
+            // 注意：不要再给自绘档加 `tabBarMinimizeBehavior`。
+            // TabBarMinimizeBehavior 在 iOS 26 只有 .automatic / .onScrollDown / .onScrollUp
+            // 三个值（Apple 文档），**没有 .never**；而"隐藏"已经由每个 Tab 的
+            // `.toolbar(.hidden, for: .tabBar)` 完成，收缩逻辑对已隐藏的条不产生影响。
+            // 之前那层 HiddenTabBarOnIOS26 是多余的防御，已删除。
     }
 
     // MARK: - ② iOS 26 系统 TabView + 底部配件
@@ -105,7 +120,7 @@ struct RootTabView: View {
 #if compiler(>=6.2)
     @available(iOS 26.0, *)
     private var systemTabsWithAccessory: some View {
-        tabContents
+        tabContents()
             // 配件由 TabView 托管：系统把它贴在悬浮 TabBar 上方，
             // TabBar 收缩时自动内联 —— 不依赖 `_UITabBarPlatterView` 这类私有结构。
             .tabViewBottomAccessory {
@@ -120,7 +135,7 @@ struct RootTabView: View {
     // MARK: - ③ iOS 17–25 系统 TabView + safeAreaInset
 
     private var systemTabsWithSafeAreaInset: some View {
-        tabContents
+        tabContents()
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 // 只有真出现时才占位：条隐藏时不留下一条空白
                 if !player.nowPlaying.isEmpty && player.state != .stopped {
@@ -140,24 +155,38 @@ struct RootTabView: View {
 
     // MARK: - 内容（三档共用，Tab 结构一处维护）
 
-    private var tabContents: some View {
+    /// 三档共用的 TabView。
+    /// 三档共用的 TabView（只维护一份 Tab 结构）。
+    ///
+    /// 【v1.4.8 双栏修法】把隐藏偏好挂在每个 Tab 的**内容根**上。
+    /// Apple 文档：可见性偏好向上流向最近一个渲染栏的容器（TabView）；
+    /// 挂在 TabView 自己身上等于没人接收，这就是之前底部出现两套导航栏的原因。
+    /// - Parameter hidesSystemTabBar: 自绘 dock 档位传 true；系统两档不传。
+    private func tabContents(hidesSystemTabBar: Bool = false) -> some View {
         TabView(selection: $tab) {
+            // 每个 Tab 的内容根各挂一次：TabView 只读当前 Tab 的偏好，
+            // 只挂一个的话切走再回来就失效。
             HomeView()
+                .toolbar(hidesSystemTabBar ? .hidden : .automatic, for: .tabBar)
                 .tabItem { Label("首页", systemImage: "house.fill") }
                 .tag(0)
 
             CategoryView()
+                .toolbar(hidesSystemTabBar ? .hidden : .automatic, for: .tabBar)
                 .tabItem { Label("分类", systemImage: "square.grid.2x2.fill") }
                 .tag(1)
 
             ShelfView()
+                .toolbar(hidesSystemTabBar ? .hidden : .automatic, for: .tabBar)
                 // 书架是「我的内容」，不是「喜欢」
                 .tabItem { Label("书架", systemImage: "books.vertical.fill") }
                 .tag(2)
 
             MineView()
+                .toolbar(hidesSystemTabBar ? .hidden : .automatic, for: .tabBar)
                 .tabItem { Label("我的", systemImage: "person.fill") }
                 .tag(3)
         }
     }
 }
+

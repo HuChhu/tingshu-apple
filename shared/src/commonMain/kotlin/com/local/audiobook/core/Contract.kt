@@ -99,6 +99,45 @@ data class ExtractedAudio(val url: String, val headers: Map<String, String>, val
 
 // CookieProvider SPI（lead 拍板 2026-11-21）：登录态按平台注入；null=匿名。
 // JVM spike=桥持会话（env 路径读凭据，值不进 git/日志）；iOS M4=WKWebView 官方页登录后拷 HTTPCookieStorage。
+/**
+ * 会员等级（v1.4.4，用户反馈：登录了一个没有会员的账号，界面却写「可听会员内容」）。
+ *
+ * 一切未知/未登录/取不到 ── 一律归 Unknown，**不许默认当会员**。
+ */
+enum class VipTier {
+    /** 未登录（没有 Cookie） */
+    NotLoggedIn,
+    /** 已登录，但会员状态拿不到（接口失败/字段缺失） */
+    Unknown,
+    /** 已登录，确定没有会员 */
+    None,
+    /** 普通会员 */
+    Normal,
+    /** 白金会员 */
+    Platinum,
+    /** 大师会员 */
+    Master,
+    /** 儿童会员 */
+    Kids,
+}
+
+/**
+ * 会员状态结果。
+ *
+ * @param tier        等级（永远非空，取不到就是 Unknown）
+ * @param expireDate  有效期 yyyy-MM-dd（拿不到就是空串，UI 不显示这一行）
+ * @param nickname    昵称（可空）
+ * @param rawVipLevel 上游原始等级数值（-1 = 未知），仅排障用
+ * @param source      数据来源："api" | "webview" | "cookie" | "none"
+ */
+data class VipStatus(
+    val tier: VipTier,
+    val expireDate: String = "",
+    val nickname: String = "",
+    val rawVipLevel: Int = -1,
+    val source: String = "none",
+)
+
 interface CookieProvider {
     suspend fun cookie(): String?
     suspend fun refresh()

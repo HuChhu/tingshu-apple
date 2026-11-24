@@ -3,7 +3,9 @@ package com.local.audiobook.core
 import com.local.audiobook.core.engine.KuwoSource
 import com.local.audiobook.core.engine.SearchEngine
 import com.local.audiobook.core.engine.WebSearchBudget
+import com.local.audiobook.core.engine.VipStatusResolver
 import com.local.audiobook.core.engine.XimalayaOpenSource
+import com.local.audiobook.core.net.JsonFetcher
 import com.local.audiobook.core.SourceRegistry.AudioResult
 import com.local.audiobook.core.SourceRegistry.BookDetailResult
 import com.local.audiobook.core.net.IosJsonFetcher
@@ -29,6 +31,9 @@ class TingshuApp(
         override suspend fun refresh() {}
     },
 ) {
+    /** 会员状态查询用的同一份 Cookie（与引擎共享） */
+    private val cookies: CookieProvider = cookieProvider
+
     private val client: HttpClient = HttpClient(Darwin) {
         install(HttpTimeout) {
             requestTimeoutMillis = 32_000
@@ -102,6 +107,37 @@ class TingshuApp(
         fetcher = IosJsonFetcher(client),
         throttle = RequestThrottle(minIntervalMs = 1_000L, clock = { PlatformClock.nowMs() }),
     )
+
+    // ---------- 会员状态（v1.4.4） ----------
+
+    private val vipThrottle = RequestThrottle(minIntervalMs = 1_000L, clock = { PlatformClock.nowMs() })
+    private val vipFetcher: JsonFetcher = IosJsonFetcher(client)
+
+    /**
+     * 查当前账号会员等级。
+     *
+     * **绝不抛异常**：任何失败都返回 VipTier.Unknown，
+     * 因为界面上「不知道」比「胡说会员」安全。
+     * Swift 侧拿到的就是这个 data class，不会碰 NSError 桥接。
+     */
+    suspend fun vipStatusSafe(): VipStatus = try {
+        VipStatusResolver.resolve(vipFetcher, vipThrottle, cookies)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        VipStatus(VipTier.Unknown, source = "api-error")
+    }
+
+    /**
+     * WebView 路线的结果回填（可选）。
+     * 接口全部失败时，壳用 WebView 打开会员页读 DOM，读到文本后调这个就能统一归类。
+     */
+    fun vipTierFromText(text: String): VipTier = VipStatusResolver.tierOfText(text)
+
+    /** 今天日期（㌉分用：判绝有效期是不是过了） */
+    fun setToday(dateText: String) {
+        VipStatusResolver.todayProvider = { dateText }
+    }
 
     /** 可用源列表（名字 + id），UI 用来做源选择 */
     fun availableSources(): List<Pair<String, String>> = listOf(

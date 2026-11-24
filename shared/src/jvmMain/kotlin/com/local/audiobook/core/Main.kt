@@ -41,6 +41,21 @@ suspend fun main(args: Array<String>) {
         cookieProvider = cookieProvider,
     )
     when (mode) {
+        "vip" -> runCatching {
+            // 实测入口：java -jar ... vip [cookie]（不传 cookie = 匿名）
+            val ck = args.getOrNull(1)
+            val st = com.local.audiobook.core.engine.VipStatusResolver.resolve(
+                fetcher = KtorJsonFetcher(client),
+                throttle = RequestThrottle(minIntervalMs = 1_000L, clock = now),
+                cookies = object : com.local.audiobook.core.CookieProvider {
+                    override suspend fun cookie(): String? = ck
+                    override suspend fun refresh() {}
+                },
+            )
+            out.println("VIP tier=" + st.tier + " expire=" + st.expireDate +
+                " nick=" + st.nickname + " level=" + st.rawVipLevel + " src=" + st.source)
+        }.onFailure { out.println("VIP ERROR " + it::class.simpleName + " " + it.message) }
+
         "sources" -> runCatching {
             val reg = com.local.audiobook.core.SourceRegistry(KtorJsonFetcher(client), now)
             val op = args.getOrNull(1) ?: "list"

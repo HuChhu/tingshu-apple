@@ -14,7 +14,10 @@ enum CrashLog {
     // 写成函数内字面量会被优化掉（实测 Release 包里 FATAL 串 0 命中）。
     static let fatalDirName = "crash"
     static let fatalFilePrefix = "fatal-"
-    static let fatalHeader = "=== FATAL ===\n"
+    // 注意：Swift 对 <=15 字节的字符串会用立即数指令内联，**不进 __cstring**，
+    // 所以外面 strings 扫不到。这里刻意写长（>15 字节），确保产物可被审计验证。
+    static let fatalHeader = "=== TINGSHU-FATAL-CRASH ===\n"
+    static let fatalMarker = "TINGSHU_CRASH_LOG_V1"
     private static let lock = NSLock()
 
     static var dir: URL {

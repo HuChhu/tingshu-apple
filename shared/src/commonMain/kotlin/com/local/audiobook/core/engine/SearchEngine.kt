@@ -129,6 +129,14 @@ class SearchEngine(
 
         if (!loadEpisodes) return BookDetail(book, emptyList())
 
+        // 【优先免登录直链】免登录的 mobwsa 曲目接口直接返回 playUrl64/playUrl32，
+        // Episode.url 就是能播的 mp3，不用再走登录版 + 网页地址那一套。
+        // 真机 2026-11-24：登录版只给 trackId，脱障后 Episode.url = /sound/{id} 网页 → AVPlayer -12847。
+        run {
+            val direct = fetchOpenTracks(albumId, if (loadFullPages) maxOf(book.trackCount, 40L).toInt() else 1)
+            if (direct.isNotEmpty()) return BookDetail(book, direct)
+        }
+
         // 曲目（惰性：loadEpisodes=true 才拉；loadFullPages=true 翻完）
         // 翻页收口三重闸：totalCount（信封实录）→ book.trackCount → maxPageId/硬上限 200
         val pageSize = 30
@@ -159,6 +167,33 @@ class SearchEngine(
             page++
         }
         return BookDetail(book, episodes)
+    }
+
+    /**
+     * 免登录曲目：mobwsa 一页 20 条，带 playUrl64 直链。
+     * maxPages 控制拉多少页（0 = 不拉）；失败返回空，让调用方退回登录版路径。
+     *
+     * 不占用登录版的 WebSearchBudget（那是搜索预算，这里是详情）。
+     */
+    private suspend fun fetchOpenTracks(albumId: Long, maxPages: Int): List<Episode> {
+        if (maxPages <= 0) return emptyList()
+        val out = ArrayList<Episode>()
+        var page = 1
+        while (page <= minOf(maxPages, 200)) {
+            val url = OpenRoutes.tracksMobile(albumId, page, 20)
+            val resp = throttle.run { fetcher.get(url, OpenRoutes.desktopHeaders()) }
+            if (resp !is FetchOutcome.Ok) break
+            val json = parse(resp.text) ?: break
+            val tp = TrackExtractor.fromOpenList(json, page, 20, sourceId)
+            if (tp.episodes.isEmpty()) break
+            // 一条直链都没有 → 这个接口对该专辑不适用，整体放弃（避免拼出半成品）
+            if (out.isEmpty() && tp.episodes.none { AudioUrlHeaders.isPlayableAudio(it.url) }) return emptyList()
+            out.addAll(tp.episodes)
+            if (tp.episodes.size < 20) break
+            if (tp.totalCount > 0 && out.size >= tp.totalCount) break
+            page++
+        }
+        return out
     }
 
     // ---------- 发现：类目热榜（M1，匿名） ----------

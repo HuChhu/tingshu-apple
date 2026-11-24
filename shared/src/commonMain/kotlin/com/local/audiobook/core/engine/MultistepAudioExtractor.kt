@@ -36,8 +36,17 @@ object MultistepAudioExtractor {
         object AllFailed : ExtractError("全部提取级失败")
     }
 
-    /** 一级提取结果 */
-    data class Hit(val url: String, val level: Level, val headers: Map<String, String> = emptyMap())
+    /**
+     * 一级提取结果。
+     *
+     * url 必须是音频直链 —— 构造时就校验，网页地址根本无法被装进 Hit。
+     * 旧实现让网页 URL 流到播放器，AVPlayer 报 -12847（格式不支持）。
+     */
+    data class Hit(val url: String, val level: Level, val headers: Map<String, String> = emptyMap()) {
+        init {
+            require(AudioUrlHeaders.isPlayableAudio(url)) { "不是音频直链不能当命中：" + level.label + " " + url.take(120) }
+        }
+    }
 
     /** 提取级别（数值越大越昂贵） */
     enum class Level(val n: Int, val label: String) {
@@ -88,7 +97,9 @@ object MultistepAudioExtractor {
             .findAll(body).forEach { candidates.add(it.groupValues[1]) }
 
         // 允许 // 开头的协议相对地址，补全后再判断
-        val hit = candidates.firstOrNull { it.startsWith("http") || it.startsWith("//") }
+        val hit = candidates.firstOrNull {
+            (it.startsWith("http") || it.startsWith("//")) && AudioUrlHeaders.isPlayableAudio(normalize(it, body))
+        }
         return hit?.let {
             val full = normalize(it, body)
             Hit(full, Level.Html, AudioUrlHeaders.headersFor(full))
@@ -114,7 +125,10 @@ object MultistepAudioExtractor {
             val re = Regex("""["']$name["']\s*:\s*["'](https?://[^"']+)["']""", RegexOption.IGNORE_CASE)
             val m = re.find(body) ?: continue
             val url = m.groupValues[1]
-            return Hit(normalize(url, body), Level.Json, AudioUrlHeaders.headersFor(url))
+            // 字段名对上但值是网页地址（常见于 "url" 字段通用命名）→ 当没命中，继续试下一个字段
+            val full = normalize(url, body)
+            if (!AudioUrlHeaders.isPlayableAudio(full)) continue
+            return Hit(full, Level.Json, AudioUrlHeaders.headersFor(full))
         }
         return null
     }
@@ -129,7 +143,9 @@ object MultistepAudioExtractor {
         if (rule == null) return null
         val raw = rule(body) ?: return null
         if (!raw.startsWith("http")) return null
-        return Hit(normalize(raw, body), Level.Custom, AudioUrlHeaders.headersFor(raw))
+        val full = normalize(raw, body)
+        if (!AudioUrlHeaders.isPlayableAudio(full)) return null
+        return Hit(full, Level.Custom, AudioUrlHeaders.headersFor(full))
     }
 
     // ---------- 统一入口 ----------
@@ -147,22 +163,41 @@ object MultistepAudioExtractor {
         customRule: ((String) -> String?)? = null,
     ): Hit {
         // 级 1：输入本身是直链
-        tryDirect(raw)?.let { return it }
+        tryDirect(raw)?.let { return check(it) }
 
         // 取正文（级 2/3/4 都要用）
         val body = bodyFetcher(raw) ?: throw ExtractError.AllFailed
 
         // 级 2：HTML
-        tryHtml(body)?.let { return it }
+        tryHtml(body)?.let { return check(it) }
 
         // 级 3：JSON
-        tryJson(body)?.let { return it }
+        tryJson(body)?.let { return check(it) }
 
         // 级 4：自定义
-        tryCustom(body, customRule)?.let { return it }
+        tryCustom(body, customRule)?.let { return check(it) }
 
         // 级 5 需要平台层接手（iOS: WKWebView 嗅探 / Android: WebView）
         throw ExtractError.NeedsWebView
+    }
+
+    /**
+     * 出口闸：Hit 交给播放器前必须校验。
+     *
+     * 各级正则都可能抠出**网页**地址（例如页面里恰好有 "src":"https://www.ximalaya.com/sound/1"），
+     * 原样返回会让 AVPlayer 拿到 text/html 报 -12847。这里统一过 AudioUrlHeaders 的出口判定。
+     */
+    /** extract 内部统一出口：抠出来的东西不是音频就当作"这一级没命中"，继续降级 */
+    private fun check(hit: Hit): Hit {
+        if (!AudioUrlHeaders.isPlayableAudioOrRelay(hit.url)) throw ExtractError.NoHtmlMatch
+        return hit
+    }
+
+    fun requirePlayableHit(hit: Hit): Hit {
+        if (!AudioUrlHeaders.isPlayableAudioOrRelay(hit.url)) {
+            throw ExtractError.NoCustomRule
+        }
+        return hit
     }
 
     /** 相对地址补全：// 开头补 https:，/ 开头用 base 的 host */

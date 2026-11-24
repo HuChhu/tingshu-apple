@@ -12,6 +12,24 @@ object TrackExtractor {
 
     data class TrackPage(val episodes: List<Episode>, val totalCount: Long, val maxPageId: Long)
 
+    /**
+     * 免登录移动端响应（mobwsa / mobile /v1/album/track）：
+     *   {"list":[{trackId,title,playUrl64,playUrl32,...}], "totalCount":N, "maxPageId":M}
+     * 它和登录版的区别是：**直接带音频直链**，而登录版只给 trackId。
+     */
+    fun fromOpenList(root: JsonObject, page: Int, pageSize: Int, sourceId: String): TrackPage {
+        val list = (root["list"] as? JsonArray)
+            ?: ((root["data"] as? JsonObject)?.get("list") as? JsonArray)
+            ?: JsonArray(emptyList())
+        val episodes = list.mapIndexedNotNull { i, el ->
+            val o = el as? JsonObject ?: return@mapIndexedNotNull null
+            TrackNormalizer.normalizeTrack(o, TrackNormalizer.indexAt(page, pageSize, i), sourceId)
+        }
+        val totalCount = AlbumNormalizer.lng(root, "totalCount")
+        val maxPageId = AlbumNormalizer.lng(root, "maxPageId")
+        return TrackPage(episodes, totalCount, maxPageId)
+    }
+
     fun fromDetail(data: JsonObject, page: Int, pageSize: Int, sourceId: String): TrackPage {
         val node = data["tracks"]
         val list: JsonArray?

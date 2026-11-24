@@ -42,6 +42,7 @@ class XimalayaAudioExtractor(
                     },
                 )
                 if (hit.level != MultistepAudioExtractor.Level.Direct) {
+                    guardPlayable(hit.url, "multistep:" + hit.level.label)
                     return ExtractedAudio(hit.url, hit.headers, 0L)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -91,9 +92,28 @@ class XimalayaAudioExtractor(
         val inner = json["data"] as? JsonObject
         val audioUrl = AlbumNormalizer.str(inner, "src", "url", "playUrl")
         if (audioUrl.isEmpty()) throw SourceErrors.ParseFailed("上游未返回可播放地址")
+        guardPlayable(audioUrl, "play/v1/audio")
+
+        // 出口校验：上游 data.src/url/playUrl 有可能是网页地址（实测 /sound/{id} 就是 200 text/html），
+        // 直接交给播放器只会得到 -12847。这里拦成 ParseFailed，让壳侧能显示可读原因。
+        AudioUrlHeaders.requirePlayable(audioUrl, "喜马拉雅播放接口")
 
         // 头部纪律：audio host 精确匹配才注入；错配=空 map
         return ExtractedAudio(audioUrl, AudioUrlHeaders.headersFor(audioUrl), 3_600L)
+    }
+
+    /**
+     * 出口闸（2026-11-24 P0）。
+     *
+     * 真机日志：我们把 https://www.ximalaya.com/sound/{id} 这个网页当成音频播了，
+     * AVPlayer 报 -12847。原因：上游字段的值被当“地址”直接透传。
+     * 从此以后，不是音频直链就当失败处理，绝不把网页地址当成功结果返回。
+     */
+    private fun guardPlayable(url: String, from: String) {
+        if (AudioUrlHeaders.isPlayableAudio(url)) return
+        throw SourceErrors.ParseFailed(
+            "源站只给了网页地址，没给音频直链（" + from + "）: " + url.take(120)
+        )
     }
 
     private fun parse(text: String): JsonObject? =

@@ -165,6 +165,92 @@ class CorePureTest {
         assertEquals(5L, tp2.episodes[0].trackId)
         Unit
     }
+    // ---- 2026-11-24 P0 回归：网页地址绝不能被当成音频直链返回 ----
+    @Test fun webpageUrlIsNeverPlayableAudio() {
+        // 真机现场：https://www.ximalaya.com/sound/{id} 这个网页被当音频播了，AVPlayer 报 -12847
+        assertFalse(AudioUrlHeaders.isPlayableAudio("https://www.ximalaya.com/sound/1011694179"))
+        assertFalse(AudioUrlHeaders.isPlayableAudio("https://m.ximalaya.com/sound/1011694179"))
+        assertFalse(AudioUrlHeaders.isPlayableAudio("https://www.ximalaya.com/album/41682166"))
+        // 门户域名下即便后缀像音频也不许过（防 /sound/1.html?x=.mp3 这类伪造）
+        assertFalse(AudioUrlHeaders.isPlayableAudio("https://www.ximalaya.com/a.mp3"))
+        assertFalse(AudioUrlHeaders.isPlayableAudio("https://www.ximalaya.com/x/1.html?f=a.mp3"))
+        // 其它门户同理
+        assertFalse(AudioUrlHeaders.isPlayableAudio("https://www.kuwo.cn/play_detail/123"))
+        assertFalse(AudioUrlHeaders.isPlayableAudio("https://music.163.com/song?id=1"))
+        // 真直链要放行
+        assertTrue(AudioUrlHeaders.isPlayableAudio("https://aod.cos.tx.xmcdn.com/storages/x/1.m4a"))
+        assertTrue(AudioUrlHeaders.isPlayableAudio("http://aod.cos.tx.xmcdn.com/storages/x/1.mp3"))
+        assertTrue(AudioUrlHeaders.isPlayableAudio("https://files.vbus.cc/u/1.mp3?expires=1&md5=2"))
+        // 非 http 协议不算
+        assertFalse(AudioUrlHeaders.isPlayableAudio("/sound/123"))
+    }
+
+    @Test fun episodesCarryDirectAudioNotWebpage() {
+        // 上游给了 playUrl64 → Episode.url 必须是直链
+        val t = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"trackId":671821892,"title":"第1集","duration":45,
+               "playUrl64":"http://aod.cos.tx.xmcdn.com/storages/x/1.mp3",
+               "playUrl32":"http://aod.cos.tx.xmcdn.com/storages/x/2.mp3"}"""
+        ) as kotlinx.serialization.json.JsonObject
+        val ep = com.local.audiobook.core.engine.TrackNormalizer.normalizeTrack(t, 1, "ximalaya")
+        assertEquals("http://aod.cos.tx.xmcdn.com/storages/x/1.mp3", ep.url)
+
+        // 上游只给 trackId 时退回 /sound/{id}（让 audio() 去换），但播放器出口闸会拦住它 ——
+        // 这里锁住「拿到的不是直链」这个事实，防止有人再把网页当音频播
+        val t2 = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"trackId":1011694179,"title":"第2集","duration":60}"""
+        ) as kotlinx.serialization.json.JsonObject
+        val ep2 = com.local.audiobook.core.engine.TrackNormalizer.normalizeTrack(t2, 2, "ximalaya")
+        assertFalse(
+            AudioUrlHeaders.isPlayableAudio(ep2.url),
+            "只给 trackId 时 url 是网页地址，必须被 isPlayableAudio 判否（不能直接交给播放器）"
+        )
+    }
+
+    // ---- P0 回归：曲目列表富化后，Episode.url 不能是门户网页 ——
+    @Test fun trackNormalizerPrefersPlayUrlOverSoundPage() {
+        val o = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"trackId":1,"title":"a","duration":10,"playUrl64":"https://aod.cos.tx.xmcdn.com/a.m4a"}"""
+        ) as kotlinx.serialization.json.JsonObject
+        val ep = com.local.audiobook.core.engine.TrackNormalizer.normalizeTrack(o, 1, "ximalaya-open")
+        assertTrue(ep.url.contains("aod.cos.tx.xmcdn.com"), "有 playUrl64 就必须用它：" + ep.url)
+        assertTrue(AudioUrlHeaders.isPlayableAudio(ep.url), "直接链应可播")
+    }
+
+    // ---- P0 回归：免登录曲目列表（list 外层）能被解析且带直链 ----
+    @Test fun openTrackListEnvelopeParsed() {
+        val root = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"ret":0,"totalCount":2,"maxPageId":1,"list":[
+                 {"trackId":11,"title":"第1集","duration":45,"playUrl64":"http://aod.cos.tx.xmcdn.com/1.mp3"},
+                 {"trackId":12,"title":"第2集","duration":50,"playUrl32":"http://aod.cos.tx.xmcdn.com/2.mp3"}
+               ]}"""
+        ) as kotlinx.serialization.json.JsonObject
+        val tp = com.local.audiobook.core.engine.TrackExtractor.fromOpenList(root, 1, 20, "ximalaya-open")
+        assertEquals(2, tp.episodes.size)
+        assertEquals(2L, tp.totalCount)
+        assertEquals(1L, tp.maxPageId)
+        assertTrue(tp.episodes.all { AudioUrlHeaders.isPlayableAudio(it.url) }, "免登录曲目应全是直链")
+    }
+
+    // ---- P0 回归：Hit 构造时就拒绝网页地址 ----
+    @Test fun multistepHitRejectsWebpageUrl() {
+        var threw = false
+        try {
+            com.local.audiobook.core.engine.MultistepAudioExtractor.Hit(
+                "https://www.ximalaya.com/sound/1011694179",
+                com.local.audiobook.core.engine.MultistepAudioExtractor.Level.Json,
+            )
+        } catch (e: IllegalArgumentException) {
+            threw = true
+        }
+        assertTrue(threw, "网页地址不能装进 Hit")
+        // 正常直链不应受影响
+        val ok = com.local.audiobook.core.engine.MultistepAudioExtractor.Hit(
+            "https://aod.cos.tx.xmcdn.com/a.mp3",
+            com.local.audiobook.core.engine.MultistepAudioExtractor.Level.Html,
+        )
+        assertTrue(ok.url.endsWith(".mp3"))
+    }
 }
 
 // 可编程假 fetcher：按 URL 片段匹配返回预置响应；计数调用次数
@@ -282,4 +368,5 @@ class AuthPrecheckTest {
         assertEquals(0, fake.calls, "预检命中不得发请求（桥 has_login 同款语义）")
         Unit
     }
+
 }

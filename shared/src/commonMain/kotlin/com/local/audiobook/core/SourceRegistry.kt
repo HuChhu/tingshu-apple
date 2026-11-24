@@ -182,6 +182,10 @@ class SourceRegistry(
             else -> templates[sourceId]?.audioExtractor()?.extract(url)
                 ?: return AudioResult(reason = unknownSource(sourceId))
         }
+        // 【P0 2026-11-24 出口总闸】任何源返回的地址都必须真的是音频。
+        // 历史上 https://www.ximalaya.com/sound/{id}（网页）被原样交给 AVPlayer，
+        // 报 -12847（kAudioFormatUnsupportedDataFormatError），用户只看到无意义的错误码。
+        com.local.audiobook.core.engine.AudioUrlHeaders.requirePlayable(a.url, kindOf(sourceId) ?: sourceId)
         AudioResult(audio = a)
     } catch (e: SourceErrors) {
         AudioResult(reason = describe(e))

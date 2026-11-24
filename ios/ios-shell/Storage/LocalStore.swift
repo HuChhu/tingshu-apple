@@ -157,9 +157,9 @@ enum LocalStore {
             coverUrl = try c.decode(String.self, forKey: .coverUrl)
             albumId = try c.decode(Int64.self, forKey: .albumId)
             addedAt = try c.decode(Date.self, forKey: .addedAt)
-            sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
-            // 旧版本存的是「猜」出来的源，用 URL 反推一次（认不出就保持原值）
-            sourceId = LocalStore.forProgress(bookUrl: bookUrl, raw: sourceId)
+            // 一次算完：先按 URL 反推旧版本「猜」出来的源，再赋值（sourceId 是 let，只能赋一次）
+            let rawSource = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
+            sourceId = LocalStore.forProgress(bookUrl: bookUrl, raw: rawSource)
         }
         init(bookUrl: String, title: String, author: String, coverUrl: String, albumId: Int64, addedAt: Date, sourceId: String) {
             self.bookUrl = bookUrl; self.title = title; self.author = author

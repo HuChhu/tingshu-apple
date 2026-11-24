@@ -74,30 +74,15 @@ struct RootTabView: View {
     // MARK: - ① 自绘 dock（iPhone 竖屏）
 
     private var customDockLayout: some View {
-        ZStack(alignment: .bottom) {
-            tabContents
-                // 隐藏系统 TabBar（逐个 Tab 的内容都要挂，所以放在 TabView 外层统一施加）
-                .toolbar(.hidden, for: .tabBar)
-                // 自绘条自己占位：系统已经不知道有什么东西挡在底部了
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    BottomDock(selection: $tab)
-                }
-
-            // 有内容时，迷你条浮在 dock 之上（dock 已用 safeAreaInset 占位，
-            // 这里只往上叠一层，不再加 padding）
-            VStack(spacing: 6) {
-                MiniPlayerBar()
-                    .padding(.horizontal, Layout.miniBarSideMargin)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Layout.radiusBar))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Layout.radiusBar)
-                            .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
-                    )
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+        tabContents
+            .toolbar(.hidden, for: .tabBar)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // 迷你条 + dock 作为一整块占位：高度由系统算进 safe area，
+                // 页面内容自然让位，不会出现「迷你条浮在内容上面挡住章节列表」。
+                // 迷你条显隐由 BottomDock 自己处理（它已把两段高度算进 frame），
+                // 这里绝不能再 if 一次 —— 否则高度算两遍，迷你条会压住导航键。
+                BottomDock(selection: $tab)
             }
-            .animation(.easeInOut(duration: 0.22), value: player.nowPlaying.isEmpty)
-            .padding(.bottom, Layout.dockHeight + 16)
-        }
     }
 
     // MARK: - ② iOS 26 系统 TabView + 底部配件

@@ -57,11 +57,10 @@ struct HomeView: View {
                         }
                     }
 
-                    // 底部留白：系统已经为 TabBar / 底部配件让过位，
-                    // 页面只补自绘栏这一截（走系统方案时就是 16pt 底线）。
-                    // 不再自己算 TabBar 高度 + 安全区 —— 那是 iOS 26 悬浮胶囊空隙的来源。
-                    Color.clear.frame(height: Layout.contentBottomPadding(
-                        customBottomBar: BottomBarStyle.usesCustomBar(regularWidth: hSizeClass == .regular)))
+                    // 底部留白：BottomDock 用 safeAreaInset 占位时，系统已经把内容区抬高，
+                    // 页面**只能**补一小段呼吸距离。这里再按 dock 高度加一次就会双层留白
+                    // （实测 iPhone 14 上会多出 80pt，首页底部出现一大块空白）。
+                    Color.clear.frame(height: Layout.dockBaseline)
                 }
                 .padding(.top, 8)
             }

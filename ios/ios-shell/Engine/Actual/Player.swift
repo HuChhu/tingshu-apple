@@ -16,6 +16,330 @@ private enum AVCompatNames {
 }
 
 
+/// AVURLAsset 走自定义 scheme 时，由这个 delegate 真正发请求并回填数据。
+///
+/// 为什么必须换成 `dshmedia://` 这种自定义 scheme：
+/// AVFoundation 只在「系统网络栈认不出这个 scheme」时才调 resourceLoader。
+/// 原样传 https:// 的话 delegate 永远不会被调用，挂与不挂没区别。
+///
+/// 为什么必须自己发请求：
+/// ① `AVURLAssetHTTPHeaderFieldsKey` 是非公开 key，iOS 16+ 起不再稳定生效；
+/// ② 就算生效，302 跳转到真实 CDN 后 AVFoundation **不再带 header**，
+///    于是第二跳 403 → 永远不 readyToPlay → 起播超时（本次故障的直接成因）。
+/// 自己发请求时我们要手动跟随 302 并重新带上 header（`viaRedirect: true`）。
+///
+/// 线程：`setDelegate(_, queue: .main)` 让 resourceLoader 的请求同步跑在主队列；
+/// URLSession 也用 `delegateQueue: .main`，两边的回调因此落在同一个执行域。
+/// Apple 文档明确：resourceLoader 的请求「在你的队列上同步处理」，URLSession 的
+/// completion「在你的 operation queue 上调度」—— 都传主队列入即同域。
+/// AVAssetResourceLoadingRequest 不是线程安全的，跨线程回填会随机崩在
+/// `-[AVAssetResourceLoadingDataRequest respondWithData:]`。
+private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDelegate, URLSessionDataDelegate {
+    /// 自定义 scheme。`dshmedia` 对应 http，`dshmedias` 对应 https。
+    static let scheme = "dshmedia"
+    /// URL 里的双斜杠（转义写法，避开注释剥离器）
+    static let sep: String = "//"
+
+    private let headers: [String: String]
+    private let session: URLSession
+    // 回填没有独立队列：resourceLoader 与 URLSession 都落在主队列，见 init 注释。
+
+    init(headers: [String: String]) {
+        self.headers = headers
+        // delegateQueue 必须给 .main：completionHandler 默认跑在 session 自己的后台队列，
+        // 那里拿到 AVAssetResourceLoadingRequest 再 respond 就是跨线程 —— 真机随机崩。
+        // 而 setDelegate(_, queue: .main) 也已指定主队列，两边同域后才安全。
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 15
+        cfg.timeoutIntervalForResource = 60
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        // 单 host 连接压到 2：模板站普遍限并发，开太多会被风控
+        cfg.httpMaximumConnectionsPerHost = 2
+        // URLSession 必须挂 self 做 delegate：流式回填靠 didReceive response / didReceive data。
+        // delegateQueue 用 .main，和 setDelegate(_, queue: .main) 同域 ——
+        // AVAssetResourceLoadingRequest 不是线程安全的，跨线程回填会随机崩。
+        // 先建一个空 session 占位，super.init() 之后换成本类做 delegate
+        // （Swift 要求 super.init() 前不能用 self）。
+        self.session = URLSession(configuration: cfg, delegate: nil, delegateQueue: .main)
+        super.init()
+        self.session.invalidateAndCancel()
+        self.session = URLSession(configuration: cfg, delegate: self, delegateQueue: .main)
+    }
+
+    func tearDown() {
+        session.invalidateAndCancel()
+    }
+
+    // MARK: scheme 互转
+
+    static func isWrapped(_ u: URL) -> Bool {
+        let sch = u.scheme ?? ""
+        return sch.hasPrefix(scheme)
+    }
+
+    /// http(s)://host/path → dshmedia://host/path（https 走 dshmedias://）。
+    /// 系统网络栈不认识 dshmedia(s)，才会把请求交给 resourceLoader。
+    static func wrap(_ u: URL) -> URL? {
+        let s = (u.scheme ?? "").lowercased()
+        guard s == "http" || s == "https" else { return nil }
+        guard let marker = u.absoluteString.range(of: URL.sep) else { return nil }
+        let tail = String(u.absoluteString[marker.lowerBound...])
+        let prefix = (s == "https") ? "dshmedias" : "dshmedia"
+        return URL(string: prefix + ":" + tail)
+    }
+
+    /// dshmedia(s)://host/path → http(s)://host/path
+    static func unwrap(_ u: URL) -> URL? {
+        let s = (u.scheme ?? "").lowercased()
+        guard s == "dshmedia" || s == "dshmedias" else { return nil }
+        guard let marker = u.absoluteString.range(of: URL.sep) else { return nil }
+        let tail = String(u.absoluteString[marker.lowerBound...])
+        let prefix = (s == "dshmedias") ? "https" : "http"
+        return URL(string: prefix + ":" + tail)
+    }
+
+    // MARK: AVAssetResourceLoaderDelegate
+
+    /// 登记表：loadingRequest → 它的底层 dataTask。
+    /// 用途只有一个：didCancel 时真正把网络请求掐掉。没有它，用户快速切集会留下
+    /// 一堆还在下载的 task，把源站并发占满（模板站限 1~2 并发），下一集就永远拿不到数据。
+    private var tasks: [ObjectIdentifier: URLSessionDataTask] = [:]
+
+    func resourceLoader(_ resourceLoader: AVAssetResourceLoader,
+                        shouldWaitForLoadingOfRequestedResource loadingRequest: AVAssetResourceLoadingRequest) -> Bool {
+        guard let wrapped = loadingRequest.request.url, let orig = Self.unwrap(wrapped) else {
+            loadingRequest.finishLoading(with: NSError(domain: "dshmedia", code: -1,
+                                                       userInfo: [NSLocalizedDescriptionKey: "scheme 还原失败"]))
+            return false
+        }
+        var req = URLRequest(url: orig)
+        req.httpMethod = "GET"
+        req.timeoutInterval = 15
+        // identity：不接受 gzip，否则 AVFoundation 拿到的 length 和实际字节对不上
+        req.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+
+        let offset = loadingRequest.dataRequest?.requestedOffset ?? 0
+        let len = loadingRequest.dataRequest?.requestedLength ?? 0
+        if loadingRequest.dataRequest == nil {
+            // AVFoundation 的第一条请求是纯 content-info（dataRequest == nil）：
+            // 它只想拿到「总长度 + 类型」，不想要任何音频字节。
+            // 这里如果不设 Range，就会变成整集 GET —— 60MB 的集在弱网下必然把
+            // 15 秒请求超时和 60 秒资源超时撞满，用户看到的就是「12 秒起播超时」。
+            // 用 bytes=0-1 探两个字节：长度信息就在 Content-Range 的 /TOTAL 里。
+            req.setValue("bytes=0-1", forHTTPHeaderField: "Range")
+        } else if offset > 0, len > 0 {
+            // 只要需要的那一段，不强求整集
+            req.setValue("bytes=\(offset)-\(offset + Int64(len) - 1)", forHTTPHeaderField: "Range")
+        } else if offset > 0 {
+            req.setValue("bytes=\(offset)-", forHTTPHeaderField: "Range")
+        } else if len > 0 {
+            // 从头读、且只要 len 个字节：首次起播就是这条，必须带上结束位置，
+            // 否则又退化成整集下载（流式能起播，但流量和内存都不该这么花）
+            req.setValue("bytes=0-\(Int64(len) - 1)", forHTTPHeaderField: "Range")
+        }
+
+        // 流式：dataTask 一收到 response / data 就回填，不等整集下完。
+        // 这是「12 秒不 ready」在新方案下仍会复现的根本原因：
+        // 60MB 的集用 dataTask 全缓冲，弱网下 60 秒才 finishLoading，AVPlayer 永远等不到首字节。
+        let task = session.dataTask(with: req)
+        tasks[ObjectIdentifier(loadingRequest)] = task
+        if let r = req.value(forHTTPHeaderField: "Range") {
+            originalRange[ObjectIdentifier(task)] = r
+        }
+        pendingRequests[task.taskIdentifier] = Pending(lr: loadingRequest, resp: nil, base: 0, written: 0)
+        task.resume()
+        return true
+    }
+
+    func resourceLoader(_ resourceLoader: AVAssetResourceLoader,
+                        didCancel loadingRequest: AVAssetResourceLoadingRequest) {
+        let key = ObjectIdentifier(loadingRequest)
+        guard let t = tasks.removeValue(forKey: key) else { return }
+        pendingRequests.removeValue(forKey: t.taskIdentifier)
+        t.cancel()                       // 必须真取消：否则切集后旧集还在后台吃带宽
+        CrashLog.write("PLAY", "loader cancel task=\(t.taskIdentifier)")
+    }
+
+    /// 每个任务的状态。acc 是「字节流里已经处理到哪」，不需要缓存整段 Data。
+    private struct Pending {
+        let lr: AVAssetResourceLoadingRequest
+        let resp: URLResponse?
+        let base: Int64        // 本次响应 0 字节对应文件里的偏移（206 从 Content-Range 取，200 为 0）
+        var written: Int64     // 已经向 dataRequest 写过去的字节数
+    }
+    private var pendingRequests: [Int: Pending] = [:]
+
+    // MARK: URLSessionDataDelegate
+
+    /// 收到响应头：立刻回填 contentInformationRequest 并放行。
+    /// 同时在这里就把 200/206 的基准偏移算好，后面切片全靠它。
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                    didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard var st = pendingRequests[dataTask.taskIdentifier] else {
+            completionHandler(.cancel)
+            return
+        }
+        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+            st.lr.finishLoading(with: NSError(domain: NSURLErrorDomain, code: http.statusCode,
+                                              userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"]))
+            pendingRequests.removeValue(forKey: dataTask.taskIdentifier)
+            tasks.removeValue(forKey: ObjectIdentifier(st.lr))
+            completionHandler(.cancel)
+            return
+        }
+        let base = Self.contentRangeStart(response)      // 200 → 0；206 → Content-Range 起点
+        let httpInfo = response as? HTTPURLResponse
+        let codeText = httpInfo.map { String($0.statusCode) } ?? "-"
+        let mimeText = response.mimeType ?? "-"
+        let crText = httpInfo?.value(forHTTPHeaderField: "Content-Range") ?? "-"
+        let acrText = httpInfo?.value(forHTTPHeaderField: "Accept-Ranges") ?? "-"
+        CrashLog.write("PLAY", "loader resp code=" + codeText + " mime=" + mimeText
+                        + " cr=" + crText + " acr=" + acrText)
+        st = Pending(lr: st.lr, resp: response, base: base, written: 0)
+        pendingRequests[dataTask.taskIdentifier] = st
+
+        // 关键：contentLength 必须是整个文件长度（Content-Range 的 /total），
+        // contentType 必须是 UTI 而不是 MIME。填错 AVPlayer 会拒播或以为整集只有几十 KB。
+        if let info = st.lr.contentInformationRequest, let http = response as? HTTPURLResponse {
+            if let total = Self.contentRangeTotal(response) {
+                info.contentLength = total
+            } else if http.statusCode == 200, http.expectedContentLength > 0 {
+                info.contentLength = http.expectedContentLength
+            }
+            info.contentType = Self.uti(forMime: http.mimeType)
+            // 只有服务器真接受 Range（206 或声明了 Accept-Ranges）才敢说支持，
+            // 否则 AVPlayer 会发起中段请求，而服务器只回 200 全量，等于白拉整集
+            info.isByteRangeAccessSupported = (http.statusCode == 206)
+                || (http.value(forHTTPHeaderField: "Accept-Ranges")?.lowercased() != "none")
+        }
+        // 服务器忽略 Range 回了 200，但 AVFoundation 要的是中段：立刻判死，
+        // 别让用户对着"正在连接"等到 20 秒。
+        if base == 0, let dr = st.lr.dataRequest, dr.requestedOffset > 0,
+           let http = response as? HTTPURLResponse, http.statusCode == 200,
+           http.expectedContentLength > 0,
+           Int64(http.expectedContentLength) <= dr.requestedOffset {
+            st.lr.finishLoading(with: NSError(domain: "dshmedia", code: -2, userInfo: [
+                NSLocalizedDescriptionKey: "服务器忽略 Range 且长度不足（need \(dr.requestedOffset)）"]))
+            pendingRequests.removeValue(forKey: dataTask.taskIdentifier)
+            tasks.removeValue(forKey: ObjectIdentifier(st.lr))
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(.allow)
+    }
+
+    /// 收到数据块：按「当前需要的区间」切片立即 respond。
+    /// 连续流的偏移 = base + written；只有落在 [requestedOffset, +requestedLength) 里的部分才写。
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard var st = pendingRequests[dataTask.taskIdentifier] else { return }
+        guard let dr = st.lr.dataRequest else { st.written += Int64(data.count); pendingRequests[dataTask.taskIdentifier] = st; return }
+        let chunkStart = st.base + st.written
+        st.written += Int64(data.count)
+        pendingRequests[dataTask.taskIdentifier] = st
+
+        let wantLo = dr.requestedOffset
+        let wantHi = wantLo + Int64(dr.requestedLength)
+        let chunkHi = chunkStart + Int64(data.count)
+        // 200 响应 + 要求中段：数据从 0 开始，要丢掉前面的 (wantLo - 0) 字节
+        let lo = max(wantLo, chunkStart)
+        let hi = min(wantHi, chunkHi)
+        if hi > lo {
+            let off = Int(lo - chunkStart)
+            let end = Int(hi - chunkStart)
+            if end <= data.count, off < end {
+                dr.respond(with: data.subdata(in: off..<end))
+            }
+        }
+        // 已经写够了就不用再等剩下的字节（只有明确的区间请求才提前掐断）
+        if dr.requestsAllDataToEndOfResource == false, dr.requestedLength > 0,
+           st.written >= (wantLo - st.base) + dr.requestedLength {
+            dataTask.cancel()
+        }
+    }
+
+    /// 302 手动跟随：**不走 URLSession 自动跳转**，每跳重建 request 重新注入 headers 与 Range。
+    /// 系统的 AVURLAsset 在跳转后会丢 header，xmcdn 第二跳因此 403 —— 这是我们自己跟随的全部理由。
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        guard var st = pendingRequests[task.taskIdentifier] else { completionHandler(nil); return }
+        let hop = (redirectHops[ObjectIdentifier(task)] ?? 0) + 1
+        redirectHops[ObjectIdentifier(task)] = hop
+        guard hop <= 5 else {
+            st.lr.finishLoading(with: NSError(domain: NSURLErrorDomain, code: NSURLErrorHTTPTooManyRedirects,
+                                              userInfo: [NSLocalizedDescriptionKey: "跳转超过 5 次"]))
+            pendingRequests.removeValue(forKey: task.taskIdentifier)
+            tasks.removeValue(forKey: ObjectIdentifier(st.lr))
+            completionHandler(nil)
+            return
+        }
+        var r2 = request
+        r2.httpMethod = "GET"
+        r2.timeoutInterval = 15
+        r2.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        for (k, v) in headers { r2.setValue(v, forHTTPHeaderField: k) }
+        if let range = originalRange[ObjectIdentifier(task)] {
+            r2.setValue(range, forHTTPHeaderField: "Range")
+        }
+        CrashLog.write("PLAY", "redirect hop=\(hop) -> \(request.url?.host ?? "?")")
+        redirectHops[ObjectIdentifier(task)] = hop
+        completionHandler(r2)
+    }
+
+    /// 完成：成功就 finishLoading，失败就 finishLoading(with:)
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        defer {
+            redirectHops.removeValue(forKey: ObjectIdentifier(task))
+            originalRange.removeValue(forKey: ObjectIdentifier(task))
+        }
+        guard let st = pendingRequests.removeValue(forKey: task.taskIdentifier) else { return }
+        // didCancel 已经把它从表里摘掉，这里就不再回调（避免 finishLoading 两次）
+        tasks.removeValue(forKey: ObjectIdentifier(st.lr))
+        if let e = error as NSError?, e.code == NSURLErrorCancelled, st.lr.isFinished {
+            return
+        }
+        if let error = error {
+            st.lr.finishLoading(with: error)
+            return
+        }
+        // 走到这里说明数据已按片回填完，收尾
+        if !st.lr.isFinished { st.lr.finishLoading() }
+    }
+
+    private var redirectHops: [ObjectIdentifier: Int] = [:]
+    private var originalRange: [ObjectIdentifier: String] = [:]
+    /// Content-Range 的 /total 段（整集字节数）。取不到返回 nil。
+    private static func contentRangeTotal(_ resp: URLResponse?) -> Int64? {
+        guard let http = resp as? HTTPURLResponse, http.statusCode == 206,
+              let cr = http.value(forHTTPHeaderField: "Content-Range"),
+              let slash = cr.lastIndex(of: "/") else { return nil }
+        let s = cr[cr.index(after: slash)...].trimmingCharacters(in: .whitespaces)
+        guard let v = Int64(s), v > 0 else { return nil }
+        return v
+    }
+
+    /// MIME → UTI。给错的 UTI 会让 AVPlayer 拒播，识别不了就交 public.audio 让它自己嗅探。
+    private static func uti(forMime mime: String?) -> String {
+        let m = (mime ?? "").lowercased()
+        if m.contains("mpeg") { return "public.mp3" }
+        if m.contains("mp4") || m.contains("m4a") || m.contains("aac") { return "public.mpeg-4-audio" }
+        if m.contains("wav") { return "com.microsoft.waveform-audio" }
+        return "public.audio"
+    }
+
+    /// 206 响应的 Content-Range: bytes 0-1048575/5242880 → 0；200 响应 → 0
+    private static func contentRangeStart(_ resp: URLResponse?) -> Int64 {
+        guard let http = resp as? HTTPURLResponse, http.statusCode == 206,
+              let cr = http.value(forHTTPHeaderField: "Content-Range"),
+              let sp = cr.firstIndex(of: " "), let dash = cr.firstIndex(of: "-") else { return 0 }
+        let s = cr[cr.index(after: sp)..<dash].trimmingCharacters(in: .whitespaces)
+        return Int64(s) ?? 0
+    }
+}
+
 /// 播放器。契约四态 → PlayerState。
 /// 纪律：
 ///   - AVQueuePlayer 预插下一章，防章节间隙被系统挂起
@@ -50,6 +374,22 @@ final class Player: NSObject, ObservableObject {
     @Published private(set) var durationText: String = "0:00"
     /// 失败后可点的补救动作（有值 = 播放页显示「重试」按钮）
     @Published private(set) var canRetry: Bool = false
+    /// 起播进度的口语化提示（「正在取地址…」「正在连接…」「正在解码…」），
+    /// 与 state 分开：state 只有 4 态，用户需要知道「卡在哪一步」。
+    @Published private(set) var stageHint: StartStage = .idle
+
+    /// 起播四阶段。失败文案必须带上它，否则用户只会看到「播放失败」四个字。
+    enum StartStage: String {
+        case idle, resolving, connecting, decoding, playing
+        var label: String {
+            switch self {
+            case .idle, .resolving: return "正在取地址…"
+            case .connecting: return "正在连接源站…"
+            case .decoding: return "正在解码…"
+            case .playing: return "播放中"
+            }
+        }
+    }
 
     private let queue = AVQueuePlayer()
     /// 改变播放位置命令 / 进度条的分母（P2-6）：
@@ -103,7 +443,8 @@ final class Player: NSObject, ObservableObject {
             episode: current?.title ?? "?",
             trackId: current?.trackId ?? 0,
             source: currentSourceId, reason: "ADDR: " + msg)
-        errorText = msg
+        stageHint = .idle
+        errorText = "取地址失败：" + msg      // 阶段前缀：用户能分清是引擎侧还是播放器侧
         canRetry = (current != nil)
         resetPipeline()          // 连地址都没拿到，旧 item 必须清掉，否则界面还会插一句旧集
         apply(.error)
@@ -119,7 +460,10 @@ final class Player: NSObject, ObservableObject {
             trackId: current?.trackId ?? 0,
             source: currentSourceId, reason: "PLAY: " + msg)
         saveProgress(force: true)
-        errorText = msg
+        // 阶段前缀：加载阶段 / 解码阶段分开，用户截图能直接定位
+        let stage: String = state == .playing ? "解码" : "加载"
+        errorText = "【" + stage + "】" + msg
+        stageHint = .idle
         canRetry = (current != nil)
         // 失败即清队列：AVQueuePlayer 留着 failed item 时会一直挂在 currentItem 上，
         // 后续 resume/skip 全都作用在这个死 item，表现为「点了没反应」
@@ -269,14 +613,21 @@ final class Player: NSObject, ObservableObject {
     private var requestingEpisode = false
     /// 起播超时看门狗：URL 已拿到但 item 迟迟不 readyToPlay → 给可读文案 + 自动降级无 header 重试一次
     private var startWatchdog: Task<Void, Never>?
+    /// 「已 ready 但时间不走」哨兵（与起播看门狗分开，ready 之后接手）
+    private var progressWatchdog: Task<Void, Never>?
     /// 已经降级重试过的 trackId（同一个 item 只降级一次，防循环）
     private var fallbackTriedTrack: Int64 = -1
     /// 当前 item 的请求头（降级重试要用）
     private var currentHeaders: [String: String] = [:]
     /// 当前 item 的源地址（重建立 AVURLAsset 用）
     private var currentAssetURL: URL?
+    /// 未包装的原始 http(s) URL（loader 场景下 currentAssetURL 可能被 scheme 替换前的副本）
+    private var currentOriginalURL: URL?
     /// 本次起播的墙钟时刻。① 判断 stalled 是不是「起播阶段」 ② 计时播完的自动续章
     private var startedAt: Date = .distantPast
+    /// AVAsset 只弱引用 resourceLoader 的 delegate，必须由我们强持有一份，
+    /// 否则 item 还没 ready 就被释放 → 永远不 ready（这是最隐蔽的一条）。
+    private var loaderRetainer: ResourceLoaderDelegate?
 
     /// 快进/快退是否可用：只有真的挂着 item 才能 seek（error/stopped 时队列是空的）
     var canSeek: Bool {
@@ -384,6 +735,38 @@ final class Player: NSObject, ObservableObject {
     /// 当前书的封面地址与书名，供播放页海报层读取。
     var currentCoverUrl: String { currentBook?.coverUrl ?? "" }
     var currentBookTitle: String { currentBook?.title ?? "" }
+    var currentAuthor: String { currentBook?.author ?? "" }
+    var currentBookUrl: String { currentBook?.bookUrl ?? "" }
+    var currentAlbumId: Int64 { currentBook?.albumId ?? 0 }
+    var currentIsFavorite: Bool {
+        guard let book = currentBook else { return false }
+        return LocalStore.isFavorite(sourceId: currentSourceId,
+                                     albumId: book.albumId, bookUrl: book.bookUrl)
+    }
+    var currentVolumeGainDb: Double { effectivePlayback.volumeGainDb }
+    var sleepRemainingMinutes: Int {
+        guard let sleepDeadline else { return 30 }
+        return max(0, Int(ceil(sleepDeadline.timeIntervalSinceNow / 60)))
+    }
+
+    /// 章节列表的 UI 快照，避免视图层接触共享模型。
+    struct ChapterSnapshot: Identifiable {
+        let id: Int64
+        let title: String
+        let number: Int
+        let trackId: Int64
+    }
+
+    var chapterSnapshots: [ChapterSnapshot] {
+        currentEpisodes.map {
+            ChapterSnapshot(id: $0.trackId, title: $0.title,
+                            number: Int($0.index), trackId: $0.trackId)
+        }
+    }
+
+    var currentTrackId: Int64? { current?.trackId }
+    var canGoPreviousChapter: Bool { chapter(offset: -1) != nil }
+    var canGoNextChapter: Bool { chapter(offset: 1) != nil }
     /// 定时剩余文案：按时间显示 "mm:ss"，按章节显示 "剩 N 章"，没启用返回 nil
     var sleepRemainingText: String? {
         if let d = sleepDeadline {
@@ -580,6 +963,7 @@ final class Player: NSObject, ObservableObject {
         // .error 不能直接跳 .loading（apply 的允许集合），先退到 stopped 再进 loading
         if state == .error { apply(.stopped) }
         errorText = nil
+        stageHint = .resolving
         nowPlaying = ep.title
         current = ep
         apply(.loading)
@@ -655,23 +1039,52 @@ final class Player: NSObject, ObservableObject {
             return
         }
 
-        beginPlayback(newItem(url: url, headers: headers), ep: ep,
-                      via: "remote", headers: headers, sourceURL: url)
+        let (item, loader) = newItemWithLoader(url: url, headers: headers)
+        if loader != nil {
+            // 带 header 的请求必须记下「原始 URL」，降级重试时还要用
+            currentOriginalURL = url
+        }
+        beginPlayback(item, ep: ep, via: loader != nil ? "remote-loader" : "remote",
+                      headers: headers, sourceURL: url, loader: loader)
     }
 
-    /// 建 item。请求头只加在 http(s) 上：file:// 带 `AVURLAssetHTTPHeaderFieldsKey`
-    /// 会让 AVURLAsset 拿不到播放资源（本机缓存播放失败的一条来源）。
-    private func newItem(url: URL, headers: [String: String]) -> AVPlayerItem {
+    /// 建 item。三条路，按「能带 header 且不会挂住 asset」的优先级排：
+    ///
+    /// A. 有 header + http(s) → 自定义 scheme + ResourceLoaderDelegate（主力）。
+    ///    只有这条能保证 302 跳转后仍带 header，且不依赖非公开 API。
+    /// B. `AVURLAssetHTTPHeaderFieldsKey` 仍然挂上（老系统兜底）。
+    ///    注意：这个 key 是非公开 API，iOS 16+ 起不保证生效；更糟的是某些系统版本上
+    ///    带一个它不认识的 option 会让 asset 加载挂住 —— 所以 A 生效时 B 只是陪跑，
+    ///    delegate 拿到请求后照样自己发，系统那个 attempt 失败不影响播放。
+    /// C. 无 header / file:// → 普通 AVURLAsset，绝不下发 options。
+    ///
+    /// 返回的 delegate 必须被调用方强引用住（AVAsset 只弱引用它），否则会被释放，
+    /// 表现就是「有声音但没有回调」或「一直不 ready」。
+    private func newItemWithLoader(url: URL, headers: [String: String]) -> (AVPlayerItem, ResourceLoaderDelegate?) {
         let scheme = (url.scheme ?? "").lowercased()
-        let useHeaders = !headers.isEmpty && (scheme == "http" || scheme == "https")
-        let opts: [String: Any] = useHeaders ? ["AVURLAssetHTTPHeaderFieldsKey": headers] : [:]
-        let asset = AVURLAsset(url: url, options: opts)
+        var assetURL = url
+        var loader: ResourceLoaderDelegate?
+        var opts: [String: Any] = [:]
+        if !headers.isEmpty, scheme == "http" || scheme == "https" {
+            if let wrapped = ResourceLoaderDelegate.wrap(url) {
+                assetURL = wrapped
+                let d = ResourceLoaderDelegate(headers: headers)
+                loader = d
+                opts["AVURLAssetHTTPHeaderFieldsKey"] = headers     // B：老系统兜底
+            }
+        }
+        let asset = AVURLAsset(url: assetURL, options: opts.isEmpty ? nil : opts)
+        if let d = loader {
+            // 必须给 .main：URLSession 的回调也在 .main，两边同域才能安全回填
+            // （AVAssetResourceLoadingRequest 不是线程安全的，跨线程 respond 会随机崩）
+            asset.resourceLoader.setDelegate(d, queue: .main)
+        }
         let item = AVPlayerItem(asset: asset)
         if LocalStore.loadPlayPrefs().skipSilence, #available(iOS 16.4, *) {
-            // iOS 16.4+ 支持自动跳过静音段
             item.audioTimePitchAlgorithm = .timeDomain
         }
-        return item
+        CrashLog.write("PLAY", "asset scheme=\(assetURL.scheme ?? "-") loader=\(loader != nil) hdr=\(headers.count)")
+        return (item, loader)
     }
 
     /// 唯一的挂载入口（remote / local / 降级重试都走这里）。
@@ -679,13 +1092,23 @@ final class Player: NSObject, ObservableObject {
     /// 先 pause 再清队列：AVQueuePlayer 在 playing 状态下换 items 会走「等待最小化卡顿」，
     /// 拿 0 速率去看似 ready 的 item 上等，真机上是点进去一直转的直接来源。
     private func beginPlayback(_ item: AVPlayerItem, ep: SharedBridge.EpisodeRow,
-                               via: String, headers: [String: String], sourceURL: URL) {
+                               via: String, headers: [String: String], sourceURL: URL,
+                               loader: ResourceLoaderDelegate? = nil) {
         if via == "remote", AudioCache.loadSettings().autoCacheNext {
             // 边播边缓存：起播后异步取标头（见 cacheHeaders 注释里为何不再整段下载）
             cacheInBackground(url: sourceURL, headers: headers)
         }
         currentHeaders = headers
         currentAssetURL = sourceURL
+        // 原样核对引擎给的 header：重复 key（大小写不同）、空值、非法字段都会让
+        // AVFoundation 整份丢弃。这里只记 key + 值长度，不落敏感值。
+        let hdrDump = headers.sorted { $0.key.lowercased() < $1.key.lowercased() }
+            .map { $0.key + ":" + String($0.value.count) }
+            .joined(separator: ",")
+        CrashLog.write("PLAY", "headers " + (hdrDump.isEmpty ? "-" : hdrDump))
+        // 老 loader 释放前先关掉它的 session，避免残留连接把源站并发占满
+        loaderRetainer?.tearDown()
+        loaderRetainer = loader
         detachItem()
         queue.pause()
         queue.removeAllItems()
@@ -696,6 +1119,7 @@ final class Player: NSObject, ObservableObject {
         installItemTimeObserver()
         queue.play()
         errorText = nil
+        stageHint = .connecting
         durationText = fmt(ep.durationMs)
         // 音量增益：远程路径同样要应用（之前只接了本地缓存分支，等于网播时设置无效）
         applyVolumeGain()
@@ -765,6 +1189,42 @@ final class Player: NSObject, ObservableObject {
         let nextIdx = forward ? idx + 1 : idx - 1
         guard nextIdx >= 0, nextIdx < currentEpisodes.count else { return nil }
         return currentEpisodes[nextIdx]
+    }
+
+    private func chapter(offset: Int) -> SharedBridge.EpisodeRow? {
+        guard let current,
+              let idx = currentEpisodes.firstIndex(where: { $0.trackId == current.trackId }) else { return nil }
+        let target = idx + offset
+        guard target >= 0, target < currentEpisodes.count else { return nil }
+        return currentEpisodes[target]
+    }
+
+    func goToChapter(offset: Int) {
+        guard let episode = chapter(offset: offset) else { return }
+        playEpisode(episode, book: currentBook, sourceId: currentSourceId,
+                    episodes: currentEpisodes)
+    }
+
+    func playChapter(trackId: Int64) {
+        guard let episode = currentEpisodes.first(where: { $0.trackId == trackId }) else { return }
+        playEpisode(episode, book: currentBook, sourceId: currentSourceId,
+                    episodes: currentEpisodes)
+    }
+
+    @discardableResult
+    func toggleCurrentFavorite() -> Bool {
+        guard let book = currentBook else { return false }
+        return LocalStore.toggleFavorite(
+            bookUrl: book.bookUrl, title: book.title, author: book.author,
+            coverUrl: book.coverUrl, albumId: book.albumId,
+            sourceId: currentSourceId
+        )
+    }
+
+    func setVolumeGain(_ db: Double) {
+        let value = db.isFinite ? min(12, max(-12, db)) : 0
+        persistPlayback { $0.volumeGainDb = value }
+        applyVolumeGain()
     }
 
     private func attachItem(_ item: AVPlayerItem) {
@@ -856,6 +1316,8 @@ final class Player: NSObject, ObservableObject {
         switch item.status {
         case .readyToPlay:
             cancelStartWatchdog(reachedReady: true)
+            armProgressWatchdog(gen: requestGeneration)     // ready 之后由它盯「播不动」
+            if state == .loading || state == .playing { stageHint = .decoding }
             if state == .loading || state == .playing {
                 // .playing 也走一次：beginPlayback 是乐观置 playing 的，这里确认后才刷锁屏时长
                 if state == .loading { apply(.playing) }
@@ -892,6 +1354,7 @@ final class Player: NSObject, ObservableObject {
     /// 2 秒窗口在弱网起播时必然误杀。
     private func handleStalled() {
         guard state == .playing, let it = observedItem, it.status == .readyToPlay else { return }
+        stageHint = .decoding          // 播着播着卡住：界面显示「正在解码…」，不是「正在连接」
         // 起播后 3 秒内发来的 stalled 属于「首包慢」，交给启动看门狗统一处理；
         // 这里只接「已经播了一会儿又断」的场景。（原判据用 currentTime>1s，但卡住时 currentTime 不动，
         // 播到 0.9 秒才断的集会被永久跳过，界面停在「播放中」不动而没有任何提示。）
@@ -920,21 +1383,102 @@ final class Player: NSObject, ObservableObject {
         return false
     }
 
-    /// 起播超时看门狗。真机上「点第一集 → 一会儿报错」有两条来源：
-    /// ① header 被 CDN 拒（返回 403/302 到错误页），AVFoundation 反复重试不 ready；
-    /// ② 弱网首包慢。二者都不该直接报错，先给 12 秒，再降级无 header 重试一次，最后才失败。
+    /// 起播看门狗。**单一 deadline 驱动**，不是嵌套 sleep + return ——
+    /// 原实现在 T+20s 那段 `guard it.status != .readyToPlay else { return }`，
+    /// ready 之后整个任务就结束了，「ready 了但时间不走（解码卡死）」没有任何人管。
+    ///
+    /// 阶段：
+    ///   T+6s   未 ready → stageHint = .connecting，不报错（弱网首包 6~15 秒是常态）
+    ///   T+20s  未 ready → fallbackWithoutHeadersIfPossible 降级一次；**不结束任务**
+    ///   T+20s  已 ready → 进入「推进检查」：每 2 秒采一次 currentTime，
+    ///                     连续 30 秒没前进 → failPlayback("【解码】音频已就绪但播不动")
+    ///          未 ready → 降级后仍等 14 秒，T+34s 仍未 ready 才报「加载」失败
     private func armStartWatchdog(ep: SharedBridge.EpisodeRow) {
         cancelStartWatchdog(reachedReady: nil)
         let gen = requestGeneration
         let track = ep.trackId
+        let start = Date()
         startWatchdog = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 12_000_000_000)
-            guard !Task.isCancelled else { return }
-            guard gen == self.requestGeneration, self.current?.trackId == track else { return }
-            guard let it = self.observedItem, it.status != .readyToPlay else { return }
-            if self.fallbackWithoutHeadersIfPossible(reason: "start timeout") { return }
-            self.failPlayback("起播超时（12 秒没拿到音频，源站无响应）")
+            var didWarn6 = false
+            var didFallback = false
+            var fallbackAt: Date?
+            var lastPos: Double = -1
+            var lastMoveAt = Date()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if Task.isCancelled { return }
+                // 换台/换集：整个任务作废
+                guard gen == self.requestGeneration, self.current?.trackId == track else { return }
+                guard let it = self.observedItem else { return }
+                let elapsed = Date().timeIntervalSince(start)
+                let ready = (it.status == .readyToPlay)
+
+                if !ready {
+                    if !didWarn6, elapsed >= 6 {
+                        didWarn6 = true
+                        self.stageHint = .connecting
+                        self.errorText = nil
+                        CrashLog.write("PLAY", "watchdog T+6s not ready track=\(track)")
+                    }
+                    if !didFallback, elapsed >= 20 {
+                        didFallback = true
+                        fallbackAt = Date()
+                        if self.fallbackWithoutHeadersIfPossible(reason: "start timeout 20s") {
+                            // 降级会重建 item 并重启看门狗，本任务到这就交棒
+                            return
+                        }
+                    }
+                    if let fa = fallbackAt, Date().timeIntervalSince(fa) >= 14 {
+                        self.failPlayback("音频加载失败（等待 20 秒仍未就绪，降级后仍无响应：源站拒绝或地址已失效）")
+                        return
+                    }
+                    if !didFallback, elapsed >= 34 {
+                        self.failPlayback("音频加载失败（等待 34 秒仍未就绪：源站无响应）")
+                        return
+                    }
+                    continue
+                }
+
+                // ---- 已 ready：检查时间是否在走 ----
+                self.cancelStartWatchdog(reachedReady: true)   // 走完这一步就不再需要「起播」判定
+                return
+            }
         }
+    }
+
+    /// 「已 ready 但播不动」的独立哨兵。与起播看门狗分开：
+    /// 起播只关心 status 有没有到 readyToPlay；到了之后卡住是解码/防盗链层面的问题，
+    /// 由这个 30 秒无推进判定，文案单列「【解码】音频已就绪但播不动」。
+    private func armProgressWatchdog(gen: Int) {
+        progressWatchdog?.cancel()
+        let track = current?.trackId ?? 0
+        progressWatchdog = Task { @MainActor in
+            var lastPos = -1.0
+            var lastMove = Date()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if Task.isCancelled { return }
+                guard gen == self.requestGeneration, self.current?.trackId == track else { return }
+                guard self.state == .playing || self.state == .loading else { return }
+                let pos = self.queue.currentTime().seconds
+                // 暂停/拖动都会让 pos 变动，只有「同一位置连续 30 秒」才算卡死
+                // 播放中 seek 会让 pos 往回跳，这里只认「变了」，不管方向
+                if pos != lastPos {
+                    lastPos = pos
+                    lastMove = Date()
+                    continue
+                }
+                if Date().timeIntervalSince(lastMove) >= 30 {
+                    self.failPlayback("音频已就绪但播不动（30 秒没有前进：可能是解码失败或源站只给了开头一段）")
+                    return
+                }
+            }
+        }
+    }
+
+    private func cancelProgressWatchdog() {
+        progressWatchdog?.cancel()
+        progressWatchdog = nil
     }
 
     /// 取消看门狗。reachedReady 只用于日志：判定本身靠「同一个代际 + 同一个 trackId + item 仍未 ready」。
@@ -944,6 +1488,7 @@ final class Player: NSObject, ObservableObject {
         }
         startWatchdog?.cancel()
         startWatchdog = nil
+        if reachedReady != nil { cancelProgressWatchdog() }   // 只在「确定结束」时停推进哨兵
     }
 
     /// 降级重试：去掉自定义请求头重建 AVURLAsset。同一集只试一次。
@@ -967,32 +1512,45 @@ final class Player: NSObject, ObservableObject {
         fallbackTriedTrack = ep.trackId
         CrashLog.write("PLAY", "fallback no-header track=\(ep.trackId) reason=\(reason)")
         guard gen == requestGeneration else { return true }   // 已被新的一集取代，别再重挂 item
-        let it = newItem(url: url, headers: [:])
-        beginPlayback(it, ep: ep, via: "remote-fallback", headers: [:], sourceURL: url)
+        let (it, loader) = newItemWithLoader(url: url, headers: [:])
+        beginPlayback(it, ep: ep, via: "remote-plain", headers: [:], sourceURL: url, loader: loader)
         return true
     }
 
     /// AVFoundation 的 NSURLError 原文 → 人话。原文太长，用户看不懂也不该看。
+    /// AVFoundationErrorDomain 的 -11800 是「万能壳」，真正原因埋在 userInfo[NSLocalizedFailureReasonErrorKey]
+    /// 的 underlying error 里（通常是 NSURLErrorDomain -1008/-1009/-1200 或 -11828 解码失败）。
+    /// 以前只打 -11800 等于什么都没说，这次把底层 reason 与 underlying code 一并挖出来。
     private static func describe(_ error: Error?) -> String {
         guard let error = error else { return "音频无法播放（源站没有响应）" }
         let ns = error as NSError
-        if ns.domain == NSURLErrorDomain {
-            switch ns.code {
-            case NSURLErrorTimedOut: return "连接超时（网络太慢或源站挂了）"
+        var code = ns.code
+        var domain = ns.domain
+        var reason = (ns.userInfo[NSLocalizedFailureReasonErrorKey] as? String) ?? ns.localizedDescription
+        if let under = ns.userInfo[NSUnderlyingErrorKey] as? NSError {
+            code = under.code
+            domain = under.domain
+            let r2 = (under.userInfo[NSLocalizedFailureReasonErrorKey] as? String) ?? under.localizedDescription
+            if !r2.isEmpty { reason = r2 }
+        }
+        if domain == NSURLErrorDomain {
+            switch code {
+            case NSURLErrorTimedOut: return "连接超时（源站没在 15 秒内回第一个包）"
             case NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost: return "连不上源站服务器"
             case NSURLErrorNetworkConnectionLost: return "网络中断，播放已停止"
             case NSURLErrorNotConnectedToInternet: return "当前没有网络"
             case NSURLErrorSecureConnectionFailed: return "HTTPS 证书不被信任"
-            case NSURLErrorCancelled:
-                // -999 的 localizedDescription 是「操作已停止」，对用户等于没信息。
-                // 走到这里说明已经排除了「自己换台」的情况，能确定是源站/系统层撤的请求。
-                return "源站中断了请求（音频地址失效，点重试可重新取地址）"
+            case NSURLErrorBadURL, NSURLErrorUnsupportedURL: return "音频地址不合法（源站返回的地址拼坏了）"
+            case 403: return "源站拒绝了这个请求（403，多半是防盗链要 Referer/UA）"
+            case 404: return "音频文件不存在（404，源站已下架或地址过期）"
+            case NSURLErrorCancelled: return "请求被系统中断（源站主动断开）"
             default: break
             }
         }
-        // AVFoundation 解码层错误（-11800 等）走到这里：把 code 也带上，便于用户截图反馈
-        let desc = ns.localizedDescription
-        return desc.isEmpty ? "音频无法播放（错误码 \(ns.code)）" : ("音频无法播放：" + desc + "（\(ns.code)）")
+        // 解码层：-11828 是「格式不被支持」，常见于源站把错误页当音频返回
+        if code == -11828 { return "音频格式不支持（源站可能返回了网页而不是音频）" }
+        if code == -11800 { return "音频解码失败：" + reason }
+        return reason.isEmpty ? "音频无法播放（错误码 " + String(code) + "）" : ("音频无法播放：" + reason + "（" + String(code) + "）")
     }
 
     // MARK: - 前后台 / 生命周期

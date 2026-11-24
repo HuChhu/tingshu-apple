@@ -77,11 +77,22 @@ struct BottomDock: View {
         // GeometryReader 撑满父级，所以外面必须给固定高度：
         // safeAreaInset 里 dock 占位 = 条高 56 + 上 8 + 下 8（给凸出的播放键与提示留余量）。
         // 不用 safeAreaInset 时这个高度就是内容被顶起来的距离。
-        GeometryReader { geo in
-            dockBody(width: geo.size.width)
-                .frame(maxHeight: .infinity, alignment: .bottom)
+        VStack(spacing: 8) {
+            // 迷你条放在同一块占位里，而不是叠在 dock 上：
+            // 以前用 overlay + 固定偏移画，两段高度各算各的，56pt 完全重叠、盖住导航键。
+            if hasMiniPlayer {
+                MiniPlayerBar()
+                    .padding(.horizontal, Layout.miniBarSideMargin)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.easeInOut(duration: 0.22), value: hasMiniPlayer)
+            }
+            GeometryReader { geo in
+                dockBody(width: geo.size.width)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+            }
+            .frame(height: Layout.dockHeight + 16)
         }
-        .frame(height: Layout.dockHeight + 16)
+        .frame(height: Layout.dockHeight + 16 + (hasMiniPlayer ? Layout.miniBarHeight + 8 : 0))
         .accessibilityElement(children: .contain)
         .onAppear { CrashLog.write("UI", "dock appear") }
     }
@@ -266,6 +277,10 @@ struct BottomDock: View {
     }
 
     /// 有当前集才算"有内容"（nowPlaying 是标题，空标题时也不能当成有）
+    private var hasMiniPlayer: Bool {
+        !player.nowPlaying.isEmpty && player.state != .stopped
+    }
+
     private var hasContent: Bool {
         !player.nowPlaying.isEmpty && player.state != .stopped
     }

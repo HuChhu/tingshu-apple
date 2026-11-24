@@ -158,12 +158,44 @@ enum LocalStore {
             albumId = try c.decode(Int64.self, forKey: .albumId)
             addedAt = try c.decode(Date.self, forKey: .addedAt)
             sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
+            // 旧版本存的是「猜」出来的源，用 URL 反推一次（认不出就保持原值）
+            sourceId = Self.forProgress(bookUrl: bookUrl, raw: sourceId)
         }
         init(bookUrl: String, title: String, author: String, coverUrl: String, albumId: Int64, addedAt: Date, sourceId: String) {
             self.bookUrl = bookUrl; self.title = title; self.author = author
             self.coverUrl = coverUrl; self.albumId = albumId
             self.addedAt = addedAt; self.sourceId = sourceId
         }
+    }
+
+    /// 从历史记录里反推来源：旧版本的 sourceId 是「猜」的（一律 ximalaya / ximalaya-open），
+    /// 但 bookUrl / episodeUrl 里往往还留着真实域名。能认出来就纠正，认不出就保持原值。
+    /// 这是「历史里那本模板站的书点开还是播不了」的补丁。
+    static func inferSourceId(current: String, bookUrl: String, episodeUrl: String = "") -> String {
+        // 已经是明确的非喜马拉雅源，不动
+        let known = ["kuwo", "netease", "bilibili", "qingting"]
+        if known.contains(current) { return current }
+        let hay = (bookUrl + " " + episodeUrl).lowercased()
+        if hay.contains("kuwo.cn") || hay.hasPrefix("kuwo://") { return "kuwo" }
+        if hay.contains("126.net") || hay.contains("163.com") { return "netease" }
+        if hay.contains("bilibili") || hay.contains("bilivideo") { return "bilibili" }
+        if hay.contains("qtfm.cn") || hay.contains("qingting") { return "qingting" }
+        // 模板站的 bookUrl 是普通网页地址（http://xxx.com/ting/123.html），
+        // 喜马拉雅的是 /album/{id} 或 ximalaya.com —— 命中这些就保持原值。
+        return current
+    }
+
+    /// 收藏：没有 episodeUrl，只用 bookUrl 反推。
+    static func forProgress(bookUrl: String, raw: String) -> String {
+        let normalized = Progress.normalizeSourceId(raw)
+        // 已经明确是模板站（bookUrl 是网页而非 /album/）就别动
+        return LocalStore.inferSourceId(current: normalized, bookUrl: bookUrl)
+    }
+
+    /// 最近播放：bookUrl + episodeUrl 一起反推。
+    static func forRecent(bookUrl: String, episodeUrl: String, raw: String) -> String {
+        let normalized = Progress.normalizeSourceId(raw)
+        return LocalStore.inferSourceId(current: normalized, bookUrl: bookUrl, episodeUrl: episodeUrl)
     }
 
     static func loadFavorites() -> [Favorite] {
@@ -231,8 +263,10 @@ enum LocalStore {
             trackId = try c.decode(Int64.self, forKey: .trackId)
             episodeTitle = try c.decode(String.self, forKey: .episodeTitle)
             playedAt = try c.decode(Date.self, forKey: .playedAt)
-            sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
             episodeUrl = try c.decodeIfPresent(String.self, forKey: .episodeUrl) ?? ""
+            let rawSource = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? ""
+            // 旧版本的 sourceId 是猜的；用 bookUrl / episodeUrl 里的域名把它纠正回来
+            sourceId = Self.forRecent(bookUrl: bookUrl, episodeUrl: episodeUrl, raw: rawSource)
             coverUrl = try c.decodeIfPresent(String.self, forKey: .coverUrl) ?? ""
         }
         init(bookUrl: String, bookTitle: String, trackId: Int64, episodeTitle: String, playedAt: Date, sourceId: String, episodeUrl: String = "", coverUrl: String = "") {

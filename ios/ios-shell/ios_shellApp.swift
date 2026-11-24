@@ -41,20 +41,15 @@ struct RootTabView: View {
 
     var body: some View {
         Group {
-            // 顺序要紧：自绘分支必须放在「iOS 26 配件」分支之前。
-            // 它只是普通 TabView + 系统修饰符，任何部署目标都不会触发可用性检查；
-            // 而 26 配件分支虽然被 #available 隔开，SwiftUI 的 custom accessory API
-            // 不被它保护 —— 用低版本 SDK（Xcode < 26）编译时照样报 unknown modifier。
-            // 因此把 26 分支挪到最后，并用 #if compiler(>=6.2) 整段包住
-            // （见 systemTabsWithAccessory），旧工具链编译时那段代码根本不进 AST。
+            // #if 不能插在 if/else 链中间：Swift 在 release 工具链上直接报
+            // 「unexpected 右花括号 in conditional compilation block」（实测 CI Xcode 16.x）。
+            // 正确做法是让条件编译整个包住一个**完整的**分支，而不是拼接半个 else-if。
+            // 低版本 SDK 时 pickSystemTabs() 里的 iOS 26 分支不存在，
+            // 26 的 custom accessory API 也就不会进 AST。
             if useCustomDock {
                 customDockLayout
-#if compiler(>=6.2)
-            } else if #available(iOS 26.0, *) {
-                systemTabsWithAccessory
-#endif
             } else {
-                systemTabsWithSafeAreaInset
+                systemTabsCompat
             }
         }
         // fullScreenCover 挂在这里，但**只有用户显式动作**才会把它打开：
@@ -106,6 +101,21 @@ struct RootTabView: View {
     }
 
     // MARK: - ② iOS 26 系统 TabView + 底部配件
+
+    /// 系统栏的兼容入口：有 26 SDK 就用 tabViewBottomAccessory（配件由系统托管），
+    /// 否则退回 safeAreaInset。整段类型声明用 #if 包住，低版本工具链看不到 26 的 API。
+    @ViewBuilder
+    private var systemTabsCompat: some View {
+#if compiler(>=6.2)
+        if #available(iOS 26.0, *) {
+            systemTabsWithAccessory
+        } else {
+            systemTabsWithSafeAreaInset
+        }
+#else
+        systemTabsWithSafeAreaInset
+#endif
+    }
 
 #if compiler(>=6.2)
     @available(iOS 26.0, *)

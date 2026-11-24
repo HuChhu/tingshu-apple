@@ -80,14 +80,20 @@ struct PlayerView: View {
         .onChange(of: shouldRotate) { _, playing in
             rotationClock.setPlaying(playing)
         }
-        .gesture(
+        // 下拉收起只在「上沿拖柄」生效（70pt 高的顶部条）。
+        // 原实现把 DragGesture 挂在整个页面上：内容放大字体后要滚动，
+        // 手指往上划超过 120pt 松手，页面直接被收起 —— 用户以为 App 退出了。
+        .simultaneousGesture(
             DragGesture(minimumDistance: 24)
                 .onEnded { value in
+                    guard value.startLocation.y < 70 else { return }
+                    guard abs(value.translation.width) < 60 else { return }
                     if value.translation.height > 120 ||
                         value.predictedEndTranslation.height > 220 {
                         player.showFullScreen = false
                     }
-                }
+                },
+            including: .gesture
         )
         .onDisappear {
             rotationClock.setPlaying(false)

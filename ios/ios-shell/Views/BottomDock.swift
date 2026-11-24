@@ -118,8 +118,9 @@ struct BottomDock: View {
                 .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
         )
         // 让开底部安全区（Home 指示条）。不加 TabBar 高度：系统 TabBar 已被隐藏。
+        // 底部不再自己加 padding：外层是 safeAreaInset(edge: .bottom)，
+        // 系统已经把 dock 摆在安全区（Home 指示条）上沿。这里再补 8pt 就是凭空垫高。
         .padding(.horizontal, Layout.dockSideMargin)
-        .padding(.bottom, 8)
         .overlay(alignment: .bottom) {
             if showEmptyHint {
                 Text("先去选一本")
@@ -233,7 +234,9 @@ struct BottomDock: View {
             pressed = down
         })
         .accessibilityElement()
-        .accessibilityLabel(player.state == .playing ? "暂停" : "播放")
+        // 这个键的动作是「打开播放页」，不是暂停 —— 标签必须说动作，
+        // 否则 VoiceOver 上读「暂停」、按下去却弹全屏。
+        .accessibilityLabel(hasContent ? "打开播放页" : "播放")
         .accessibilityAddTraits(.isButton)
         .accessibilityHint(hasContent ? "打开播放页" : "先去选一本")
     }

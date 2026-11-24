@@ -30,6 +30,15 @@ enum SharedBridge {
         let playCount: Int64        // 播放量（「2887万播放」）
         let isFinished: Bool?       // nil = 上游未给，UI 不渲染
         var intro: String = ""      // 专辑简介（详情页展示）
+        /// 【P0 v1.4.7】这条搜索结果来自哪个源。
+        ///
+        /// 之前没有这个字段 —— 搜索结果从三路（引擎/网页/免登录）合并而来，来源当场丢失，
+        /// 于是 ShelfView 只能猜「登录了就是 ximalaya」。结果：任何非喜马拉雅的书
+        /// （模板站、懒人、酷我、网易云、B站…）都会用喜马拉雅的解析器去拿详情和播放地址，
+        /// 必然失败。表现就是「推荐的书能播，自己搜的书播不了」——
+        /// 推荐页自带 sourceId，搜索页把它猜成 ximalaya 了。
+        /// 旧缓存里没有这个键，必须 decodeIfPresent 兜底成空串。
+        var sourceId: String = ""
 
         /// 手写解码：intro 是后加的字段，旧缓存里没有，必须 decodeIfPresent
         init(from decoder: Decoder) throws {
@@ -43,14 +52,16 @@ enum SharedBridge {
             playCount = try c.decode(Int64.self, forKey: .playCount)
             isFinished = try c.decodeIfPresent(Bool.self, forKey: .isFinished)
             intro = try c.decodeIfPresent(String.self, forKey: .intro) ?? ""
+            sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? ""
         }
 
         init(bookUrl: String, title: String, author: String, coverUrl: String,
-             albumId: Int64, trackCount: Int64, playCount: Int64, isFinished: Bool?, intro: String = "") {
+             albumId: Int64, trackCount: Int64, playCount: Int64, isFinished: Bool?,
+             intro: String = "", sourceId: String = "") {
             self.bookUrl = bookUrl; self.title = title; self.author = author
             self.coverUrl = coverUrl; self.albumId = albumId
             self.trackCount = trackCount; self.playCount = playCount
-            self.isFinished = isFinished; self.intro = intro
+            self.isFinished = isFinished; self.intro = intro; self.sourceId = sourceId
         }
     }
 
@@ -64,8 +75,23 @@ enum SharedBridge {
             trackCount: b.trackCount,
             playCount: b.playCount,
             isFinished: (b.isFinished as NSNumber?)?.boolValue,
-            intro: b.intro
+            intro: b.intro,
+            // K/N 导出的 Book 自带 sourceId（Kotlin 侧每条结果都填了来源）。
+            // 这里是唯一读它的地方，其它调用方走 card(from:defaultSource:) 补默认值。
+            sourceId: b.sourceId
         )
+    }
+
+    /// card(from:) 的带源版本：Known 来源优先用 Book 自带的，Book 没带就用参数。
+    static func cards(from result: SearchResult?, defaultSource: String) -> [BookCard] {
+        guard let result = result else { return [] }
+        return books(from: result).map { card(from: $0, defaultSource: defaultSource) }
+    }
+
+    static func card(from b: Book, defaultSource: String) -> BookCard {
+        var c = card(from: b)
+        if c.sourceId.isEmpty { c.sourceId = defaultSource }
+        return c
     }
 
     // MARK: - 搜索结果消费（防御转换 + 降级 hint 直显，不自己拼文案）
@@ -243,7 +269,9 @@ enum SharedBridge {
                     albumId: Int64(id) ?? 0,
                     trackCount: Int64((dict["trackCount"] as? NSNumber)?.int64Value ?? 0),
                     playCount: Int64((dict["playCount"] as? NSNumber)?.int64Value ?? 0),
-                    isFinished: (dict["isFinished"] as? Bool) ?? false
+                    isFinished: (dict["isFinished"] as? Bool) ?? false,
+                    // 网页搜索抓的是喜马拉雅页面 → 来源是登录通道
+                    sourceId: "ximalaya"
                 )
             }
         } catch {
@@ -267,7 +295,10 @@ enum SharedBridge {
 
     /// 内存缓存 TTL 与磁盘缓存 schema（结构变了就 +1，旧缓存自动失效）
     private static let searchCacheTTL: TimeInterval = 5 * 60
-    private static let searchCacheSchema = 1
+    // v1.4.7：BookCard 新增 sourceId。旧缓存里的搜索结果没有来源，
+    // 反序列化后是空串 → sourceOf 回退成「猜 ximalaya」→ 非喜马拉雅的书又播不了。
+    // 所以把 schema 升到 2，旧搜索结果直接失效重搜。
+    private static let searchCacheSchema = 2
     private static let searchCacheNamespace = "search"
 
     private struct CachedSearch: Codable {
@@ -294,7 +325,10 @@ enum SharedBridge {
         func add(_ items: [BookCard]) {
             lock.lock(); defer { lock.unlock() }
             for c in items {
-                let key = c.albumId > 0 ? String(c.albumId) : c.bookUrl
+                // 去重键必须带来源：喜马拉雅和模板站可能有同一个 albumId，
+                // 按裸 albumId 去重会把另一条结果吞掉。
+                let key = (c.sourceId.isEmpty ? "-" : c.sourceId) + ":"
+                    + (c.albumId > 0 ? String(c.albumId) : c.bookUrl)
                 if _seen.insert(key).inserted { _cards.append(c) }
             }
         }
@@ -385,7 +419,7 @@ enum SharedBridge {
             group.addTask {
                 let t = Date()
                 let res = await search(keywords: keyword, page: page)
-                let cards = res.map { self.cards(from: $0) } ?? []
+                let cards = res.map { self.cards(from: $0, defaultSource: "ximalaya") } ?? []
                 let why = res.flatMap { self.degradedHint(from: $0) }
                 CrashLog.search(keyword, path: "engine",
                                 ms: Int(Date().timeIntervalSince(t) * 1000), count: cards.count)
@@ -428,7 +462,7 @@ enum SharedBridge {
             await search(sourceId: "ximalaya-open", keywords: keyword, page: page)
         }
         guard let res else { return [] }
-        let cards = cards(from: res)
+        let cards = cards(from: res, defaultSource: "ximalaya-open")
         if cards.isEmpty, let h = degradedHint(from: res) { lastWebSearchError = "免登录源：" + h }
         return cards
     }

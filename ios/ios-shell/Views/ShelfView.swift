@@ -138,12 +138,16 @@ struct ShelfView: View {
         selectedTab = 1
     }
 
-    /// 浏览器抓到的卡（bookUrl 是 /album/{id}）既属于登录通道，也对免登录源有效；
-    /// 统一交给登录通道，它自带匿名兜底，且 Cookie 注入后能取到会员集。
-    /// 搜索结果的源：登录版优先（能取会员集），失败会由 SharedBridge.bookDetail 内部
-    /// 自动退回 ximalaya-open。注意不能传 "ximalaya-open"，那样永远拿不到会员内容。
+    /// 这条搜索结果该用哪个源去拿详情和播放地址。
+    ///
+    /// 【P0 v1.4.7】以前是无条件猜「登录了就是 ximalaya」，等于把搜索结果的来源信息扔了。
+    /// 结果任何非喜马拉雅的书（模板站/懒人/酷我/网易云/B站…）都用喜马拉雅解析器去播，
+    /// 必然失败 —— 这就是「推荐的书能播、自己搜的书播不了」。
+    /// 现在 BookCard 自带 sourceId（Kotlin 侧每条结果都填了），直接用；
+    /// 只有旧缓存里没有这个字段时才回退到原来的猜测。
     private func sourceOf(_ c: SharedBridge.BookCard) -> String {
-        SharedBridge.loggedIn ? "ximalaya" : "ximalaya-open"
+        if !c.sourceId.isEmpty { return c.sourceId }
+        return SharedBridge.loggedIn ? "ximalaya" : "ximalaya-open"
     }
 
     private func row(_ c: SharedBridge.BookCard, width: CGFloat) -> some View {
@@ -251,7 +255,9 @@ struct ShelfView: View {
                 cards = [SharedBridge.BookCard(
                     bookUrl: "/album/\(id)", title: "专辑 \(id)", author: "",
                     coverUrl: "", albumId: id,
-                    trackCount: 0, playCount: 0, isFinished: nil)]
+                    trackCount: 0, playCount: 0, isFinished: nil,
+                    // 手输专辑 ID 只能是喜马拉雅的专辑号，来源明确
+                    sourceId: SharedBridge.loggedIn ? "ximalaya" : "ximalaya-open")]
                 hint = "正在核对专辑信息…"
                 return
             }

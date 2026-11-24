@@ -290,7 +290,9 @@ enum LocalStore {
     static func recentBook(_ r: Recent) -> SharedBridge.BookCard {
         SharedBridge.BookCard(bookUrl: r.bookUrl, title: r.bookTitle, author: "",
                               coverUrl: r.coverUrl, albumId: SharedBridge.albumId(from: r.bookUrl),
-                              trackCount: 0, playCount: 0, isFinished: nil)
+                              trackCount: 0, playCount: 0, isFinished: nil,
+                              // 续播必须记住当初是哪个源播的，否则换源就取不到地址
+                              sourceId: r.sourceId)
     }
 
     // MARK: - 缓存目录统计（「缓存管理」页用）

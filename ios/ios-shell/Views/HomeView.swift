@@ -163,7 +163,7 @@ struct HomeView: View {
                 LazyHStack(spacing: Layout.cardSpacing) {
                     ForEach(sec.books, id: \.bookUrl) { card in
                         NavigationLink {
-                            AlbumView(card: card, sourceId: sharedBridgeSource)
+                            AlbumView(card: card, sourceId: sourceOf(card))
                         } label: {
                             bookCard(card)
                         }
@@ -203,8 +203,9 @@ struct HomeView: View {
 
     /// 首页推荐都来自喜马拉雅：登录了走登录通道（能取会员集），否则走免登录源。
     /// 原来带了个没用到的 (for c:) 参数，swiftc 的 unused-parameter 检查会报。
-    private var sharedBridgeSource: String {
-        SharedBridge.loggedIn ? "ximalaya" : "ximalaya-open"
+    private func sourceOf(_ c: SharedBridge.BookCard) -> String {
+        if !c.sourceId.isEmpty { return c.sourceId }
+        return SharedBridge.loggedIn ? "ximalaya" : "ximalaya-open"
     }
 
     // MARK: - 骨架屏

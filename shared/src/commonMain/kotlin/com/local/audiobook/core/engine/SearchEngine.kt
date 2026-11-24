@@ -22,7 +22,11 @@ class SearchEngine(
         override suspend fun cookie(): String? = null
         override suspend fun refresh() {}
     },
-    override val sourceId: String = "a6f3c1de-2b47-4e8a-9c05-7d1b44f0e9a2",
+    // 【P0 v1.4.7】默认值原来是历史 UUID（a6f3c1de-...）。TingshuApp 构造时没传 sourceId，
+    // 于是 Book.sourceId 全变成 UUID；而 SourceRegistry.audio(sourceId:) 只认 "ximalaya" 这类短 id，
+    // UUID 落到 unknownSource，表现就是「登录后搜出来的书全都播不了」。
+    // 改成 "ximalaya"，与 Registry 的 key 一致；显式传参的调用方不受影响。
+    override val sourceId: String = "ximalaya",
 ) : SourceActions {
 
     override val url = SearchRoutes.WEB_BASE

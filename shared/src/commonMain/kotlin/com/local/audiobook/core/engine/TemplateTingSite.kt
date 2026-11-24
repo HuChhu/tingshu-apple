@@ -225,7 +225,9 @@ class TemplateTingSite(
                 isFinished = false,
             )
         }
-        return out.values.toList()
+        // 出口兜底：占位记录如果最终没等到标题锚点，用「未命名」占位而不是丢书
+        // （丢书会让用户觉得少了几本，且收藏/进度指向不存在的条目）
+        return out.values.map { if (it.title.isBlank()) it.copy(title = "未命名（" + it.albumId + "）") else it }
     }
 
     /**

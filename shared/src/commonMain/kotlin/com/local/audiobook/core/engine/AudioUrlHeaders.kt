@@ -5,7 +5,8 @@ package com.local.audiobook.core.engine
 object AudioUrlHeaders {
 
     private val AUDIO_HOSTS = listOf("ximalaya.com", "xmcdn.com")
-    private val AUDIO_EXT = listOf(".mp3", ".m4a", ".aac", ".flac", ".m3u8")
+    // .m4s 是 B 站的分片音频（非 m3u8 清单，是可直接播的独立片段）
+    private val AUDIO_EXT = listOf(".mp3", ".m4a", ".aac", ".flac", ".m3u8", ".m4s", ".ogg", ".wav")
 
     fun hostOf(url: String): String? =
         url.substringAfter("://", missingDelimiterValue = "")
@@ -50,8 +51,13 @@ object AudioUrlHeaders {
         return AUDIO_EXT.any { clean.endsWith(it) }
     }
 
-    /** 允许"无扩展名但确是音频"的特例：vbus /program/get-source/N 与 302 型音频口 */
-    private val RELAY_PATH = listOf("/program/get-source/")
+    /**
+     * 允许「无扩展名但确实是音频」的中转口：
+     *   /program/get-source/N  vbus 中转，302 到 files.*.mp3
+     *   /meting/               netease 中转，302 到 music.126.net 的 mp3
+     *   /get-source/           同类中转型音频口
+     */
+    private val RELAY_PATH = listOf("/program/get-source/", "/meting/", "/get-source/")
 
     /**
      * 出口闸的宽松版：在 isPlayableAudio 之外，额外放行三类**已知会被播放器跟 302/直读**的地址：
@@ -87,8 +93,10 @@ object AudioUrlHeaders {
     /** 门户/页面域名：这些域下的地址绝不会是音频文件（音频都在 xmcdn 这类 CDN 上） */
     private val PAGE_HOSTS = listOf(
         "ximalaya.com", "ximalaya.cn", "ximalaya.net",
-        "kuwo.cn", "bilibili.com", "b23.tv", "qingting.fm", "qtfm.cn",
-        "music.163.com", "163.com", "y.qq.com",
+        // kuwo 必须写全名：kw-bj.kuwo.cn 是它自己的音频 CDN，按父域一票否决会把 kuwo 整个源杀掉
+        "www.kuwo.cn", "m.kuwo.cn", "bilibili.com", "b23.tv", "qingting.fm", "qtfm.cn",
+        // 163.com 全域会误杀 music.126.net？不会，不同域；但 m.163.com 的页面地址要拦，音频在 126.net
+        "music.163.com", "m.163.com", "y.qq.com",
     )
 
     /** 取去掉端口和用户信息的 host，用于门户域名判断 */

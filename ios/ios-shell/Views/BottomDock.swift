@@ -98,7 +98,9 @@ struct BottomDock: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: Layout.dockHeight + 16 + (hasMiniPlayer ? Layout.miniBarHeight + 8 : 0))
-        .clipped()
+        // 不要 clipped()：中间播放键比胶囊高 14pt（含热区），整体裁切会把它切掉一半，
+        // 也会把凸出部分的下半边留白一起吃掉。这里靠 GeometryReader 的 frame 已经约束住了，
+        // 溢出只发生在 dock 自身 16pt 的预留空间内。
         .accessibilityElement(children: .contain)
         .onAppear { CrashLog.write("UI", "dock appear") }
     }

@@ -118,4 +118,30 @@ class WebPageAsAudioTest {
             "应当是提取失败（继续降级），实际=" + e::class.simpleName
         )
     }
+
+    // ---- 出口闸不许误杀真实 CDN ----
+    // 2026-11-24 实测：按父域一票否决曾把 kw-bj.kuwo.cn（kuwo 自家音频 CDN）整个杀掉，
+    // netease 的 /meting/ 中转、B 站的 .m4s 分片也被误判。这几条锁死它们。
+
+    @Test
+    fun kuwoCdnSubdomainIsNotBlocked() {
+        assertTrue(AudioUrlHeaders.isPlayableAudio("http://kw-bj.kuwo.cn/audio/x.mp3"))
+        assertFalse(AudioUrlHeaders.isPlayableAudio("https://www.kuwo.cn/play_detail/123"))
+    }
+
+    @Test
+    fun neteaseMetingRelayIsAllowed() {
+        assertTrue(AudioUrlHeaders.isPlayableAudioOrRelay("https://api.qijieya.cn/meting/?type=url&id=1"))
+        assertFalse(AudioUrlHeaders.isPlayableAudioOrRelay("https://music.163.com/song?id=1"))
+    }
+
+    @Test
+    fun bilibiliM4sIsPlayable() {
+        assertTrue(AudioUrlHeaders.isPlayableAudio("https://upos-sz-mirrorcos.bilivideo.cn/x/1.m4s"))
+    }
+
+    @Test
+    fun relayWhitelistIsNotABypass() {
+        assertFalse(AudioUrlHeaders.isPlayableAudioOrRelay("https://www.ximalaya.com/sound/123"))
+    }
 }

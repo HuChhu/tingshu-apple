@@ -177,6 +177,8 @@ enum LocalStore {
         if known.contains(current) { return current }
         let hay = (bookUrl + " " + episodeUrl).lowercased()
         if hay.contains("kuwo.cn") || hay.hasPrefix("kuwo://") { return "kuwo" }
+        // netease 的 bookUrl 是 netease://song/{id}，没有 .com 域名可匹配 —— 补前缀判断
+        if hay.hasPrefix("netease://") { return "netease" }
         if hay.contains("126.net") || hay.contains("163.com") { return "netease" }
         if hay.contains("bilibili") || hay.contains("bilivideo") { return "bilibili" }
         if hay.contains("qtfm.cn") || hay.contains("qingting") { return "qingting" }

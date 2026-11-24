@@ -110,7 +110,8 @@ enum AudioCache {
     static func looksLikeAudio(_ url: URL) -> Bool {
         guard let fh = try? FileHandle(forReadingFrom: url) else { return false }
         defer { try? fh.close() }
-        guard let head = try? fh.read(upToCount: 12), let d = head, d.count >= 4 else { return false }
+        // read(upToCount:) 抛错返回 Data?，try? 在 Swift 5 会扁平化 —— 这里已经是 Data?
+        guard let d = try? fh.read(upToCount: 12), d.count >= 4 else { return false }
         let b = [UInt8](d)
         // ID3v2（mp3 带标签）
         if b[0] == 0x49, b[1] == 0x44, b[2] == 0x33 { return true }

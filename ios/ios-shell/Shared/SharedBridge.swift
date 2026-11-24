@@ -539,12 +539,14 @@ enum SharedBridge {
 
     /// 按源搜索
     static func search(sourceId: String, keywords: String, page: Int) async -> SearchResult? {
-        let call = { await bridge { done in
-            registry.search(sourceId: sourceId, keywords: keywords, page: Int32(page),
-                            completionHandler: { r, e in
-                if e != nil { done(nil, e) } else { done(r, nil) }
-            })
-        } }
+        let call: () async -> SearchResult? = {
+            await bridge { (done: @escaping (SearchResult?, Error?) -> Void) in
+                registry.search(sourceId: sourceId, keywords: keywords, page: Int32(page),
+                                completionHandler: { r, e in
+                    if e != nil { done(nil, e) } else { done(r, nil) }
+                })
+            }
+        }
         // 同样套 9s 硬上限：模板站慢站（aj006 实测 29.8s）不该拖住搜索
         return await withTimeout(seconds: searchTimeoutSeconds, call)
     }

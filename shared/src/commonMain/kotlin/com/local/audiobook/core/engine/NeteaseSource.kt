@@ -71,11 +71,9 @@ class NeteaseSource(
             val songName = o["name"]?.asStr()?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
             // artists 是数组：[{id,name,...}]
             val artist = o["artists"]?.asArr()?.firstOrNull()?.asObj()?.get("name")?.asStr() ?: ""
-            // 官方搜索接口的 album 对象**没有 picUrl**（实测键：publishTime/size/artist/
-            // copyrightId/name/id/picId/mark/status）。拼 picId 需要额外加密参数，成本高。
-            // 这里直接给 meting 的 pic 端点：它对任何 songId 都 302 到真实 CDN，
-            // ImageView 会自动跟随跳转（实测 http=404 是因为部分歌曲无授权封面，不是格式错）。
-            val picUrl = META + "?server=netease&type=pic&id=" + (o["id"]?.asLong() ?: 0L)
+            // blend：官方搜索的 album 对象没有 picUrl（也不该拼 CDN——需要服务端 hash）。
+            // 封面统一由 search 末尾的 coverMap 批量补，这里先留空。
+            val picUrl = ""
             val rawId = o["id"]?.asLong()
             val songId = rawId?.toString() ?: (idx.toString())
             Book(
@@ -92,9 +90,13 @@ class NeteaseSource(
             )
         }
 
+        // 批量补封面：song/detail 一次能拿整页真实 picUrl（实测可用）。
+        // 不用 meting 的 type=pic —— 它拿 songId 当文件名拼 URL，跟跳后 5/5 全 404。
+        val withCover = if (books.isEmpty()) books else fillCovers(books)
+
         val hasMore = songs.size >= PAGE_SIZE
-        return SearchResult(books, if (hasMore) page + 1 else page, sourceId, page,
-            if (books.isEmpty()) "网易云没搜到（接口可能改版）" else null)
+        return SearchResult(withCover, if (hasMore) page + 1 else page, sourceId, page,
+            if (withCover.isEmpty()) "网易云没搜到（接口可能改版）" else null)
     }
 
     // ---------- 详情 ----------
@@ -152,6 +154,32 @@ class NeteaseSource(
 
     // ---------- 工具 ----------
 
+    /**
+     * 批量补封面。song/detail 一次最多 100 个 id，返回 songs[].album.picUrl。
+     * 失败不影响搜索（封面空着比整个搜索失败好）。
+     */
+    private suspend fun fillCovers(books: List<Book>): List<Book> {
+        val ids = books.mapNotNull { it.albumId.takeIf { id -> id > 0 } }
+        if (ids.isEmpty()) return books
+        return try {
+            val idsParam = ids.take(100).joinToString(",") { it.toString() }
+            val root = getJson(OFFICIAL_DETAIL + "?ids=%5B" + idsParam.replace(",", "%2C") + "%5D")
+            val songs = root["songs"]?.asArr() ?: return books
+            val coverMap = mutableMapOf<Long, String>()
+            for (el in songs) {
+                val o = el.asObj() ?: continue
+                val id = o["id"]?.asLong() ?: continue
+                val pic = o["album"]?.asObj()?.get("picUrl")?.asStr() ?: ""
+                if (pic.isNotEmpty()) coverMap[id] = pic
+            }
+            books.map { b -> coverMap[b.albumId]?.let { b.copy(coverUrl = it) } ?: b }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            books
+        }
+    }
+
     private suspend fun getArray(target: String): JsonArray {
         val headers = mapOf("User-Agent" to UA, "Accept" to "application/json")
         val resp = throttle.run { fetcher.get(target, headers) }
@@ -185,6 +213,8 @@ class NeteaseSource(
         const val META = "https://api.qijieya.cn/meting/"
         /** 网易云官方搜索（无需加密，limit 上限 100） */
         const val OFFICIAL_SEARCH = "https://music.163.com/api/search/get"
+        /** 批量拿真实封面（songs[].album.picUrl） */
+        const val OFFICIAL_DETAIL = "https://music.163.com/api/song/detail/"
         const val PAGE_SIZE = 20
         const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
     }

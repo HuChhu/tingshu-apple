@@ -811,6 +811,9 @@ final class Player: NSObject, ObservableObject {
         let clamped = min(3.0, max(0.5, v))
         queue.rate = Float(clamped)
         persistPlayback { $0.speed = clamped }
+        // 【v1.4.6】倍速不是 @Published，改完不通知，底部 dock 的旋转角速度就更新不了
+        // （spinSignature 依赖 currentSpeed，没有 objectWillChange 就不会重算）。
+        objectWillChange.send()
     }
 
     /// 运行时改跳过片头/片尾

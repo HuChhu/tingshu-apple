@@ -63,7 +63,8 @@ struct BottomDock: View {
 
     /// 无内容时点播放键的提示
     @State private var showEmptyHint = false
-    @State private var pressed = false
+    /// 封面只加载一次，Timeline 每帧复用它 —— 避免逐帧重建 AsyncImage 造成闪变
+    @State private var coverImage: Image?
 
     /// 左二 + 右二；中间播放键单画
     private static let leftTabs: [(id: Int, title: String, icon: String)] = [
@@ -76,93 +77,95 @@ struct BottomDock: View {
     ]
 
     var body: some View {
-        // 【v1.4.4 修重叠】不再用常量推算总高度：
-        //   旧写法外层 `.frame(height: dockHeight + 16 + miniBarHeight + 8)`，
-        //   而迷你条内部有自己的内边距、dockBody 也有 padding —— 三处各算各的，
-        //   常量之和 ≠ 实际渲染高度，于是两段叠在一起（用户截图蓝圈）。
-        //   现在 VStack 的 spacing 是「迷你条底 → dock 顶」的唯一空隙来源，
-        //   两段都由各自内在尺寸撑开：迷你条底 + 4 == dock 顶，恒成立。
-        GeometryReader { geo in
-            VStack(spacing: Self.miniBarGapToDock) {
-                if hasMiniPlayer {
-                    MiniPlayerBar()
-                        // 材质连续：与 dock 用同一种 .ultraThinMaterial。
-                        // 迷你条自身不带背景（系统配件模式下由系统提供），
-                        // 在这里补一层，视觉上才像一块（用户图 3）。
-                        .background(
-                            RoundedRectangle(cornerRadius: Layout.radiusBar, style: .continuous)
-                                .fill(.ultraThinMaterial)
-                        )
-                        .padding(.horizontal, Layout.miniBarSideMargin)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
+        // 【v1.4.6 固定占位】迷你条用 ZStack 淡入淡出，**永远占位**：
+        // 之前用 if 包着，迷你条一出现 safeAreaInset 就从 72 长到 138，
+        // 整块胶囊和页面内容跟着上跳 66pt，观感很脏。
+        // 现在高度恒定 = 迷你条(60) + gap(6) + 胶囊区(64) + 底(8)，显隐只改透明度。
+        ZStack(alignment: .top) {
+            MiniPlayerBar()
+                .frame(height: Self.miniSlotHeight)
+                // 关键：接受 ZStack 给的高度、只在其中顶部对齐。
+                // 不加这行，ZStack 高度 = max(迷你条 60, dock 区 72) = 72 才没被顶下去 ——
+                // 是「72 恰好比 60 大」的数值巧合。加了之后任何调参都免疫。
+                .frame(maxHeight: .infinity, alignment: .top)
+                .padding(.horizontal, Layout.miniBarSideMargin)
+                .background(
+                    RoundedRectangle(cornerRadius: Layout.radiusBar, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Layout.radiusBar, style: .continuous)
+                        .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
+                )
+                .opacity(hasMiniPlayer ? 1 : 0)
+                .allowsHitTesting(hasMiniPlayer)
+                .accessibilityHidden(!hasMiniPlayer)
+                .animation(.easeInOut(duration: 0.2), value: hasMiniPlayer)
 
-                // dock 自己给出实际高度，不再由外层猜 56 + 16。
-                dockBody(width: min(geo.size.width, 560))
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 0) {
+                // 迷你条槽位：有内容时占 60+6，没内容时收成 0 —— dock 贴着底部不动，
+                // 页面内容只在迷你条出现/消失时让出/收回这 66pt（带 0.2s 动画，不是瞬跳）。
+                // 上一版为了「不跳」把它固定成永久 66，结果「我的」这种长列表底部永远空一条，
+                // 用户会以为界面漏了一块。
+                Color.clear
+                    .frame(height: hasMiniPlayer
+                           ? Self.miniSlotHeight + Self.gapBetweenMiniBarAndDock
+                           : 0)
+                dockCapsule()
+                    .padding(.horizontal, Layout.dockSideMargin)
+                    .padding(.bottom, 8)
             }
-            .frame(width: geo.size.width)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
-        .animation(.easeInOut(duration: 0.22), value: hasMiniPlayer)
+        // 封面下载挂在**稳定的最外层**，不在 vinylDisc 内部：
+        // vinylDisc 的形态随状态（空/加载/播放/暂停/失败）变化，视图身份一变 task 就被取消重跑，
+        // 表现为盘面每换一次状态就重新下一遍图 —— 这也是「盘面闪变」的一条来源。
+        .task(id: player.currentCoverUrl) { await loadCover() }
+        .animation(.easeInOut(duration: 0.2), value: hasMiniPlayer)
         .accessibilityElement(children: .contain)
         .onAppear { CrashLog.write("UI", "dock appear") }
     }
 
-    /// 迷你条与 dock 之间的间隙：4pt。
-    /// 两块面板各自自带内边距，外部只留这 4pt，观感上是一条均匀细缝而不是大空洞。
-    private static let miniBarGapToDock: CGFloat = 4
+    /// 中间键轻微凸出条面的高度（58 直径 + 12 热区 = 70，条面 56，露 8）。
+    private static let playKeyOverhang: CGFloat = 8
+    /// 迷你条的固定占位高度（封面 40 + 自身上下 8 = 56，再加圆角描边余量）。
+    private static let miniSlotHeight: CGFloat = 60
+    /// 迷你条底边到胶囊顶边的可见空隙（不含播放键凸出的那 8pt）。
+    private static let gapBetweenMiniBarAndDock: CGFloat = 6
 
-    /// 中间键直径：390+ 用 58，320~375 收到 52 ——
-    /// 4 个导航键 + 播键 + 两侧边距必须塞进 320pt 宽，否则小屏会挤压文字。
-    private func keySize(for width: CGFloat) -> CGFloat {
-        width < 380 ? 52 : Layout.dockPlayKey
-    }
-
-    private func dockBody(width: CGFloat) -> some View {
-        HStack(spacing: 0) {
-            ForEach(Self.leftTabs, id: \.id) { t in
-                tabButton(t)
-            }
-
-            playKey(size: keySize(for: width))
-
-            ForEach(Self.rightTabs, id: \.id) { t in
-                tabButton(t)
-            }
-        }
-        // 条面高 56，中间键（58+12=70 含热区）比条面高 —— 不裁剪即可自然凸出，
-        // 凸出部分正好落在 dock 外层 +16 的留白里
-        // 横向只算一次：内容宽 = 屏宽 - 左右各 10pt 外边距 - 胶囊内左右各 8pt。
-        // 之前先 frame 到「屏宽-20」再加 8pt padding 再套 10pt padding，
-        // 三者叠加让胶囊比屏宽多出 16pt，两侧导航键几乎贴边（用户截图就是这个）。
-        .frame(width: max(0, width - Layout.dockSideMargin * 2 - 16),
-               height: Layout.dockHeight)
-        .background(
-            // 胶囊底：与 iOS 26 系统 TabBar 同款量级（材质 + 细描边）
+    /// 唯一一层玻璃：胶囊本体。中间键画在它上面，凸出部分露在胶囊上沿之外。
+    private func dockCapsule() -> some View {
+        ZStack(alignment: .top) {
+            // 胶囊高度就是条面高度，用 padding(.top, 8) 把它下推 8pt 给播放键让位。
+            // 之前写成 .offset(y: 8)：offset 只移动绘制、不改布局，胶囊底边会溢出
+            // ZStack 底边 8pt，把外层留的空白画满 —— 就是用户截图里「dock 下面还露一条玻璃」。
             Capsule(style: .continuous)
                 .fill(.ultraThinMaterial)
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
-        )
-        // 让开底部安全区（Home 指示条）。不加 TabBar 高度：系统 TabBar 已被隐藏。
-        // 底部不再自己加 padding：外层是 safeAreaInset(edge: .bottom)，
-        // 系统已经把 dock 摆在安全区（Home 指示条）上沿。这里再补 8pt 就是凭空垫高。
-        .padding(.horizontal, Layout.dockSideMargin)
-        .overlay(alignment: .bottom) {
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
+                )
+                .frame(height: Layout.dockHeight)
+                .padding(.top, Self.playKeyOverhang)
+
+            HStack(spacing: 0) {
+                ForEach(Self.leftTabs, id: \.id) { tabButton($0) }
+                playKey(size: Layout.dockPlayKey)
+                ForEach(Self.rightTabs, id: \.id) { tabButton($0) }
+            }
+            // 导航键与胶囊一起下移 8pt，保持与条面垂直居中
+            .padding(.top, Self.playKeyOverhang)
+            .frame(height: Layout.dockHeight)
+
             if showEmptyHint {
                 Text("先去选一本")
                     .font(.caption)
-                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
                     .background(Capsule().fill(.regularMaterial))
-                    // dock 在屏幕最底部，提示必须往上弹（负数 y），否则会被裁到屏幕外
-                    .offset(y: -(Layout.dockHeight + 18))
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(.opacity)
             }
         }
+        .frame(height: Layout.dockHeight + Self.playKeyOverhang)
     }
 
     // MARK: 导航键
@@ -199,6 +202,24 @@ struct BottomDock: View {
 
     @ViewBuilder
     private func playKey(size: CGFloat) -> some View {
+        // 【v1.4.6】用 Button 代替手搓的 onLongPressGesture：
+        // 之前手指按住后横滑超过 14pt，SwiftUI 判定手势失败也会回调 pressing(false)，
+        // 代码把它当「抬起」执行动作 —— 从中间键滑向旁边 Tab 的常见轨迹必然误触。
+        // Button 的取消语义由系统保证：滑出范围松手不触发 action。
+        Button {
+            handlePlayTap()
+        } label: {
+            keyVisual(size: size)
+        }
+        .buttonStyle(PlayKeyButtonStyle())
+        .accessibilityLabel(hasContent ? "打开播放页" : "播放")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint(hasContent ? "进入正在播放的专辑" : "先去选一本")
+    }
+
+    /// 视觉本身与手势解耦：ButtonStyle 用 isPressed 驱动缩放。
+    @ViewBuilder
+    private func keyVisual(size: CGFloat) -> some View {
         ZStack {
             switch state {
             case .empty:
@@ -207,29 +228,17 @@ struct BottomDock: View {
                     Image(systemName: "music.note").font(.system(size: 20, weight: .semibold))
                 }
             case .loading:
-                // 加载中：海报不转，外圈套一层不定进度（用户要求「封面不转，外圈显示不定进度」）
                 vinylDisc(size: size, spinning: false)
                     .overlay(
                         ProgressView()
                             .progressViewStyle(.circular)
                             .tint(.white)
-                            .scaleEffect(1.15)
+                            .scaleEffect(1.1)
                     )
             case .playing, .paused:
-                // 中间键 = 旋转的专辑海报（用户图 5）。
-                // 播放中按倍速转；暂停停在当前角度（Clock 内部累加，不用 repeatForever）。
                 vinylDisc(size: size, spinning: state == .playing)
-                // 外圈进度环：描边画在圆外 4pt，不占用内部图标空间
-                Circle()
-                    .trim(from: 0, to: CGFloat(progress))
-                    .stroke(Color.accentColor.opacity(0.85),
-                            style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                    .frame(width: size + 8, height: size + 8)
-                    .allowsHitTesting(false)
             case .failed:
                 vinylDisc(size: size, spinning: false, dimmed: true)
-                // 失败红点：右上角，2 个 pt 描边让它从任何底色里跳出来
                 Circle()
                     .fill(Color.red)
                     .frame(width: 10, height: 10)
@@ -238,32 +247,18 @@ struct BottomDock: View {
                     .allowsHitTesting(false)
             }
         }
-        .frame(width: size + 4, height: size + 12)
-        .contentShape(Circle())
-        // 按下 0.15s 缩放（方案要求），松手回弹
-        .scaleEffect(pressed ? 0.92 : 1.0)
-        .animation(.easeOut(duration: 0.15), value: pressed)
-        // 只有一套手势：
-        //   onPressingChanged → 按下缩放；perform → 松手（无论长短按）执行动作。
-        // 之前同时挂了 onTapGesture + LongPressGesture + onLongPressGesture 三套，
-        // 长按会被"点击识别失败"吞掉、pressed 也可能卡住不弹回，这里统一成一套。
-        // maximumDistance 12：手指轻微滑动不算取消，避免长按不触发。
-        // minimumDuration 不能设大：这个手势同时承担「按下缩放」，
-        // 0.12 秒的判定窗口会把快于 120ms 的轻点整个吞掉（用户觉得「点不动」）。
-        // 0.05 只用于拿到 pressing 变化，真正的动作在下面两处 perform / onTapGesture。
-        .onLongPressGesture(minimumDuration: 0.05, maximumDistance: 12, perform: {
-            pressed = false
-            handlePlayTap()
-        }, onPressingChanged: { down in
-            // 长按完成时系统也会回调一次 onPressingChanged(false)，与 perform 的复位重复无害
-            pressed = down
-        })
-        .accessibilityElement()
-        // 这个键的动作是「打开播放页」，不是暂停 —— 标签必须说动作，
-        // 否则 VoiceOver 上读「暂停」、按下去却弹全屏。
-        .accessibilityLabel(hasContent ? "打开播放页" : "播放")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint(hasContent ? "打开播放页" : "先去选一本")
+        // 中间键热区比视觉大一圈，但不外扩到相邻 Tab（width = size + 4）
+        .frame(width: size + 4, height: Layout.dockHeight + Self.playKeyOverhang)
+        .contentShape(Rectangle())
+    }
+
+    /// 按下缩放。整组一起缩（盘面 + 描边 + 进度环），避免只缩盘面时出现双环错觉。
+    private struct PlayKeyButtonStyle: ButtonStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.label
+                .scaleEffect(configuration.isPressed ? 0.94 : 1.0)
+                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+        }
     }
 
     /// 唱片式海报键：圆形封面 + 3pt 白边 + 外圈进度环。
@@ -272,40 +267,35 @@ struct BottomDock: View {
     private func vinylDisc(size: CGFloat, spinning: Bool, dimmed: Bool = false) -> some View {
         let coverSide = max(0, size - 6)      // 3pt 白边左右各一
         return ZStack {
-            // 底：黑胶盘面（封面加载不出来时也是「一张唱片」而不是空圆）
             Circle().fill(Color.black.opacity(dimmed ? 0.55 : 0.85))
 
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !spinning)) { ctx in
-                AsyncImage(url: URL(string: player.currentCoverUrl)) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    case .failure, .empty:
-                        ZStack {
-                            LinearGradient(colors: [Color.accentColor, Color.black],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                            Image(systemName: "music.note")
-                                .font(.system(size: coverSide * 0.4))
-                                .foregroundStyle(.white.opacity(0.8))
+            // 【v1.4.6 真修「重影」】
+            // 上一版把 coverFace 写在 TimelineView 闭包里 —— 名字叫「外面加载一次」，
+            // 实际每帧仍在闭包里重建 AsyncImage。录屏帧分析显示盘面每 0.7~1.2 秒
+            // 突然亮到暗再恢复，就是封面被反复重建。
+            // 现在改成「Image 只在外面加载一次 → 存进 @State → Timeline 只做 rotationEffect」。
+            if let img = coverImage {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !spinning)) { ctx in
+                    img
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: coverSide, height: coverSide)
+                        .clipShape(Circle())
+                        .overlay(alignment: .center) {
+                            Circle()
+                                .fill(Color.black)
+                                .frame(width: coverSide * 0.16, height: coverSide * 0.16)
                         }
-                    @unknown default:
-                        Color.black
-                    }
+                        .rotationEffect(.degrees(vinyl.angle(at: ctx.date)))
                 }
                 .frame(width: coverSide, height: coverSide)
-                .clipShape(Circle())
-                // 中心轴：唱片中心的小黑圆，强化「在转」的观感（喜马拉雅同款唱片感）
-                .overlay(alignment: .center) {
-                    Circle()
-                        .fill(Color.black)
-                        .frame(width: coverSide * 0.16, height: coverSide * 0.16)
-                }
-                .rotationEffect(.degrees(vinyl.angle(at: ctx.date)))
+            } else {
+                coverPlaceholder(side: coverSide)
+                    .frame(width: coverSide, height: coverSide)
+                    .clipShape(Circle())
             }
-            .frame(width: coverSide, height: coverSide)
-            .clipShape(Circle())
 
-            // 3pt 白描边 + 外圈进度环
+            // 3pt 白描边 + 外圈进度环（不参与旋转）
             Circle()
                 .strokeBorder(Color.white.opacity(0.9), lineWidth: 3)
                 .frame(width: size, height: size)
@@ -318,13 +308,60 @@ struct BottomDock: View {
                 .allowsHitTesting(false)
         }
         .frame(width: size, height: size)
-        .saturation(dimmed ? 0 : 1)          // 失败：封面变灰
+        .saturation(dimmed ? 0 : 1)
         .opacity(dimmed ? 0.65 : 1)
-        // 把最新状态推给时钟：倍速变化只改角速度，不重置角度。
-        // 三个入口都挂：body 求值（首帧）、签名变化（倍速/曲目/状态）、出现兜底。
         .onChange(of: spinSignature) { _, _ in pushSpinState() }
         .onAppear { pushSpinState() }
         .task(id: spinSignature) { pushSpinState() }
+    }
+
+    /// 封面只在这里下载一次，下载完存成 Image；Timeline 每帧只改角度。
+    private func loadCover() async {
+        let want = player.currentCoverUrl
+        // 换书：立刻清掉上一本的封面，不要「先显示旧书、下载完再突变」
+        coverImage = nil
+        guard !want.isEmpty, let u = URL(string: want) else { return }
+        var req = URLRequest(url: u)
+        req.timeoutInterval = 15
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, http.statusCode < 400 else { return }
+            // 下载期间用户可能又换了一本：只接受当前 URL 的结果
+            guard want == player.currentCoverUrl else { return }
+            // 预先按目标像素解码，交给 Timeline 的只是一张已解码小图
+            let side = max(1, Layout.dockPlayKey)
+            guard let img = downscale(data: data, side: side) else { return }
+            coverImage = img
+        } catch {
+            // 失败就保持占位，不抛
+        }
+    }
+
+    /// 把封面解码并缩到 dock 键尺寸，避免每帧在 Timeline 里对原图做 fill 布局。
+    private func downscale(data: Data, side: CGFloat) -> Image? {
+        guard let src = UIImage(data: data) else { return nil }
+        let target = CGSize(width: side * 3, height: side * 3)   // 3x 供 Retina
+        let fmt = UIGraphicsImageRendererFormat.default()
+        fmt.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: target, format: fmt)
+        let out = renderer.image { _ in
+            let scale = max(target.width / src.size.width, target.height / src.size.height)
+            let w = src.size.width * scale
+            let h = src.size.height * scale
+            src.draw(in: CGRect(x: (target.width - w) / 2, y: (target.height - h) / 2,
+                                width: w, height: h))
+        }
+        return Image(uiImage: out)
+    }
+
+    private func coverPlaceholder(side: CGFloat) -> some View {
+        ZStack {
+            LinearGradient(colors: [Color.accentColor, Color.black],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            Image(systemName: "music.note")
+                .font(.system(size: side * 0.4))
+                .foregroundStyle(.white.opacity(0.8))
+        }
     }
 
     /// 影响旋转的输入签名（播放态 + 倍速 + 曲目）。
@@ -387,13 +424,10 @@ struct BottomDock: View {
             }
             return
         }
-        // 中间键就是播放/暂停键 —— 迷你条里那个已经删掉了，这里成了唯一入口。
-        // 想进播放页点迷你条；长按这个键也能进（见 onLongPressGesture）。
-        if player.state == .playing {
-            player.pause()
-        } else {
-            player.resume()
-        }
+        // 【v1.4.5 回到原设计】用户原话："我不是说让你做成点一下开、点一下关，
+        // 而是说可以直接进入播放页面……开始做得挺好的，我只是让你增加了一点功能。"
+        // 所以中间键 = 进播放页（和最初一致）；播放/暂停仍然由播放页里的大按钮负责。
+        player.showFullScreen = true
     }
 }
 

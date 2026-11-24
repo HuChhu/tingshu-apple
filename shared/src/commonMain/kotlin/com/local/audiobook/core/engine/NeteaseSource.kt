@@ -58,16 +58,23 @@ class NeteaseSource(
     // ---------- 搜索 ----------
 
     override suspend fun search(keywords: String, page: Int): SearchResult {
-        val target = META + "?server=netease&type=search&id=" + SearchRoutes.enc(keywords)
-        val arr = getArray(target)
+        // 【2026-11-24 修复】meting 代理的 type=search 已失效（实测任何关键词都返回 []）。
+        // 改用网易云官方搜索接口：不需要加密、不需要登录，返回 songs 数组。
+        // 取地址仍走 meting 的 type=url，两条腿分别负责"找"和"播"。
+        val target = OFFICIAL_SEARCH + "?s=" + SearchRoutes.enc(keywords) +
+            "&type=1&limit=" + PAGE_SIZE + "&offset=" + ((page - 1) * PAGE_SIZE)
+        val root = getJson(target)
+        val songs = root["result"]?.asObj()?.get("songs")?.asArr() ?: JsonArray(emptyList())
 
-        val books = arr.mapIndexedNotNull { idx, el ->
+        val books = songs.mapIndexedNotNull { idx, el ->
             val o = el.asObj() ?: return@mapIndexedNotNull null
             val songName = o["name"]?.asStr()?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
-            val artist = o["artist"]?.asStr() ?: ""
-            val songUrl = o["url"]?.asStr() ?: ""
-            val picUrl = o["pic"]?.asStr() ?: ""
-            val songId = Regex("id=(\\d+)").find(songUrl)?.groupValues?.get(1) ?: (idx.toString())
+            // artists 是数组：[{id,name,...}]
+            val artist = o["artists"]?.asArr()?.firstOrNull()?.asObj()?.get("name")?.asStr() ?: ""
+            // album.picUrl 是封面
+            val picUrl = o["album"]?.asObj()?.get("picUrl")?.asStr() ?: ""
+            val rawId = o["id"]?.asLong()
+            val songId = rawId?.toString() ?: (idx.toString())
             Book(
                 sourceId = sourceId,
                 bookUrl = "netease://song/" + songId,
@@ -82,8 +89,9 @@ class NeteaseSource(
             )
         }
 
-        return SearchResult(books, page, sourceId, page,
-            if (books.isEmpty()) "网易云没搜到" else null)
+        val hasMore = songs.size >= PAGE_SIZE
+        return SearchResult(books, if (hasMore) page + 1 else page, sourceId, page,
+            if (books.isEmpty()) "网易云没搜到（接口可能改版）" else null)
     }
 
     // ---------- 详情 ----------
@@ -151,9 +159,22 @@ class NeteaseSource(
 
     private fun JsonElement.asObj(): JsonObject? = runCatching { jsonObject }.getOrNull()
     private fun JsonElement.asStr(): String? = (this as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+    private fun JsonElement.asArr(): JsonArray? = runCatching { jsonArray }.getOrNull()
+    private fun JsonElement.asLong(): Long? = (this as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content?.toLongOrNull()
+
+    /** 直接取 JSON 对象（官方搜索接口返回 object 不是 array） */
+    private suspend fun getJson(target: String): JsonObject {
+        val resp = throttle.run { fetcher.get(target, AudioUrlHeaders.headersFor(target)) }
+        if (resp !is FetchOutcome.Ok) throw SourceErrors.Network((resp as FetchOutcome.Failed).kind)
+        return runCatching { Json.parseToJsonElement(resp.text).jsonObject }.getOrNull()
+            ?: throw SourceErrors.ParseFailed("响应非 JSON：" + target.take(80))
+    }
 
     companion object {
         const val META = "https://api.qijieya.cn/meting/"
+        /** 网易云官方搜索（无需加密，limit 上限 100） */
+        const val OFFICIAL_SEARCH = "https://music.163.com/api/search/get"
+        const val PAGE_SIZE = 20
         const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"
     }
 }

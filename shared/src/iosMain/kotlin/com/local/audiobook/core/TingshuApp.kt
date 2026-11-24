@@ -4,6 +4,8 @@ import com.local.audiobook.core.engine.KuwoSource
 import com.local.audiobook.core.engine.SearchEngine
 import com.local.audiobook.core.engine.WebSearchBudget
 import com.local.audiobook.core.engine.XimalayaOpenSource
+import com.local.audiobook.core.SourceRegistry.AudioResult
+import com.local.audiobook.core.SourceRegistry.BookDetailResult
 import com.local.audiobook.core.net.IosJsonFetcher
 import com.local.audiobook.data.ximalaya.RequestThrottle
 import io.ktor.client.HttpClient

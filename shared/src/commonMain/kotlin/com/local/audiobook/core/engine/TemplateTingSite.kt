@@ -238,8 +238,20 @@ class TemplateTingSite(
      *   - 空格 <5（正文特征）
      *   - 不能是纯评分（形如 9.8 / 1.2万 / 0.0）
      */
+    /**
+     * 通用 UI 词黑名单：这些文字在列表页里到处都是（按钮、标签、导航），
+     * 一旦被当成书名会整站污染。实测 8 个站曾因「开始收听」覆盖真书名。
+     */
+    private val GENERIC_UI_WORDS = setOf(
+        "开始收听", "立即收听", "收听", "播放", "立即播放", "继续收听", "继续播放",
+        "下载", "详情", "更多", "评论", "評論", "首页", "首頁", "查看", "免费",
+        "免费收听", "点击收听", "马上听", "试听", "intro", "more", "play",
+    )
+
     private fun chooseTitle(prev: String, attr: String, body: String): String? {
         fun score(t: String): Int {
+            // 一票否决：通用 UI 词绝不可能是书名
+            if (t.trim() in GENERIC_UI_WORDS) return -1
             if (t.length < 2 || t.length > 60) return -1
             if (t.startsWith("http")) return -1
             if (t.count { it == '，' || it == '。' || it == ',' || it == '.' || it == '?' } >= 2) return -1
@@ -253,14 +265,24 @@ class TemplateTingSite(
             sc += minOf(t.length, 30)
             return sc
         }
+        // 关键：已有的标题（prev）不该被"同分或差距很小"的候选覆盖。
+        // 旧实现只比 attr vs body，完全没把 prev 纳入比较——这是 R2 让
+        // 「开始收听」覆盖「守拙归田园」的根本原因（两者同为 4 字含中文，同分）。
+        //
+        // 新规则（保守优先，宁可保留旧值也不误覆盖）：
+        //   1. prev 本身是合法书名 → 只有候选比它"明显更好"（分数高出 8 分以上）才换
+        //   2. prev 非法（空/评分/通用词）→ 候选直接接手
+        val prevScore = if (prev.isBlank()) -1 else score(prev)
         val sa = score(attr)
         val sb = score(body)
+        val bestScore = maxOf(sa, sb)
         val best = when {
-            sa >= 0 && (sb < 0 || sa >= sb) -> attr
+            sa >= 0 && sa >= sb -> attr
             sb >= 0 -> body
             else -> return null
         }
-        return if (best == prev) null else best
+        if (prevScore < 0) return best          // 旧值不可用，直接换
+        return if (bestScore >= prevScore + 8) best else null
     }
 
     override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {

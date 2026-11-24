@@ -63,6 +63,27 @@ class BookTitleMergeTest {
     }
 
     @Test
+    fun threeAnchors_buttonTextDoesNotOverwrite() {
+        // 真实页面结构：封面锚点 → 书名锚点 → 「开始收听」按钮锚点。
+        // R2 时期第三段的按钮文字和真书名同分（都是 4 字含中文），
+        // 后到的 body 覆盖了先到的真书名 —— 8 个站整站中招。
+        val html = """<a href="/9.html"><img src="/c9.jpg"><span>9.8</span></a>
+<a class="t" href="/9.html" title="守拙归田园">守拙归田园</a>
+<a class="play" href="/9.html">开始收听</a>"""
+        val books = site().parseBookList(html)
+        assertEquals(1, books.size)
+        assertEquals("守拙归田园", books.single().title, "按钮文字不能覆盖真书名")
+    }
+
+    @Test
+    fun genericUiWordsNeverBecomeTitle() {
+        for (w in listOf("开始收听", "立即收听", "播放", "下载", "详情", "更多", "继续播放")) {
+            val html = """<a href="/7.html">$w</a>"""
+            assertTrue(site().parseBookList(html).isEmpty(), "「$w」是通用 UI 词，不能当书名")
+        }
+    }
+
+    @Test
     fun paragraphTextRejected() {
         val html = """<a href="/4.html">这是一段很长的简介，有逗号。也有句号，明显不是书名，应被丢弃。</a>"""
         assertTrue(site().parseBookList(html).isEmpty(), "句读密集的正文不能被当成书名")

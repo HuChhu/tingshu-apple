@@ -659,6 +659,15 @@ enum SharedBridge {
     static let fallbackUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
         + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
+    /// 复制一份 ExtractedAudio 并补上缺省 UA。
+    /// 不能让调用方直接写 SharedBridge.ExtractedAudio(...)：那是 framework 里
+    /// shared 模块顶层的类型，只有本文件（唯一 import shared 的文件）能看见；
+    /// Views/Engine 层写全名会报 type 'SharedBridge' has no member 'ExtractedAudio'（已在 CI 实测）。
+    static func audioWithDefaultUA(_ a: ExtractedAudio) -> ExtractedAudio {
+        ExtractedAudio(url: a.url, headers: withDefaultUA(a.headers),
+                       expiresInSeconds: a.expiresInSeconds)
+    }
+
     /// 给一份 headers 补上缺省的 UA（返回新字典）
     static func withDefaultUA(_ headers: [String: String]) -> [String: String] {
         if headers.keys.contains(where: { $0.lowercased() == "user-agent" }) { return headers }

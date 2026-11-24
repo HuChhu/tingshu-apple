@@ -506,10 +506,7 @@ final class Player: NSObject, ObservableObject {
             // 兜底 UA：模板站/嗅探出来的直链常常「裸请求 403、带 UA 就过」
             // （实测 xmcdn 系：不带 UA 直接 deny by rule engine）。
             if let a = audio {
-                audio = SharedBridge.ExtractedAudio(
-                    url: a.url,
-                    headers: SharedBridge.withDefaultUA(a.headers),
-                    expiresInSeconds: a.expiresInSeconds)
+                audio = SharedBridge.audioWithDefaultUA(a)
             }
             
             guard let audio = audio else {

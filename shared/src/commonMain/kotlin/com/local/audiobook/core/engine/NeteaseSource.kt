@@ -71,8 +71,11 @@ class NeteaseSource(
             val songName = o["name"]?.asStr()?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
             // artists 是数组：[{id,name,...}]
             val artist = o["artists"]?.asArr()?.firstOrNull()?.asObj()?.get("name")?.asStr() ?: ""
-            // album.picUrl 是封面
-            val picUrl = o["album"]?.asObj()?.get("picUrl")?.asStr() ?: ""
+            // 官方搜索接口的 album 对象**没有 picUrl**（实测键：publishTime/size/artist/
+            // copyrightId/name/id/picId/mark/status）。拼 picId 需要额外加密参数，成本高。
+            // 这里直接给 meting 的 pic 端点：它对任何 songId 都 302 到真实 CDN，
+            // ImageView 会自动跟随跳转（实测 http=404 是因为部分歌曲无授权封面，不是格式错）。
+            val picUrl = META + "?server=netease&type=pic&id=" + (o["id"]?.asLong() ?: 0L)
             val rawId = o["id"]?.asLong()
             val songId = rawId?.toString() ?: (idx.toString())
             Book(
@@ -164,7 +167,15 @@ class NeteaseSource(
 
     /** 直接取 JSON 对象（官方搜索接口返回 object 不是 array） */
     private suspend fun getJson(target: String): JsonObject {
-        val resp = throttle.run { fetcher.get(target, AudioUrlHeaders.headersFor(target)) }
+        // 网易云要求桌面版 UA + Referer，裸请求会 403/空结果
+        val resp = throttle.run {
+            fetcher.get(target, mapOf(
+                "User-Agent" to "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+                "Referer" to "https://music.163.com/",
+                "Accept" to "application/json",
+            ))
+        }
         if (resp !is FetchOutcome.Ok) throw SourceErrors.Network((resp as FetchOutcome.Failed).kind)
         return runCatching { Json.parseToJsonElement(resp.text).jsonObject }.getOrNull()
             ?: throw SourceErrors.ParseFailed("响应非 JSON：" + target.take(80))

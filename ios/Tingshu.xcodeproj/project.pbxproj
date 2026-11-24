@@ -30,6 +30,7 @@
 		BF0000000000000000000021 /* SourcesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000021 /* SourcesView.swift */; };
 		BF0000000000000000000012 /* LoginEndpoints.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000012 /* LoginEndpoints.swift */; };
 		BF0000000000000000000013 /* AudioCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE0000000000000000000013 /* AudioCache.swift */; };
+		BF5400000000000000000000 /* BottomDock.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE5400000000000000000000 /* BottomDock.swift */; };
 		BF000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000A /* Assets.xcassets */; };
 		BF000000000000000000000B /* shared.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000B /* shared.framework */; };
 		BF000000000000000000000C /* shared.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = FE000000000000000000000B /* shared.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
@@ -62,6 +63,7 @@
 		FE0000000000000000000021 /* SourcesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourcesView.swift; sourceTree = "<group>"; };
 		FE0000000000000000000012 /* LoginEndpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginEndpoints.swift; sourceTree = "<group>"; };
 		FE0000000000000000000013 /* AudioCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCache.swift; sourceTree = "<group>"; };
+		FE5400000000000000000000 /* BottomDock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BottomDock.swift; sourceTree = "<group>"; };
 		FD0000000000000000000001 /* Tingshu.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tingshu.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -116,6 +118,7 @@
 				FE5100000000000000000000 /* HomeView.swift */,
 				FE5200000000000000000000 /* MineView.swift */,
 				FE5300000000000000000000 /* MiniPlayerBar.swift */,
+				FE5400000000000000000000 /* BottomDock.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -282,6 +285,7 @@
 				BF5100000000000000000000 /* HomeView.swift in Sources */,
 				BF5200000000000000000000 /* MineView.swift in Sources */,
 				BF5300000000000000000000 /* MiniPlayerBar.swift in Sources */,
+				BF5400000000000000000000 /* BottomDock.swift in Sources */,
 				BF410000000000000000000000 /* DiskCache.swift in Sources */,
 				BF400000000000000000000000 /* ChapterPager.swift in Sources */,
 				BF000000000000000000000F /* Layout.swift in Sources */,

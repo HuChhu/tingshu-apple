@@ -654,4 +654,17 @@ enum SharedBridge {
         ExtractedAudio(url: url, headers: [:], expiresInSeconds: 0)
     }
 
+    /// 兜底 UA：模板站/嗅探出来的直链经常「裸请求 403」，带一个桌面 UA 就能过。
+    /// 只在引擎没给 User-Agent 时补，绝不覆盖引擎已经算好的那个。
+    static let fallbackUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+        + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+
+    /// 给一份 headers 补上缺省的 UA（返回新字典）
+    static func withDefaultUA(_ headers: [String: String]) -> [String: String] {
+        if headers.keys.contains(where: { $0.lowercased() == "user-agent" }) { return headers }
+        var h = headers
+        h["User-Agent"] = fallbackUA
+        return h
+    }
+
 }

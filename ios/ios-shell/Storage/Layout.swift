@@ -73,10 +73,29 @@ enum Layout {
     /// 胶囊底（状态标签、倍速按钮）
     static var pillFill: Color { Color.secondary.opacity(0.14) }
 
-    /// 内容底部留白：有迷你条时按条高 + 间距 + 安全区，没有时只留 16。
-    /// 之前各页面写死 90pt，迷你条隐藏时留下一条空白。
-    static func bottomInset(miniBarVisible: Bool, safeArea: CGFloat) -> CGFloat {
-        guard miniBarVisible else { return 16 }
-        return miniBarHeight + miniBarGap * 2 + max(0, safeArea) + 8
+    // MARK: - 底部留白（v1.4.1 改语义）
+    //
+    // 旧实现 bottomInset(miniBarVisible:safeArea:) 是「手算迷你条 + TabBar + 安全区」，
+    // 要求调用方自己知道 TabBar 多高 —— 这正是 iOS 26 悬浮胶囊上出现空隙的原因。
+    //
+    // 现在底部让位交给系统：
+    //   - iOS 26+      tabViewBottomAccessory：配件由 TabView 托管，内容区 safe area 已包含
+    //   - iOS 17–25    .safeAreaInset(edge: .bottom)：系统自动把内容区抬高
+    // 所以页面**只能**再加「自绘 dock（iOS 26 兜底模式）」或「迷你条本体」这一截，
+    // 绝不能再加 TabBar/安全区，否则就是重复让位。
+
+    /// 自绘 dock：条高 56 / 外侧边距 10 / 中间播放键直径 58（比条高 2，微微凸出）
+    static let dockHeight: CGFloat = 56
+    static let dockSideMargin: CGFloat = 10
+    static let dockPlayKey: CGFloat = 58
+
+    /// 固定底部栏的底线留白（自绘 dock / 迷你条二选一，不会同时出现）
+    static let dockBaseline: CGFloat = 16
+
+    /// 页面用：内容底部还需要自己补多少。
+    /// - Parameter bottomBar: 当前是否有一个**自绘的**底部栏占位（dock 或兜底迷你条）。
+    ///   走系统方案时传 false —— 系统已经让位，页面再加就是重复。
+    static func contentBottomPadding(customBottomBar: Bool, barHeight: CGFloat = dockHeight) -> CGFloat {
+        customBottomBar ? barHeight + 24 : dockBaseline
     }
 }

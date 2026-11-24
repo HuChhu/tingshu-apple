@@ -7,14 +7,14 @@ import SwiftUI
 ///   - 横滑书单：每个源/分类一行，横向滚动
 /// 不做搜索框（搜索在书架和分类页都能进），避免首页被功能污染。
 struct HomeView: View {
+    /// 底部留白判定要和 RootTabView 用同一套尺寸信号（iPad/横屏走系统栏）
+    @Environment(\.horizontalSizeClass) private var hSizeClass
     @State private var recent: [LocalStore.Recent] = []
     @State private var sections: [FeedSection] = []
     @State private var loading = true
     /// 只有「所有的分区都失败」才用整页错误；单个分区失败只在自己那块显示
     @State private var errorText: String?
     @State private var generation = 0
-    /// 迷你条是否占位：底部留白要按它算，别永远写死 90pt
-    @ObservedObject private var player = Player.shared
     /// 点「继续收听」卡 → 推专辑详情。
     /// 用 isPresented 而不是 item: BookCard —— BookCard 不是 Hashable，
     /// navigationDestination(item:) 要求 Identifiable & Hashable，编译不过。
@@ -57,11 +57,11 @@ struct HomeView: View {
                         }
                     }
 
-                    // 底部留白按迷你条是否出现动态算（原来固定 90pt，
-                    // 迷你条隐藏时首页底部永远多一块空白）
-                    Color.clear.frame(height: Layout.bottomInset(
-                        miniBarVisible: !player.nowPlaying.isEmpty && player.state != .stopped,
-                        safeArea: 0))
+                    // 底部留白：系统已经为 TabBar / 底部配件让过位，
+                    // 页面只补自绘栏这一截（走系统方案时就是 16pt 底线）。
+                    // 不再自己算 TabBar 高度 + 安全区 —— 那是 iOS 26 悬浮胶囊空隙的来源。
+                    Color.clear.frame(height: Layout.contentBottomPadding(
+                        customBottomBar: BottomBarStyle.usesCustomBar(regularWidth: hSizeClass == .regular)))
                 }
                 .padding(.top, 8)
             }

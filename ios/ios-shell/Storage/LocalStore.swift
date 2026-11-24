@@ -159,7 +159,7 @@ enum LocalStore {
             addedAt = try c.decode(Date.self, forKey: .addedAt)
             sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
             // 旧版本存的是「猜」出来的源，用 URL 反推一次（认不出就保持原值）
-            sourceId = Self.forProgress(bookUrl: bookUrl, raw: sourceId)
+            sourceId = LocalStore.forProgress(bookUrl: bookUrl, raw: sourceId)
         }
         init(bookUrl: String, title: String, author: String, coverUrl: String, albumId: Int64, addedAt: Date, sourceId: String) {
             self.bookUrl = bookUrl; self.title = title; self.author = author
@@ -270,7 +270,7 @@ enum LocalStore {
             episodeUrl = try c.decodeIfPresent(String.self, forKey: .episodeUrl) ?? ""
             let rawSource = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? ""
             // 旧版本的 sourceId 是猜的；用 bookUrl / episodeUrl 里的域名把它纠正回来
-            sourceId = Self.forRecent(bookUrl: bookUrl, episodeUrl: episodeUrl, raw: rawSource)
+            sourceId = LocalStore.forRecent(bookUrl: bookUrl, episodeUrl: episodeUrl, raw: rawSource)
             coverUrl = try c.decodeIfPresent(String.self, forKey: .coverUrl) ?? ""
         }
         init(bookUrl: String, bookTitle: String, trackId: Int64, episodeTitle: String, playedAt: Date, sourceId: String, episodeUrl: String = "", coverUrl: String = "") {

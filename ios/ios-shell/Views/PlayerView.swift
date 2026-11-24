@@ -28,6 +28,9 @@ struct PlayerView: View {
 
     var body: some View {
         GeometryReader { geo in
+            let contentWidth = min(max(0, geo.size.width - 40), 560)
+            let posterSize = min(max(0, geo.size.width - 72), 528)
+
             ZStack {
                 ImmersivePosterBackground(url: coverURL)
 
@@ -35,37 +38,48 @@ struct PlayerView: View {
                     VStack(spacing: 0) {
                         dismissButton
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 20)
                             .padding(.top, 8)
 
-                        poster(size: min(max(160, geo.size.width - 72), 360))
+                        poster(size: posterSize)
+                            .frame(maxWidth: .infinity)
                             .padding(.top, 12)
 
                         titleBlock
-                            .padding(.top, 24)
                             .padding(.horizontal, 24)
+                            .frame(width: contentWidth)
+                            .padding(.top, 24)
 
                         progressBlock
+                            .frame(width: contentWidth)
                             .padding(.top, 24)
 
                         transportControls
+                            .frame(width: contentWidth)
                             .padding(.top, 16)
 
                         utilityControls
+                            .frame(width: contentWidth)
                             .padding(.top, 24)
 
                         if let error = player.errorText {
                             errorBlock(error)
+                                .frame(width: contentWidth)
                                 .padding(.top, 16)
                         }
                     }
+                    // 固定内容宽度，禁止按理想宽度或 maxWidth 撑出屏幕。
+                    .frame(width: contentWidth, alignment: .center)
                     .padding(.bottom, 28)
-                    .frame(maxWidth: 560)
-                    .frame(maxWidth: .infinity, minHeight: geo.size.height,
+                    .frame(width: geo.size.width,
+                           minHeight: geo.size.height,
                            alignment: .top)
                 }
+                .frame(width: geo.size.width, height: geo.size.height)
                 .scrollBounceBehavior(.basedOnSize)
+                .clipped()
             }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .clipped()
         }
         .background(Color.black)
         .toolbar(.hidden, for: .navigationBar)
@@ -537,12 +551,16 @@ private struct ImmersivePosterBackground: View {
         ZStack {
             LinearGradient(colors: [Color.accentColor.opacity(0.7), .black],
                            startPoint: .topLeading, endPoint: .bottomTrailing)
-            PlayerPosterImage(url: url)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
-                .blur(radius: 50)
-                .scaleEffect(1.2)
-                .drawingGroup()
+            // 背景图必须被父级尺寸约束：只用 maxWidth/.infinity 会让 AsyncImage 按
+            // 图片原始比例算出超大 ideal 尺寸，把整个 ZStack 撑到宽于屏幕。
+            GeometryReader { g in
+                PlayerPosterImage(url: url)
+                    .frame(width: g.size.width, height: g.size.height)
+                    .clipped()
+                    .blur(radius: 50)
+                    .scaleEffect(1.2)
+                    .drawingGroup()
+            }
             Color.black.opacity(0.62)
             LinearGradient(stops: [
                 .init(color: .black.opacity(0.35), location: 0),

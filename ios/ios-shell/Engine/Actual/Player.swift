@@ -1040,7 +1040,36 @@ final class Player: NSObject, ObservableObject {
         }
     }
 
+
+    /// 网页地址判定：复用 SharedBridge.looksLikeWebPage（/sound/ /album/ 门户域），
+    /// 再补一条它没覆盖的 —— 路径末段没有扩展名（如 /sound/1011694179 以外的 /v/123）。
+    private func isWebPageURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return false }
+        if SharedBridge.looksLikeWebPage(url.absoluteString) { return true }
+        let path = url.path.lowercased()
+        if path.hasSuffix(".html") || path.hasSuffix(".htm") || path.hasSuffix(".php") { return true }
+        // 末段没有扩展名 → 也不当音频。但**必须排除**中转型直链：
+        // 模板站的 /program/get-source/123 这类是没有扩展名的合法音频口，
+        // 一刀切会把它们全拦掉，又是一批源播不了。
+        let last = path.split(separator: "/").last.map(String.init) ?? ""
+        if last.contains(".") { return false }
+        let relayMarks = ["/program/get-source/", "/get-source/", "/play/", "/stream/", "/redirect"]
+        let low = url.absoluteString.lowercased()
+        if relayMarks.contains(where: { low.contains($0) }) { return false }
+        return true
+    }
+
     private func startItem(url: URL, headers: [String: String], ep: SharedBridge.EpisodeRow) {
+        // 【P0 2026-11-24】闸：网页地址不许交给 AVPlayer（否则只会得到 -12847）。
+        // 真机日志：start remote host=www.ximalaya.com → resp code=200 mime=text/html → OSStatus -12847。
+        // 引擎侧已加出口校验（AudioUrlHeaders.requirePlayable），这里是第二道闸：
+        // 老版本引擎、payload 兜底、任何绕过引擎的路径都不该把 text/html 塞进播放器。
+        if isWebPageURL(url) {
+            CrashLog.write("PLAY", "REJECT webpage-as-audio track=\(ep.trackId) src=\(currentSourceId) url=\(url.absoluteString.prefix(120))")
+            requestingEpisode = false
+            failAddress("源站只给了网页地址，没给音频直链")
+            return
+        }
         CrashLog.write("PLAY", "start remote track=\(ep.trackId) src=\(currentSourceId) scheme=\(url.scheme ?? "") host=\(url.host ?? "")")
         // 起播后按上次配置恢复睡眠定时（sleepAutoEnable 打开时生效）
         if sleepDeadline == nil, sleepChaptersLeft <= 0 { restoreSleepTimerIfNeeded() }

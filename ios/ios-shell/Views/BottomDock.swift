@@ -87,12 +87,18 @@ struct BottomDock: View {
                     .animation(.easeInOut(duration: 0.22), value: hasMiniPlayer)
             }
             GeometryReader { geo in
-                dockBody(width: geo.size.width)
-                    .frame(maxHeight: .infinity, alignment: .bottom)
+                dockBody(width: min(geo.size.width, 560))
+                    .frame(width: min(geo.size.width, 560),
+                           height: Layout.dockHeight + 16, alignment: .bottom)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: .bottom)
             }
+            .frame(maxWidth: .infinity)
             .frame(height: Layout.dockHeight + 16)
         }
+        .frame(maxWidth: .infinity)
         .frame(height: Layout.dockHeight + 16 + (hasMiniPlayer ? Layout.miniBarHeight + 8 : 0))
+        .clipped()
         .accessibilityElement(children: .contain)
         .onAppear { CrashLog.write("UI", "dock appear") }
     }
@@ -117,7 +123,8 @@ struct BottomDock: View {
         }
         // 条面高 56，中间键（58+12=70 含热区）比条面高 —— 不裁剪即可自然凸出，
         // 凸出部分正好落在 dock 外层 +16 的留白里
-        .frame(height: Layout.dockHeight)
+        .frame(width: max(0, width - Layout.dockSideMargin * 2),
+               height: Layout.dockHeight)
         .padding(.horizontal, 8)
         .background(
             // 胶囊底：与 iOS 26 系统 TabBar 同款量级（材质 + 细描边）
@@ -224,7 +231,7 @@ struct BottomDock: View {
                     .allowsHitTesting(false)
             }
         }
-        .frame(width: size + 12, height: size + 12)
+        .frame(width: size + 4, height: size + 12)
         .contentShape(Circle())
         // 按下 0.15s 缩放（方案要求），松手回弹
         .scaleEffect(pressed ? 0.92 : 1.0)

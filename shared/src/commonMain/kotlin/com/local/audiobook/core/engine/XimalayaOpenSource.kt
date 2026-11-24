@@ -135,6 +135,11 @@ class XimalayaOpenSource(
         object : com.local.audiobook.core.AudioExtractor {
             override suspend fun extract(url: String, timeoutMs: Int): ExtractedAudio {
                 if (!url.startsWith("http")) throw SourceErrors.ParseFailed("不是直链：" + url)
+                // 【P0 2026-11-24】这里原来是把输入原样返回，于是
+                // https://www.ximalaya.com/sound/{trackId}（专辑详情阶段 TrackNormalizer 给出的**网页**地址）
+                // 被当成音频交给 AVPlayer，报 -12847（kAudioFormatUnsupportedDataFormatError）。
+                // 出口必须校验：门户域名/网页后缀一律拦，绝不原样透传。
+                AudioUrlHeaders.requirePlayable(url, "喜马拉雅（免登录）")
                 return ExtractedAudio(
                     url = url,
                     headers = if (OpenRoutes.isAudioCdn(url)) OpenRoutes.audioHeaders() else emptyMap(),

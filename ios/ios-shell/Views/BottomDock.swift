@@ -58,6 +58,8 @@ enum BottomBarStyle {
 struct BottomDock: View {
     @Binding var selection: Int
     @ObservedObject private var player = Player.shared
+    /// 旋转时钟：独立 ObservableObject，避免 TimelineView 每帧改 @State 重建整棵 dock
+    @StateObject private var vinyl = CoverRotationClock()
 
     /// 无内容时点播放键的提示
     @State private var showEmptyHint = false
@@ -74,36 +76,43 @@ struct BottomDock: View {
     ]
 
     var body: some View {
-        // GeometryReader 撑满父级，所以外面必须给固定高度：
-        // safeAreaInset 里 dock 占位 = 条高 56 + 上 8 + 下 8（给凸出的播放键与提示留余量）。
-        // 不用 safeAreaInset 时这个高度就是内容被顶起来的距离。
-        VStack(spacing: 8) {
-            // 迷你条放在同一块占位里，而不是叠在 dock 上：
-            // 以前用 overlay + 固定偏移画，两段高度各算各的，56pt 完全重叠、盖住导航键。
-            if hasMiniPlayer {
-                MiniPlayerBar()
-                    .padding(.horizontal, Layout.miniBarSideMargin)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .animation(.easeInOut(duration: 0.22), value: hasMiniPlayer)
-            }
-            GeometryReader { geo in
+        // 【v1.4.4 修重叠】不再用常量推算总高度：
+        //   旧写法外层 `.frame(height: dockHeight + 16 + miniBarHeight + 8)`，
+        //   而迷你条内部有自己的内边距、dockBody 也有 padding —— 三处各算各的，
+        //   常量之和 ≠ 实际渲染高度，于是两段叠在一起（用户截图蓝圈）。
+        //   现在 VStack 的 spacing 是「迷你条底 → dock 顶」的唯一空隙来源，
+        //   两段都由各自内在尺寸撑开：迷你条底 + 4 == dock 顶，恒成立。
+        GeometryReader { geo in
+            VStack(spacing: Self.miniBarGapToDock) {
+                if hasMiniPlayer {
+                    MiniPlayerBar()
+                        // 材质连续：与 dock 用同一种 .ultraThinMaterial。
+                        // 迷你条自身不带背景（系统配件模式下由系统提供），
+                        // 在这里补一层，视觉上才像一块（用户图 3）。
+                        .background(
+                            RoundedRectangle(cornerRadius: Layout.radiusBar, style: .continuous)
+                                .fill(.ultraThinMaterial)
+                        )
+                        .padding(.horizontal, Layout.miniBarSideMargin)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
+                // dock 自己给出实际高度，不再由外层猜 56 + 16。
                 dockBody(width: min(geo.size.width, 560))
-                    .frame(width: min(geo.size.width, 560),
-                           height: Layout.dockHeight + 16, alignment: .bottom)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity,
-                           alignment: .bottom)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: Layout.dockHeight + 16)
+            .frame(width: geo.size.width)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: Layout.dockHeight + 16 + (hasMiniPlayer ? Layout.miniBarHeight + 8 : 0))
-        // 不要 clipped()：中间播放键比胶囊高 14pt（含热区），整体裁切会把它切掉一半，
-        // 也会把凸出部分的下半边留白一起吃掉。这里靠 GeometryReader 的 frame 已经约束住了，
-        // 溢出只发生在 dock 自身 16pt 的预留空间内。
+        .animation(.easeInOut(duration: 0.22), value: hasMiniPlayer)
         .accessibilityElement(children: .contain)
         .onAppear { CrashLog.write("UI", "dock appear") }
     }
+
+    /// 迷你条与 dock 之间的间隙：4pt。
+    /// 两块面板各自自带内边距，外部只留这 4pt，观感上是一条均匀细缝而不是大空洞。
+    private static let miniBarGapToDock: CGFloat = 4
 
     /// 中间键直径：390+ 用 58，320~375 收到 52 ——
     /// 4 个导航键 + 播键 + 两侧边距必须塞进 320pt 宽，否则小屏会挤压文字。
@@ -125,9 +134,11 @@ struct BottomDock: View {
         }
         // 条面高 56，中间键（58+12=70 含热区）比条面高 —— 不裁剪即可自然凸出，
         // 凸出部分正好落在 dock 外层 +16 的留白里
-        .frame(width: max(0, width - Layout.dockSideMargin * 2),
+        // 横向只算一次：内容宽 = 屏宽 - 左右各 10pt 外边距 - 胶囊内左右各 8pt。
+        // 之前先 frame 到「屏宽-20」再加 8pt padding 再套 10pt padding，
+        // 三者叠加让胶囊比屏宽多出 16pt，两侧导航键几乎贴边（用户截图就是这个）。
+        .frame(width: max(0, width - Layout.dockSideMargin * 2 - 16),
                height: Layout.dockHeight)
-        .padding(.horizontal, 8)
         .background(
             // 胶囊底：与 iOS 26 系统 TabBar 同款量级（材质 + 细描边）
             Capsule(style: .continuous)
@@ -193,21 +204,21 @@ struct BottomDock: View {
             case .empty:
                 playCircle(size: size, fill: Color.secondary.opacity(0.18),
                            foreground: Color.secondary) {
-                    Image(systemName: "play.fill").font(.system(size: 20, weight: .semibold))
+                    Image(systemName: "music.note").font(.system(size: 20, weight: .semibold))
                 }
             case .loading:
-                playCircle(size: size, fill: Color.accentColor, foreground: .white) {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .tint(.white)
-                        .scaleEffect(0.85)
-                }
-            case .playing:
-                playCircle(size: size, fill: Color.accentColor, foreground: .white) {
-                    // 播放中显示暂停图标；暂停中显示播放图标（点哪里都是"进播放页"）
-                    Image(systemName: "pause.fill")
-                        .font(.system(size: 20, weight: .semibold))
-                }
+                // 加载中：海报不转，外圈套一层不定进度（用户要求「封面不转，外圈显示不定进度」）
+                vinylDisc(size: size, spinning: false)
+                    .overlay(
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(.white)
+                            .scaleEffect(1.15)
+                    )
+            case .playing, .paused:
+                // 中间键 = 旋转的专辑海报（用户图 5）。
+                // 播放中按倍速转；暂停停在当前角度（Clock 内部累加，不用 repeatForever）。
+                vinylDisc(size: size, spinning: state == .playing)
                 // 外圈进度环：描边画在圆外 4pt，不占用内部图标空间
                 Circle()
                     .trim(from: 0, to: CGFloat(progress))
@@ -216,14 +227,8 @@ struct BottomDock: View {
                     .rotationEffect(.degrees(-90))
                     .frame(width: size + 8, height: size + 8)
                     .allowsHitTesting(false)
-            case .paused:
-                playCircle(size: size, fill: Color.accentColor.opacity(0.16), foreground: Color.accentColor) {
-                    Image(systemName: "play.fill").font(.system(size: 20, weight: .semibold))
-                }
             case .failed:
-                playCircle(size: size, fill: Color.red.opacity(0.15), foreground: Color.red) {
-                    Image(systemName: "play.fill").font(.system(size: 20, weight: .semibold))
-                }
+                vinylDisc(size: size, spinning: false, dimmed: true)
                 // 失败红点：右上角，2 个 pt 描边让它从任何底色里跳出来
                 Circle()
                     .fill(Color.red)
@@ -259,6 +264,80 @@ struct BottomDock: View {
         .accessibilityLabel(hasContent ? "打开播放页" : "播放")
         .accessibilityAddTraits(.isButton)
         .accessibilityHint(hasContent ? "打开播放页" : "先去选一本")
+    }
+
+    /// 唱片式海报键：圆形封面 + 3pt 白边 + 外圈进度环。
+    /// 旋转由 TimelineView(.animation) + CoverRotationClock 驱动（见文件末尾）：
+    /// 每帧读角度，**不写 @State**，所以不会触发整棵 dock 重建。
+    private func vinylDisc(size: CGFloat, spinning: Bool, dimmed: Bool = false) -> some View {
+        let coverSide = max(0, size - 6)      // 3pt 白边左右各一
+        return ZStack {
+            // 底：黑胶盘面（封面加载不出来时也是「一张唱片」而不是空圆）
+            Circle().fill(Color.black.opacity(dimmed ? 0.55 : 0.85))
+
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !spinning)) { ctx in
+                AsyncImage(url: URL(string: player.currentCoverUrl)) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image.resizable().aspectRatio(contentMode: .fill)
+                    case .failure, .empty:
+                        ZStack {
+                            LinearGradient(colors: [Color.accentColor, Color.black],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                            Image(systemName: "music.note")
+                                .font(.system(size: coverSide * 0.4))
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
+                    @unknown default:
+                        Color.black
+                    }
+                }
+                .frame(width: coverSide, height: coverSide)
+                .clipShape(Circle())
+                // 中心轴：唱片中心的小黑圆，强化「在转」的观感（喜马拉雅同款唱片感）
+                .overlay(alignment: .center) {
+                    Circle()
+                        .fill(Color.black)
+                        .frame(width: coverSide * 0.16, height: coverSide * 0.16)
+                }
+                .rotationEffect(.degrees(vinyl.angle(at: ctx.date)))
+            }
+            .frame(width: coverSide, height: coverSide)
+            .clipShape(Circle())
+
+            // 3pt 白描边 + 外圈进度环
+            Circle()
+                .strokeBorder(Color.white.opacity(0.9), lineWidth: 3)
+                .frame(width: size, height: size)
+            Circle()
+                .trim(from: 0, to: CGFloat(progress))
+                .stroke(Color.accentColor,
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .frame(width: size + 5, height: size + 5)
+                .allowsHitTesting(false)
+        }
+        .frame(width: size, height: size)
+        .saturation(dimmed ? 0 : 1)          // 失败：封面变灰
+        .opacity(dimmed ? 0.65 : 1)
+        // 把最新状态推给时钟：倍速变化只改角速度，不重置角度。
+        // 三个入口都挂：body 求值（首帧）、签名变化（倍速/曲目/状态）、出现兜底。
+        .onChange(of: spinSignature) { _, _ in pushSpinState() }
+        .onAppear { pushSpinState() }
+        .task(id: spinSignature) { pushSpinState() }
+    }
+
+    /// 影响旋转的输入签名（播放态 + 倍速 + 曲目）。
+    private var spinSignature: String {
+        let s = state
+        let playing = (s == .playing)
+        return "\(playing)-\(player.currentSpeed)-\(player.currentBookUrl)-\(player.nowPlaying)"
+    }
+
+    private func pushSpinState() {
+        vinyl.sync(playing: state == .playing,
+                   rate: player.currentSpeed,
+                   trackKey: player.currentBookUrl + "#" + player.nowPlaying)
     }
 
     private func playCircle<C: View>(size: CGFloat, fill: Color, foreground: Color,
@@ -301,7 +380,6 @@ struct BottomDock: View {
 
     private func handlePlayTap() {
         guard hasContent else {
-            // 无内容：不打开空播放页，给一句就地提示
             withAnimation(.easeOut(duration: 0.18)) { showEmptyHint = true }
             CrashLog.write("UI", "dock play tap with no content")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
@@ -309,8 +387,72 @@ struct BottomDock: View {
             }
             return
         }
-        // 有内容：打开全屏播放页（不是暂停/继续 —— 那是迷你条上的按钮的职责，
-        // 中间键的语义是"进入播放"）
-        player.showFullScreen = true
+        // 中间键就是播放/暂停键 —— 迷你条里那个已经删掉了，这里成了唯一入口。
+        // 想进播放页点迷你条；长按这个键也能进（见 onLongPressGesture）。
+        if player.state == .playing {
+            player.pause()
+        } else {
+            player.resume()
+        }
     }
+}
+
+// MARK: - 旋转时钟（中间键的海报转圈）
+
+/// 累加角度时钟。
+///
+/// 为什么不能用 `withAnimation(.linear.repeatForever(autoreverses: false))`：
+/// 那是「一次性动画」——暂停 = 移除动画，恢复 = 从头再播一遍，角度必然跳回 0。
+/// 用户明确要求「暂停停在当前角度，恢复从该角度继续」，所以只能自己累加。
+///
+/// 做法：
+///   · 观察 Player 的播放状态/倍速/曲目，状态变化时把「之前的累计角度」结算进
+///     `baseAngle`，然后换新的角速度继续跑；
+///   · 视图侧用 `TimelineView(.animation)` 每帧取 `angle(at:)`，没有任何 @State 变更，
+///     所以不会因为旋转触发 body 重建（这是它必须独立成 ObservableObject 的原因）。
+@MainActor
+final class CoverRotationClock: ObservableObject {
+
+    /// 基准：1.0 倍速下 20 秒转一圈 → 每秒 18°
+    static let degreesPerSecondAt1x: Double = 360.0 / 20.0
+
+    /// 上一次结算的时刻（也是当前分段的起点）
+    private var segmentStart = Date()
+    /// 已经走完的角度（跨倍速/暂停结算后的累计值）
+    private var baseAngle: Double = 0
+    /// 当前角速度（度/秒）；0 = 不转
+    private var speed: Double = 0
+
+
+
+    /// 由 BottomDock 在 body 求值时调用（幂等：参数没变就什么都不做）。
+    func sync(playing: Bool, rate: Double, trackKey: String) {
+        // 换曲：角度归零（新唱片从正面开始）
+        if trackKey != lastTrackKey {
+            lastTrackKey = trackKey
+            baseAngle = 0
+            segmentStart = Date()
+        }
+        let target = playing ? Self.degreesPerSecondAt1x * (rate.isFinite ? max(0.25, rate) : 1) : 0
+        settle(at: Date())
+        if target != speed {
+            // 只改角速度，绝不重置 baseAngle —— 倍速变化时角度必须连续
+            speed = target
+        }
+    }
+
+    /// 当前角度（度）。TimelineView 每帧调用。
+    func angle(at date: Date) -> Double {
+        let elapsed = max(0, date.timeIntervalSince(segmentStart))
+        return (baseAngle + speed * elapsed).truncatingRemainder(dividingBy: 360)
+    }
+
+    /// 把「已走过的角度」写进 baseAngle，并把新分段的起点设为 now。
+    private func settle(at now: Date) {
+        let elapsed = max(0, now.timeIntervalSince(segmentStart))
+        baseAngle = (baseAngle + speed * elapsed).truncatingRemainder(dividingBy: 360)
+        segmentStart = now
+    }
+
+    private var lastTrackKey: String = ""
 }

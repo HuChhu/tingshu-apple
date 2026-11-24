@@ -22,9 +22,9 @@ class VipStatusTest {
         assertEquals(VipTier.None, VipStatusResolver.tierOfLevel(0))
         assertEquals(VipTier.None, VipStatusResolver.tierOfLevel(-1))
         assertEquals(VipTier.Normal, VipStatusResolver.tierOfLevel(1))
-        assertEquals(VipTier.Platinum, VipStatusResolver.tierOfLevel(2))
-        assertEquals(VipTier.Master, VipStatusResolver.tierOfLevel(3))
-        assertEquals(VipTier.Kids, VipStatusResolver.tierOfLevel(4))
+        assertEquals(VipTier.Normal, VipStatusResolver.tierOfLevel(2))
+        assertEquals(VipTier.Normal, VipStatusResolver.tierOfLevel(3))
+        assertEquals(VipTier.Normal, VipStatusResolver.tierOfLevel(4))
         // 未知等级不敢献策，当普通会员
         assertEquals(VipTier.Normal, VipStatusResolver.tierOfLevel(9))
     }
@@ -44,7 +44,7 @@ class VipStatusTest {
             obj("""{"isVip":true,"vipLevel":2,"vipExpireTime":"2027-03-15","nickName":"a"}""")
         )
         requireNotNull(s)
-        assertEquals(VipTier.Platinum, s.tier)
+        assertEquals(VipTier.Normal, s.tier)
         assertEquals("2027-03-15", s.expireDate)
         assertEquals(2, s.rawVipLevel)
     }
@@ -99,9 +99,12 @@ class VipStatusTest {
     @Test
     fun textHeuristicsFromWebPage() {
         // WebView 路线：页面 innerText
-        assertEquals(VipTier.Master, VipStatusResolver.tierOfText("\u5927\u5e08\u4f1a\u5458 \u5269\u4f59 30 \u5929"))
-        assertEquals(VipTier.Platinum, VipStatusResolver.tierOfText("\u767d\u91d1\u4f1a\u5458"))
-        assertEquals(VipTier.Kids, VipStatusResolver.tierOfText("\u513f\u7ae5\u4f1a\u5458"))
+        // 这些词在真实页面里 0 命中，不能靠它们判档位：一律 Unknown
+        assertEquals(VipTier.Unknown, VipStatusResolver.tierOfText("\u5927\u5e08\u4f1a\u5458 \u5269\u4f59 30 \u5929"))
+        // 这些词在真实页面里 0 命中，不能靠它们判档位：一律 Unknown
+        assertEquals(VipTier.Unknown, VipStatusResolver.tierOfText("\u767d\u91d1\u4f1a\u5458"))
+        // 这些词在真实页面里 0 命中，不能靠它们判档位：一律 Unknown
+        assertEquals(VipTier.Unknown, VipStatusResolver.tierOfText("\u513f\u7ae5\u4f1a\u5458"))
         assertEquals(VipTier.None, VipStatusResolver.tierOfText("\u5f00\u901a\u4f1a\u5458"))
         assertEquals(VipTier.Normal, VipStatusResolver.tierOfText("\u7eed\u8d39"))
         assertEquals(VipTier.Unknown, VipStatusResolver.tierOfText(""))

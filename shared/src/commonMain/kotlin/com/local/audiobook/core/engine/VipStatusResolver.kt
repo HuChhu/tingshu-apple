@@ -38,25 +38,18 @@ object VipStatusResolver {
     const val USER_BASIC = "https://www.ximalaya.com/revision/user/basic"
 
     /**
-     * 等级数值→类型。
+     * 等级数值→类型。**只认「有会员 / 没会员」，不猜档位。**
      *
-     * 实测与官方前端行为对照（官方页面只分「会员/非会员」，
-     * 等级细分是从接口字段推导 + 业务常识，字段不在就归 None/Unknown）：
-     *   0 / 缺省            → None（没有会员）
-     *   1                      → Normal（小会员/普通会员）
-     *   2                      → Platinum（白金）
-     *   3                      → Master（大师）
-     *   4                      → Kids（儿童）
-     *   其他 >0                → Normal（不敢献策，当普通会员处理）
+     * 依据（qa-kotlin2 实测，不是推测）：
+     *   - /revision/user/basic 返回的全部键里，含 vip 的只有 `isVip`（布尔），
+     *     没有 vipLevel / vipType / vipExpireTime
+     *   - 桌面站 8 个 JS 包（2.8MB）全扫，vipLevel / memberLevel 零命中
+     *   - 移动端会员页搜「白金 / 大师 / 儿童会员」全部 0 命中
+     *
+     * 所以：如果哪天真有 level 字段进来，> 0 一律当「会员」，具体是哪档不声称。
+     * 早期版本把 1/2/3/4 映射成普通/白金/大师/儿童属于编造，已删除。
      */
-    fun tierOfLevel(level: Int): VipTier = when {
-        level <= 0 -> VipTier.None
-        level == 1 -> VipTier.Normal
-        level == 2 -> VipTier.Platinum
-        level == 3 -> VipTier.Master
-        level == 4 -> VipTier.Kids
-        else -> VipTier.Normal
-    }
+    fun tierOfLevel(level: Int): VipTier = if (level > 0) VipTier.Normal else VipTier.None
 
     /**
      * 文本→等级（WebView 路线用）。
@@ -64,14 +57,10 @@ object VipStatusResolver {
      */
     fun tierOfText(text: String): VipTier {
         if (text.isEmpty()) return VipTier.Unknown
-        // 大师 > 白金 > 儿童 > 开通（按特异性从高到低）
-        if (text.contains("大师会员") || text.contains("大师VIP", true)) return VipTier.Master
-        if (text.contains("白金会员") || text.contains("白金VIP", true)) return VipTier.Platinum
-        if (text.contains("儿童会员") || text.contains("儿童VIP", true)) return VipTier.Kids
-        // 下面三条是“确定没有会员”的语言：页面在开通入口上写「开通会员」
-        if (text.contains("开通会员") || text.contains("立即开通")) return VipTier.None
-        // 「续费」= 已经是会员，但具体哪个等级页面没写 → 只能算普通
-        if (text.contains("续费")) return VipTier.Normal
+        // 先判“确定没有会员”的语言：未登录/开通入口/体验卡这类页面一定带这些词
+        if (text.contains("开通会员") || text.contains("立即开通") || text.contains("登录后")) return VipTier.None
+        // 「续费」「会员中心」+ 没有开通按钮 = 已经是会员；档位页面从不展示，所以不细分
+        if (text.contains("续费") || text.contains("会员权益")) return VipTier.Normal
         return VipTier.Unknown
     }
 
@@ -119,7 +108,8 @@ object VipStatusResolver {
             "Accept" to "application/json",
             "Cookie" to cookie,
         )
-        val endpoints = listOf(CURRENT_USER, USER_BASIC + "?uid=0")
+        // 只用能对登录态生效的那个；user/basic 需要真实 uid，之前写死 uid=0 实测 ret:400，永远拿不到数据
+        val endpoints = listOf(CURRENT_USER)
         for (url in endpoints) {
             val resp = runCatching { throttle.run { fetcher.get(url, headers) } }.getOrNull() ?: continue
             if (resp !is FetchOutcome.Ok) continue

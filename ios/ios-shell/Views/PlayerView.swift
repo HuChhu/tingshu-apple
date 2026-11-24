@@ -27,74 +27,73 @@ struct PlayerView: View {
     }
 
     var body: some View {
-        GeometryReader { geo in
-            let contentWidth = min(max(0, geo.size.width - 40), 560)
-            let posterSize = min(max(0, geo.size.width - 72), 528)
+        // 背景挂在全屏坐标层，内容继续使用 safeArea 内的 GeometryReader。
+        ImmersivePosterBackground(url: coverURL)
+            .ignoresSafeArea(.all, edges: .all)
+            .overlay {
+                GeometryReader { geo in
+                    let contentWidth = min(max(0, geo.size.width - 40), 560)
+                    let posterSize = min(max(0, geo.size.width - 72), 528)
 
-            ZStack {
-                ImmersivePosterBackground(url: coverURL)
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            dismissButton
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.top, 8)
 
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        dismissButton
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 8)
+                            poster(size: posterSize)
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, 12)
 
-                        poster(size: posterSize)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 12)
+                            titleBlock
+                                .padding(.horizontal, 24)
+                                .frame(width: contentWidth)
+                                .padding(.top, 24)
 
-                        titleBlock
-                            .padding(.horizontal, 24)
-                            .frame(width: contentWidth)
-                            .padding(.top, 24)
+                            progressBlock
+                                .frame(width: contentWidth)
+                                .padding(.top, 24)
 
-                        progressBlock
-                            .frame(width: contentWidth)
-                            .padding(.top, 24)
-
-                        transportControls
-                            .frame(width: contentWidth)
-                            .padding(.top, 16)
-
-                        utilityControls
-                            .frame(width: contentWidth)
-                            .padding(.top, 24)
-
-                        if let error = player.errorText {
-                            errorBlock(error)
+                            transportControls
                                 .frame(width: contentWidth)
                                 .padding(.top, 16)
+
+                            utilityControls
+                                .frame(width: contentWidth)
+                                .padding(.top, 24)
+
+                            if let error = player.errorText {
+                                errorBlock(error)
+                                    .frame(width: contentWidth)
+                                    .padding(.top, 16)
+                            }
                         }
+                        .frame(width: contentWidth, alignment: .center)
+                        .padding(.bottom, 28)
+                        .frame(width: geo.size.width)
+                        .frame(minHeight: geo.size.height, alignment: .top)
                     }
-                    // 固定内容宽度，禁止按理想宽度或 maxWidth 撑出屏幕。
-                    .frame(width: contentWidth, alignment: .center)
-                    .padding(.bottom, 28)
-                    // frame(width:minHeight:alignment:) 这个重载不存在（只有 width/height 或
-                    // minWidth/idealWidth/maxWidth…），必须拆成两次 frame。
+                    // 只约束宽度：高度锁死成 geo.size.height 会让内容超长时被截断
+                    // （配合 .clipped() 直接看不到底部控件）；这里让 ScrollView 自己撑。
                     .frame(width: geo.size.width)
-                    .frame(minHeight: geo.size.height, alignment: .top)
+                    .scrollBounceBehavior(.basedOnSize)
                 }
-                .frame(width: geo.size.width, height: geo.size.height)
-                .scrollBounceBehavior(.basedOnSize)
-                .clipped()
             }
-            .frame(width: geo.size.width, height: geo.size.height)
-            .clipped()
-        }
-        .background(Color.black)
-        .toolbar(.hidden, for: .navigationBar)
-        .onAppear {
-            refreshFavorite()
-            CrashLog.write("UI", "player appear track=\(player.nowPlaying)")
-        }
-        .onChange(of: player.currentBookUrl) { _, _ in refreshFavorite() }
-        .sheet(item: $activeSheet) { sheet in
-            sheetContent(sheet)
-                .presentationDetents(sheet == .chapters ? [.medium, .large] : [.medium])
-                .presentationDragIndicator(.visible)
-                .presentationCornerRadius(24)
-        }
+            // 底色也要铺满：overlay 里的内容在安全区内，黑色底必须自己 ignoresSafeArea，
+            // 否则状态栏与 Home 条区域会露出播放页下面那一层的颜色（深色下就是纯黑一条）。
+            .background(Color.black.ignoresSafeArea(.all, edges: .all))
+            .toolbar(.hidden, for: .navigationBar)
+            .onAppear {
+                refreshFavorite()
+                CrashLog.write("UI", "player appear track=\(player.nowPlaying)")
+            }
+            .onChange(of: player.currentBookUrl) { _, _ in refreshFavorite() }
+            .sheet(item: $activeSheet) { sheet in
+                sheetContent(sheet)
+                    .presentationDetents(sheet == .chapters ? [.medium, .large] : [.medium])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(24)
+            }
     }
 
     private var coverURL: URL? {
@@ -570,7 +569,6 @@ private struct ImmersivePosterBackground: View {
                 .init(color: .black.opacity(0.72), location: 1)
             ], startPoint: .top, endPoint: .bottom)
         }
-        .ignoresSafeArea()
         .accessibilityHidden(true)
     }
 }

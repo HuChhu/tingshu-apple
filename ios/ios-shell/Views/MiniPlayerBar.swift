@@ -32,18 +32,10 @@ struct MiniPlayerBar: View {
 
                 Spacer(minLength: 8)
 
-                // 播放/暂停：44pt 热区（图标 28），点它不能同时触发条主体的展开
-                Button {
-                    if player.state == .playing { player.pause() } else { player.resume() }
-                } label: {
-                    Image(systemName: player.state == .playing
-                          ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 28))
-                        .frame(width: Layout.hitTarget, height: Layout.hitTarget)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(player.state == .playing ? "暂停" : "播放")
+                // v1.4.4：删掉条内 play/pause 圆钮。
+                // 底部 dock 中间已经有一个播放键，条里再放一个就是两个入口做同一件事，
+                // 用户截图明确反馈「重复」。播放/暂停统一由 dock 中间键承担。
+                // 条内只保留「快进」——它和中间键不是同一动作。
 
                 // 图标与实际动作对齐：画的是快进步数，不是"下一集"
                 Button {
@@ -58,8 +50,12 @@ struct MiniPlayerBar: View {
                 .disabled(!player.canSeek)
                 .accessibilityLabel("快进 \(skipSeconds) 秒")
             }
-            .frame(height: Layout.miniBarHeight)
+            // 高度由内容内在尺寸决定（封面 40 + 上下 8 = 56），
+            // 不再用 frame(height:) 写死：写死之后外层再加 padding 就比 56 高，
+            // dock 那边按 56 预留 → 两段叠在一起（用户截图蓝圈）。
+            .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 10)
+            .padding(.vertical, 8)
             .contentShape(Rectangle())
             .onTapGesture { player.showFullScreen = true }
             .accessibilityElement(children: .contain)

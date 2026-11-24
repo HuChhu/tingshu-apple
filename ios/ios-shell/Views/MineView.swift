@@ -9,6 +9,9 @@ struct MineView: View {
     @State private var cacheBytes: Int64 = AudioCache.totalBytes()
     @State private var logBytes: Int64 = CrashLog.totalBytes
     @State private var favCount = 0
+    /// 会员状态：先读缓存立刻显示，再后台探测（探测走 WebView 读会员页 DOM）
+    @State private var vip: VipStatus = VipStatusStore.cached()?.status ?? VipStatus()
+    @State private var probingVip = false
 
     var body: some View {
         NavigationStack {
@@ -20,15 +23,19 @@ struct MineView: View {
                         SettingsView()
                     } label: {
                         HStack(spacing: 14) {
-                            Image(systemName: loggedIn ? "checkmark.seal.fill" : "person.crop.circle.badge.questionmark")
+                            Image(systemName: accountIcon)
                                 .font(.system(size: 30))
-                                .foregroundStyle(loggedIn ? Color.green : Color.secondary)
+                                .foregroundStyle(accountColor)
                                 .frame(width: 36)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(loggedIn ? "已登录喜马拉雅" : "未登录")
+                                // v1.4.4：标题显示**真实会员等级**，不是「已登录」。
+                                // 旧文案「可听会员内容」把"已登录"当成了"是会员"，
+                                // 对没有会员的账号是错误陈述。
+                                Text(accountTitle)
                                     .font(.headline)
-                                Text(loggedIn ? "可听会员内容" : "登录后可听会员专辑")
+                                Text(accountSubtitle)
                                     .font(.caption).foregroundStyle(.secondary)
+                                    .lineLimit(2)
                             }
                         }
                         .padding(.vertical, 4)
@@ -86,9 +93,83 @@ struct MineView: View {
                 cacheBytes = AudioCache.totalBytes()
                 logBytes = CrashLog.totalBytes
                 favCount = LocalStore.loadFavorites().count
+                refreshVipIfNeeded(force: false)
+            }
+            // 登录/登出后，旧的会员缓存必然失效
+            .onReceive(NotificationCenter.default.publisher(for: .loginStateChanged)) { _ in
+                loggedIn = SharedBridge.loggedIn
+                VipStatusStore.clear()
+                vip = VipStatus()
+                refreshVipIfNeeded(force: true)
+            }
+            // 下拉刷新：强制重探一次
+            .refreshable {
+                loggedIn = SharedBridge.loggedIn
+                refreshVipIfNeeded(force: true)
             }
             .onReceive(NotificationCenter.default.publisher(for: .audioCacheCleared)) { _ in
                 cacheBytes = AudioCache.totalBytes()
+            }
+        }
+    }
+
+    // MARK: - 账号卡文案（会员状态）
+
+    private var accountTitle: String {
+        guard loggedIn else { return "未登录" }
+        switch vip.tier {
+        case .unknown: return "已登录喜马拉雅"
+        case .none: return "未开通会员"
+        default: return vip.tier.title
+        }
+    }
+
+    private var accountSubtitle: String {
+        guard loggedIn else { return "登录后可听会员专辑" }
+        if probingVip && vip.tier == .unknown { return "正在查询会员状态…" }
+        return vip.subtitle
+    }
+
+    private var accountIcon: String {
+        guard loggedIn else { return "person.crop.circle.badge.questionmark" }
+        switch vip.tier {
+        case .unknown, .none: return "person.crop.circle"
+        case .child: return "figure.and.child.holdinghands"
+        case .master, .platinum: return "seal.fill"
+        case .standard: return "checkmark.seal.fill"
+        }
+    }
+
+    private var accountColor: Color {
+        guard loggedIn else { return .secondary }
+        switch vip.tier {
+        case .unknown, .none: return .secondary
+        case .standard, .platinum, .master, .child: return .green
+        }
+    }
+
+    /// 缓存新鲜就不探测；否则后台跑一次 WebView 探针。
+    /// 探测失败 → 保持「会员状态未知」，绝不回落到「可听会员内容」那种默认值。
+    private func refreshVipIfNeeded(force: Bool) {
+        guard loggedIn else { return }
+        if !force, let c = VipStatusStore.cached(), VipStatusStore.isFresh(c.at) {
+            vip = c.status
+            return
+        }
+        if probingVip { return }
+        probingVip = true
+        Task {
+            let s = await VipStatusProbe.shared.probe()
+            await MainActor.run {
+                probingVip = false
+                // 探测出 unknown 时不覆盖已有缓存（可能是网络抖，旧值更可信）
+                if s.tier != .unknown {
+                    vip = s
+                    VipStatusStore.save(s)
+                } else if !force {
+                    vip = VipStatus(tier: .unknown, evidence: s.evidence)
+                }
+                CrashLog.write("VIP", "tier=\(vip.tier.title) evidence=\(s.evidence.prefix(60))")
             }
         }
     }

@@ -449,17 +449,21 @@ enum SharedBridge {
 
     /// 专辑详情 + 曲目。失败返回 nil。
     static func bookDetail(bookUrl: String) async -> BookDetail? {
-        await bridge { done in
-            app.bookDetail(bookUrl: bookUrl, loadEpisodes: true, loadFullPages: false,
-                           completionHandler: { d, err in done(d, err) })
+        let r = await bridge { (done: @escaping (BookDetailResult?, Error?) -> Void) in
+            app.bookDetailSafe(bookUrl: bookUrl, loadEpisodes: true, loadFullPages: false,
+                               completionHandler: { res, err in done(res, err) })
         }
+        lastDetailError = r?.reason
+        return r?.detail
     }
 
     /// 取播放地址（级1→级3 提取链）。
     static func extract(url: String) async -> ExtractedAudio? {
-        await bridge { done in
-            app.extract(url: url, timeoutMs: 15_000, completionHandler: { a, err in done(a, err) })
+        let r = await bridge { (done: @escaping (AudioResult?, Error?) -> Void) in
+            app.extractSafe(url: url, timeoutMs: 15_000, completionHandler: { res, err in done(res, err) })
         }
+        if let r, r.audio == nil { lastAudioError = r.reason }
+        return r?.audio
     }
 
     /// 解析专辑 ID（/album/{id}、?albumId=、纯数字 ≥4 位）。同步函数，K/N 直接导出。

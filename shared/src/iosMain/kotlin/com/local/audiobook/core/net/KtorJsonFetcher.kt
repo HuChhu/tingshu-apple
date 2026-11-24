@@ -33,6 +33,8 @@ class IosJsonFetcher(private val client: HttpClient) : JsonFetcher {
             setBody(body)
         }
         FetchOutcome.Ok(resp.status.value, resp.bodyAsText())
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e   // 协程取消必须透传
     } catch (e: Throwable) {
         FetchOutcome.Failed(e::class.simpleName ?: "Error", e.message ?: "")
     }

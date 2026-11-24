@@ -132,7 +132,11 @@ final class Player: NSObject, ObservableObject {
         let guardCmd: () -> Bool = { Player.shared.isLive }
 
         addRemote(cc.playCommand, guard: guardCmd) { [weak self] _ in
-            self?.resume(); return .success
+            guard let self else { return .commandFailed }
+            // 失败态：线控播放键 = 重试（不用点亮屏幕回 App）
+            if self.state == .error { self.retry(); return .success }
+            self.resume()
+            return .success
         }
         addRemote(cc.pauseCommand, guard: guardCmd) { [weak self] _ in
             self?.pause(); return .success
@@ -156,10 +160,6 @@ final class Player: NSObject, ObservableObject {
             self.seek(toFraction: e.positionTime / self.safeDuration)
             return .success
         }
-        // 失败态下锁屏也能重试（不用点亮屏幕回 App）
-        addRemote(cc.playCommand, guard: { Player.shared.state == .error }) { _ in
-            Player.shared.retry(); return .success
-        }
     }
 
     private func addRemote(
@@ -170,6 +170,14 @@ final class Player: NSObject, ObservableObject {
         // P1-04：用 addTarget(_:action:) 而不是闭包。
         // selector 由 Objective-C 运行时在主线程调用，天然隔离正确。
         // 闭包方式可能在任意线程触发，导致 @MainActor 越界。
+        // 防御：同一个 command 重复注册会让 remoteHandlers 字典键覆盖、旧 handler 永久失效。
+        // 历史上 playCommand 就因此在线控场景失灵过。
+        if remoteHandlers[cmd] != nil {
+            #if DEBUG
+            debugPrint("[Player] 重复注册 remote command，已忽略：" + String(describing: cmd))
+            #endif
+            return
+        }
         let token = cmd.addTarget(self, action: #selector(handleRemoteCommand(_:)))
         remoteTargets.append((cmd, token))
         // 保存 handler 供 selector 调用
@@ -298,11 +306,16 @@ final class Player: NSObject, ObservableObject {
         guard let deadline = sleepDeadline else { sleepTimer = nil; return }
         let interval = deadline.timeIntervalSinceNow
         guard interval > 0 else { pause(); cancelSleepTimer(); return }
-        sleepTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
-            guard let self else { return }
-            self.pause()
-            self.cancelSleepTimer()
+        let t = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.pause()
+                self.cancelSleepTimer()
+            }
         }
+        // 用 common 模式：默认 default 模式下用户滚动列表时定时器不触发，睡点会延后
+        RunLoop.main.add(t, forMode: .common)
+        sleepTimer = t
     }
 
     /// 重启 App 后按上次设置重新定时（prefs.sleepAutoEnable）
@@ -345,6 +358,14 @@ final class Player: NSObject, ObservableObject {
         }
         if sleepChaptersLeft > 0 { return "剩 \(sleepChaptersLeft) 章" }
         return nil
+    }
+
+    /// 把有效增益应用到当前 item。dB → 线性：gain = 10^(dB/20)，再夹到 0...1
+    /// 负增益（压音量）能精确生效；正增益受 AVPlayer 上限 1.0 限制，只能到原始音量。
+    private func applyVolumeGain() {
+        let db = effectivePlayback.volumeGainDb
+        let linear = db.isFinite ? pow(10.0, db / 20.0) : 1.0
+        queue.currentItem?.volume = Float(min(1.0, max(0.0, linear)))
     }
 
     /// 运行时改倍速（播放页调用，同时写回专辑配置）
@@ -570,6 +591,8 @@ final class Player: NSObject, ObservableObject {
         queue.play()
         errorText = nil
         durationText = fmt(ep.durationMs)
+        // 音量增益：dB → 线性倍数再夹到 0...1（AVPlayerItem.volume 上限是 1）
+        applyVolumeGain()
         // 倍速：专辑值 > 全局默认（这里再兜一次，AVPlayer 对 rate<=0/NaN 不友好）
         let sp = effectivePlayback.speed
         queue.rate = Float(sp.isFinite && sp > 0 ? min(3.0, max(0.5, sp)) : 1.0)
@@ -599,6 +622,8 @@ final class Player: NSObject, ObservableObject {
 
     private func startItem(url: URL, headers: [String: String], ep: SharedBridge.EpisodeRow) {
         CrashLog.write("PLAY", "start remote track=\(ep.trackId) src=\(currentSourceId) scheme=\(url.scheme ?? "") host=\(url.host ?? "")")
+        // 起播后按上次配置恢复睡眠定时（sleepAutoEnable 打开时生效）
+        if sleepDeadline == nil, sleepChaptersLeft <= 0 { restoreSleepTimerIfNeeded() }
         requestingEpisode = false
         BackgroundSession.activateForPlayback()
         
@@ -637,7 +662,8 @@ final class Player: NSObject, ObservableObject {
         apply(.playing)
 
         // 续播：上次听到哪就从哪开始（超过 95% 视为听完，从头放）
-        if let b = currentBook, let saved = LocalStore.progress(for: b.bookUrl),
+        if let b = currentBook,
+           let saved = LocalStore.progress(for: BookKey(sourceId: currentSourceId, albumId: b.albumId, bookUrl: b.bookUrl)),
            saved.trackId == (current?.trackId ?? -1), saved.positionMs > 3000,
            saved.durationMs > 0, Double(saved.positionMs) / Double(saved.durationMs) < 0.95 {
             // 恢复播放时按偏好后退几秒，防听漏（安卓设置页第 7 项）

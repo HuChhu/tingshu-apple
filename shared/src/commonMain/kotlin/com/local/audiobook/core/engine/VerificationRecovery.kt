@@ -152,7 +152,7 @@ object VerificationRecovery {
                     )
                 }
                 is Failure.Ordinary -> {
-                    return runCatching { parse(body) }
+                    return try { Result.success(parse(body)) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { Result.failure(e) }
                 }
                 is Failure.GaveUp -> {
                     lastDetail = f.lastDetail

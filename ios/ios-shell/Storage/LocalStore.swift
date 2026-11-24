@@ -83,9 +83,9 @@ enum LocalStore {
 
     static func saveProgress(_ p: Progress) {
         var all = loadProgress()
-        // 新键优先（跨源隔离），旧键同时写一份，方便回滚
+        // 只写新键。旧键（裸 bookUrl）在读取时做一次迁移，不再双写 ——
+        // 双写会导致同一本书换源后出现两条进度、各自覆盖，续播位置错乱。
         all[p.bookKey.id] = p
-        all[p.bookUrl] = p
         if let data = try? encoder.encode(all) {
             UserDefaults.standard.set(data, forKey: progressKey)
         }
@@ -101,11 +101,18 @@ enum LocalStore {
     static func progress(for key: BookKey) -> Progress? {
         let all = loadProgress()
         if let p = all[key.id] { return p }
-        // 旧数据只有 bookUrl 键：读到了再补上 sourceId/albumId，下次写入就是新键
-        if var legacy = all[key.bookUrl] {
-            legacy.sourceId = key.sourceId
-            legacy.albumId = key.albumId
-            return legacy
+        // 旧数据只有 bookUrl 键：读到后迁移到新键并删旧键（只迁一次）
+        if let legacy = all[key.bookUrl] {
+            var moved = legacy
+            moved.sourceId = key.sourceId
+            moved.albumId = key.albumId
+            var migrated = all
+            migrated.removeValue(forKey: key.bookUrl)
+            migrated[key.id] = moved
+            if let data = try? Self.encoder.encode(migrated) {
+                UserDefaults.standard.set(data, forKey: progressKey)
+            }
+            return moved
         }
         return nil
     }

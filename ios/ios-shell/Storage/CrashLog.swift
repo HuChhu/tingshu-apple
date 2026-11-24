@@ -30,32 +30,52 @@ enum CrashLog {
         }
     }
 
+    /// 高频标签（每秒都会打）不做 fsync，否则主线程被拖慢
+    private static let highFrequencyTags: Set<String> = ["TICK", "PROGRESS", "UI"]
+
     /// 写一条日志。线程安全，写失败静默（日志不能拖垮主流程）。
+    /// 日期格式器只建一次（每次 new DateFormatter 在主线程上是毫秒级开销）
+    private static let df: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MM-dd HH:mm:ss.SSS"
+        return f
+    }()
+
+    /// 复用文件句柄：每次 open/close 比写好几百字节本身贵得多
+    private static var handle: FileHandle?
+    private static var handlePath: String?
+
     static func write(_ tag: String, _ message: String) {
         lock.lock()
         defer { lock.unlock() }
-        let df = DateFormatter()
-        df.dateFormat = "MM-dd HH:mm:ss.SSS"
         let line = "[\(df.string(from: Date()))][\(tag)] \(message)\n"
         guard let data = line.data(using: .utf8) else { return }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = currentFile
-        if let h = try? FileHandle(forWritingTo: file) {
-            defer { try? h.close() }
-            do {
-                try h.seekToEnd()
-                try h.write(contentsOf: data)
-                try h.synchronize()
-            } catch {
-                return
+
+        // 跨天换文件：路径变了就重开句柄
+        if handle == nil || handlePath != file.path {
+            try? handle?.close()
+            if !FileManager.default.fileExists(atPath: file.path) {
+                FileManager.default.createFile(atPath: file.path, contents: nil)
             }
-        } else {
-            try? data.write(to: file)
-            if let h = try? FileHandle(forWritingTo: file) {
-                defer { try? h.close() }
-                try? h.synchronize()
-            }
+            handle = try? FileHandle(forWritingTo: file)
+            handlePath = file.path
+            try? handle?.seekToEnd()
         }
+        guard let h = handle else { return }
+        try? h.write(contentsOf: data)
+
+        // 只对「关键事件」fsync：崩溃后要保住的那几条。高频标签不同步，避免拖慢主线程。
+        if !highFrequencyTags.contains(tag) {
+            try? h.synchronize()
+        }
+    }
+
+    /// 进程退出前调用一次，把缓冲刷盘
+    static func flush() {
+        lock.lock(); defer { lock.unlock() }
+        try? handle?.synchronize()
     }
 
     /// 便捷：记录一次播放失败（带上下文，出问题时一眼看出是哪本书哪一集）

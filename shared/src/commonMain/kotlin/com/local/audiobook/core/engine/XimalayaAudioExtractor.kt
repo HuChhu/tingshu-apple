@@ -33,7 +33,7 @@ class XimalayaAudioExtractor(
         // 注意：这里只对「输入本身像页面 URL」的情况尝试，纯数字 trackId 直接走官方接口
         val looksLikePage = url.startsWith("http") && !url.all { ch -> ch.isDigit() }
         if (looksLikePage) {
-            runCatching {
+            try {
                 val hit = MultistepAudioExtractor.extract(
                     raw = url,
                     bodyFetcher = { target ->
@@ -44,8 +44,11 @@ class XimalayaAudioExtractor(
                 if (hit.level != MultistepAudioExtractor.Level.Direct) {
                     return ExtractedAudio(hit.url, hit.headers, 0L)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e   // 协程取消必须透传，否则切源/退出时旧请求继续跑满超时
+            } catch (e: Throwable) {
+                // 提取器失败不致命：继续走官方接口
             }
-            // 提取器失败不致命：继续走官方接口
         }
         // trackId 解析统一走 XimalayaLinkParser（/sound/{id}、?trackId=）；
         // 纯数字输入按本 API 的约定解释为 trackId（extract 是 track 作用域，LinkParser 的纯数字=albumId 语义不变）

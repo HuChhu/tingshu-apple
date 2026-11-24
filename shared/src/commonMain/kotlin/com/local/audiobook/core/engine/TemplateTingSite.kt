@@ -161,7 +161,8 @@ class TemplateTingSite(
             val href = hrefRe.find(attrs)?.groupValues?.get(1) ?: continue
             val idm = idRe.find(href) ?: continue
             val id = idm.groupValues.getOrNull(1)?.takeIf { it.isNotEmpty() } ?: continue
-            if (out.containsKey(id)) continue
+            // 同一 id 可能被多个锚点命中：先到的常是封面锚点（没 title，文本是评分 0.0），
+            // 后到的才是标题锚点。这里不跳过，改成「更优则覆盖」，见下方 out[id] = ...
 
             val afterIdx = m.range.last + 1
             val endA = html.indexOf("</a>", afterIdx)
@@ -181,6 +182,14 @@ class TemplateTingSite(
             val tail2 = html.substring(afterIdx, minOf(html.length, afterIdx + 500))
             val cover = coverRe.find(tail2)?.groupValues?.get(1)?.let { toAbs(it) } ?: ""
 
+            // 取优：已有条目的话，只有当新标题更可信（长度更长、且旧标题像评分/纯数字）才覆盖。
+            // 判据来自实测：ting954 的封面锚点文本是 "0.0"，标题锚点是真书名。
+            val existing = out[id]
+            if (existing != null) {
+                // 旧标题像评分/纯数字（如 "0.0"）→ 允许被真书名覆盖；否则保持先到的
+                val oldLikelyBad = existing.title.count { it.isDigit() || it == '.' } >= existing.title.length - 1
+                if (!oldLikelyBad || title.length <= existing.title.length) continue
+            }
             out[id] = Book(
                 sourceId = sourceId,
                 bookUrl = toAbs(href),

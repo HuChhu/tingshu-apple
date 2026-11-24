@@ -88,7 +88,7 @@ object AggregateSearch {
             async {
                 val t0 = clock()
                 val outcome = withTimeoutOrNull(perTimeoutMs) {
-                    runCatching { ch.run(keyword, page) }
+                    try { Result.success(ch.run(keyword, page)) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { Result.failure(e) }
                 }
                 val elapsed = clock() - t0
                 when {

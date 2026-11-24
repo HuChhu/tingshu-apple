@@ -46,17 +46,48 @@ class TingshuApp(
     /** 搜索。返回 SearchResult；失败时 books 空 + source="error" + hint 带原因。 */
     suspend fun search(keywords: String, page: Int): SearchResult = try {
         engine.search(keywords, page)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: SourceErrors) {
         SearchResult(books = emptyList(), maxPage = 0, source = "error", page = page, hint = describe(e))
+    } catch (e: Throwable) {
+        SearchResult(books = emptyList(), maxPage = 0, source = "error", page = page,
+            hint = "搜索异常：" + (e.message ?: e::class.simpleName ?: "未知"))
     }
 
-    /** 专辑详情 + 曲目。失败抛 SourceErrors（Swift 侧按 NSError 接）。 */
-    suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean = true, loadFullPages: Boolean = false): BookDetail =
-        engine.bookDetail(bookUrl, loadEpisodes, loadFullPages)
+    /**
+     * 专辑详情 + 曲目。
+     * 【P0 修复 2026-11-24】原来这里直接 throw SourceErrors 给 Swift。
+     * 但 K/N 头文件明确「Other uncaught Kotlin exceptions are fatal」——
+     * 只要抛出的是非 SourceErrors（比如 NPE、IllegalState、解析异常），
+     * Swift 侧接不到，进程直接 abort，表现为"点播放闪退"。
+     * 现在统一返回 BookDetailResult：detail 为 null 时 reason 一定非空。
+     */
+    suspend fun bookDetailSafe(bookUrl: String, loadEpisodes: Boolean = true, loadFullPages: Boolean = false): BookDetailResult =
+        try {
+            BookDetailResult(detail = engine.bookDetail(bookUrl, loadEpisodes, loadFullPages), reason = null)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: SourceErrors) {
+            BookDetailResult(detail = null, reason = describe(e))
+        } catch (e: Throwable) {
+            BookDetailResult(detail = null, reason = "详情解析失败：" + (e.message ?: e::class.simpleName ?: "未知"))
+        }
 
-    /** 取播放地址（级1→级3 提取链）。失败抛 SourceErrors。 */
-    suspend fun extract(url: String, timeoutMs: Int = 15_000): ExtractedAudio =
-        engine.audioExtractor().extract(url, timeoutMs)
+    /**
+     * 取播放地址。
+     * 同样改成不抛：失败返回 AudioResult(audio = null, reason = ...)。
+     */
+    suspend fun extractSafe(url: String, timeoutMs: Int = 15_000): AudioResult =
+        try {
+            AudioResult(audio = engine.audioExtractor().extract(url, timeoutMs), reason = null)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: SourceErrors) {
+            AudioResult(audio = null, reason = describe(e))
+        } catch (e: Throwable) {
+            AudioResult(audio = null, reason = "解析地址失败：" + (e.message ?: e::class.simpleName ?: "未知"))
+        }
 
     // ---------- 免登录源（不需要登录，直接可用） ----------
 
@@ -88,20 +119,38 @@ class TingshuApp(
         SearchResult(books = emptyList(), maxPage = 0, source = "error", page = page, hint = describe(e))
     }
 
-    /** 免登录源详情。 */
-    suspend fun detailBySource(sourceId: String, bookUrl: String, loadEpisodes: Boolean = true): BookDetail =
-        when (sourceId) {
-            "kuwo" -> kuwo.bookDetail(bookUrl, loadEpisodes, false)
-            "ximalaya-open" -> xmOpen.bookDetail(bookUrl, loadEpisodes, false)
-            else -> engine.bookDetail(bookUrl, loadEpisodes, false)
+    /** 免登录源详情（不抛版本）。 */
+    suspend fun detailBySourceSafe(sourceId: String, bookUrl: String, loadEpisodes: Boolean = true): BookDetailResult =
+        try {
+            val d = when (sourceId) {
+                "kuwo" -> kuwo.bookDetail(bookUrl, loadEpisodes, false)
+                "ximalaya-open" -> xmOpen.bookDetail(bookUrl, loadEpisodes, false)
+                else -> engine.bookDetail(bookUrl, loadEpisodes, false)
+            }
+            BookDetailResult(detail = d, reason = null)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: SourceErrors) {
+            BookDetailResult(detail = null, reason = describe(e))
+        } catch (e: Throwable) {
+            BookDetailResult(detail = null, reason = "详情解析失败：" + (e.message ?: e::class.simpleName ?: "未知"))
         }
 
-    /** 免登录源取播放地址。 */
-    suspend fun audioBySource(sourceId: String, url: String): ExtractedAudio =
-        when (sourceId) {
-            "kuwo" -> kuwo.audioExtractor().extract(url)
-            "ximalaya-open" -> xmOpen.audioExtractor().extract(url)
-            else -> engine.audioExtractor().extract(url)
+    /** 免登录源取播放地址（不抛版本）。 */
+    suspend fun audioBySourceSafe(sourceId: String, url: String): AudioResult =
+        try {
+            val a = when (sourceId) {
+                "kuwo" -> kuwo.audioExtractor().extract(url)
+                "ximalaya-open" -> xmOpen.audioExtractor().extract(url)
+                else -> engine.audioExtractor().extract(url)
+            }
+            AudioResult(audio = a, reason = null)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: SourceErrors) {
+            AudioResult(audio = null, reason = describe(e))
+        } catch (e: Throwable) {
+            AudioResult(audio = null, reason = "解析地址失败：" + (e.message ?: e::class.simpleName ?: "未知"))
         }
 
     /** 解析专辑 ID（/album/{id}、?albumId=、纯数字 ≥4 位）。 */

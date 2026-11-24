@@ -599,7 +599,8 @@ final class Player: NSObject, ObservableObject {
         }
         detachItem()
         queue.removeAllItems()
-        installTimeObserver()
+        // 实例级 observer 只在 init 装一次（无 item 时兜底显示）。
+        // 每次起播都重装会导致两层 observer 并存：每秒双写进度、skipOutro 判定分裂。
         queue.insert(item, after: nil)
         attachItem(item)
         installItemTimeObserver()
@@ -667,7 +668,8 @@ final class Player: NSObject, ObservableObject {
         // 关键：先摘旧 item 的全部观察，再换；队列若被清空过，实例秒表要重装
         detachItem()
         queue.removeAllItems()
-        installTimeObserver()
+        // 实例级 observer 只在 init 装一次（无 item 时兜底显示）。
+        // 每次起播都重装会导致两层 observer 并存：每秒双写进度、skipOutro 判定分裂。
         queue.insert(item, after: nil)
         attachItem(item)
         installItemTimeObserver()
@@ -1024,7 +1026,7 @@ final class Player: NSObject, ObservableObject {
     private func resetPipeline() {
         detachItem()
         queue.removeAllItems()
-        installTimeObserver()
+        // 不重装实例级 observer（init 已装且从未移除）
     }
 
     private func saveProgress(force: Bool) {

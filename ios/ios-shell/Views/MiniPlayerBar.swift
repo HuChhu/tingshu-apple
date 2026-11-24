@@ -96,9 +96,12 @@ struct MiniPlayerBar: View {
                     .allowsHitTesting(false)
                 }
                 .padding(.horizontal, Layout.miniBarSideMargin)
-                .padding(.bottom, Layout.miniBarGap + UIApplication.shared.safeAreaInsetBottom)
-                // 让开 TabBar：用实际量到的 tab bar 高度，不再写死 49
-                .offset(y: -UIApplication.shared.tabBarHeight)
+                // 让开 TabBar 的唯一来源：tab.bounds.height（49）+ safeAreaInsets.bottom。
+                // 注意 tab.bounds 不含安全区，所以这里只加一次 safeArea；
+                // 同时用 offset + safeAreaInsetBottom 会把安全区算两遍，迷你条被顶到屏幕中间。
+                .padding(.bottom, UIApplication.shared.tabBarHeight
+                          + UIApplication.shared.safeAreaInsetBottom
+                          + Layout.miniBarGap)
                 .contentShape(Rectangle())
                 .onTapGesture { player.showFullScreen = true }
                 .accessibilityAddTraits(.isButton)

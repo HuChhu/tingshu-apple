@@ -180,8 +180,12 @@ enum LocalStore {
         if hay.contains("126.net") || hay.contains("163.com") { return "netease" }
         if hay.contains("bilibili") || hay.contains("bilivideo") { return "bilibili" }
         if hay.contains("qtfm.cn") || hay.contains("qingting") { return "qingting" }
-        // 模板站的 bookUrl 是普通网页地址（http://xxx.com/ting/123.html），
-        // 喜马拉雅的是 /album/{id} 或 ximalaya.com —— 命中这些就保持原值。
+        // 模板站：bookUrl 是普通网页地址（http://xxx.com/ting/123.html）。
+        // 喜马拉雅是 /album/{id} 或 ximalaya.com —— 命中这些就保持原值。
+        if hay.contains("ximalaya") || hay.contains("/album/") { return current }
+        // 普通网页地址（模板站）：bookUrl 既不是 /album/ 也不含 ximalaya。
+        // 但模板站的 key 是站名（qmtsw / ting954…），不是域名，无法从 URL 反查，
+        // 所以保持原值不动 —— 上层取不到详情时会给出准确文案，而不是静默播错书。
         return current
     }
 

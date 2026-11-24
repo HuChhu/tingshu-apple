@@ -406,17 +406,17 @@ enum SharedBridge {
                 return ("open", cards, nil)
             }
 
-            // 硬上限：到点不管还有几路没回，直接用已合并的结果
-            let deadline = Task {
-                try? await Task.sleep(nanoseconds: UInt64(searchTimeoutSeconds * 1_000_000_000))
-                group.cancelAll()
-            }
+            // 硬上限：到点不管还有几路没回，直接用已合并的结果。
+            // 注意：不能在子 Task 里捕获 group（它是 inout 参数，逃逸闭包捕获会编译失败），
+            // 所以改成「循环里自己数时间」，超时就 break，剩下交给 cancelAll。
+            let startedAt = Date()
             for await (path, cards, why) in group {
                 box.add(cards)
                 if let why { box.note(path + "：" + why) }
                 if !cards.isEmpty, let onPartial { onPartial(box.cards) }   // 早返回：先到的先渲染
+                if Date().timeIntervalSince(startedAt) >= searchTimeoutSeconds { break }
             }
-            deadline.cancel()
+            group.cancelAll()
         }
         lastWebSearchError = box.cards.isEmpty ? box.reason : nil
         return box.cards

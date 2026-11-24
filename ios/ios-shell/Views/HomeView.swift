@@ -10,8 +10,17 @@ struct HomeView: View {
     @State private var recent: [LocalStore.Recent] = []
     @State private var sections: [FeedSection] = []
     @State private var loading = true
+    /// 只有「所有的分区都失败」才用整页错误；单个分区失败只在自己那块显示
     @State private var errorText: String?
     @State private var generation = 0
+    /// 迷你条是否占位：底部留白要按它算，别永远写死 90pt
+    @ObservedObject private var player = Player.shared
+    /// 点「继续收听」卡 → 推专辑详情。
+    /// 用 isPresented 而不是 item: BookCard —— BookCard 不是 Hashable，
+    /// navigationDestination(item:) 要求 Identifiable & Hashable，编译不过。
+    @State private var showAlbum = false
+    @State private var pushAlbum: SharedBridge.BookCard?
+    @State private var pushSourceId: String = ""
 
     struct FeedSection: Identifiable {
         let id: String
@@ -20,30 +29,48 @@ struct HomeView: View {
         let books: [SharedBridge.BookCard]
     }
 
+    /// 一个分区在请求过程中的三种结局（方案 §3.1：分区级空态/错误，不拖垮整页）
+    private enum FeedState {
+        case loaded([SharedBridge.BookCard])
+        case empty
+        case failed(String)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 22) {
-                    // 继续收听
+                LazyVStack(alignment: .leading, spacing: Layout.sectionSpacing) {
+                    // 继续收听（没有播放记录时整块不出现，不会崩：recent.first 为 nil 直接跳过）
                     if let r = recent.first {
                         continueCard(r)
                     }
 
-                    if loading {
+                    if loading && sections.isEmpty {
                         skeleton
-                    } else if let errorText {
-                        unit(title: "没能加载推荐", detail: errorText)
+                    } else if let errorText, sections.isEmpty {
+                        unit(title: "没能加载推荐", detail: errorText, showRetry: true)
+                    } else if sections.isEmpty {
+                        unit(title: "暂时没有推荐", detail: "下拉刷新试试，或去「分类」按书源找书")
                     } else {
                         ForEach(sections) { sec in
                             sectionView(sec)
                         }
                     }
 
-                    Color.clear.frame(height: 90)   // 给迷你播放条留位
+                    // 底部留白按迷你条是否出现动态算（原来固定 90pt，
+                    // 迷你条隐藏时首页底部永远多一块空白）
+                    Color.clear.frame(height: Layout.bottomInset(
+                        miniBarVisible: !player.nowPlaying.isEmpty && player.state != .stopped,
+                        safeArea: 0))
                 }
                 .padding(.top, 8)
             }
             .navigationTitle("发现")
+            .navigationDestination(isPresented: $showAlbum) {
+                if let card = pushAlbum {
+                    AlbumView(card: card, sourceId: pushSourceId)
+                }
+            }
             .refreshable { await load(force: true) }
             .task { await load(force: false) }
             .onAppear {
@@ -57,36 +84,69 @@ struct HomeView: View {
     // MARK: - 继续收听
 
     private func continueCard(_ r: LocalStore.Recent) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("继续收听").font(.headline)
+        VStack(alignment: .leading, spacing: Layout.titleGap) {
+            Text("继续收听").font(.headline).padding(.horizontal, Layout.hPadding)
             HStack(spacing: 12) {
                 AsyncImage(url: URL(string: r.coverUrl)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
-                    RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.15))
+                    RoundedRectangle(cornerRadius: Layout.radiusImage).fill(Layout.cardFill)
+                        .overlay(Image(systemName: "book.closed").foregroundStyle(.secondary))
                 }
-                .frame(width: 64, height: 64)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .frame(width: Layout.thumbContinue, height: Layout.thumbContinue)
+                .clipShape(RoundedRectangle(cornerRadius: Layout.radiusImage))
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(r.bookTitle).font(.subheadline).lineLimit(1)
                     Text(r.episodeTitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    // 进度：有记录就显示百分比，没有就不占位（不堆四个次要信息）
+                    if let p = LocalStore.progress(for: r.bookUrl), p.durationMs > 0 {
+                        ProgressView(value: p.fraction).tint(.accentColor)
+                            .padding(.top, 2)
+                        Text("已听 \(Int(p.fraction * 100))%")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    }
                 }
                 Spacer()
-                Image(systemName: "play.circle.fill")
-                    .font(.title2).foregroundStyle(Color.accentColor)
+                // 播放按钮独立热区，点它只续播、不展开（方案 §3.1-2）
+                Button {
+                    playRecent(r, openFullScreen: false)
+                } label: {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: 30))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: Layout.hitTarget, height: Layout.hitTarget)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("继续播放 \(r.episodeTitle)")
             }
             .padding(12)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Color.secondary.opacity(0.08)))
+            .background(RoundedRectangle(cornerRadius: Layout.radiusCard).fill(Layout.cardFill))
             .contentShape(Rectangle())
-            .onTapGesture {
-                Player.shared.playEpisode(LocalStore.recentEpisode(r),
-                                          book: LocalStore.recentBook(r),
-                                          sourceId: r.sourceId)
-                Player.shared.showFullScreen = true
-            }
+            // 点卡片其他区域 → 进专辑详情（原来这里直接开播，用户没法改成「看专辑」）
+            .onTapGesture { showAlbumForRecent(r) }
         }
-        .padding(.horizontal)
+        .padding(.horizontal, Layout.hPadding)
+    }
+
+    /// 首页最近记录 → 用统一入口播放（LocalStore.recentEpisode 已处理 episodeUrl 回退）
+    private func playRecent(_ r: LocalStore.Recent, openFullScreen: Bool) {
+        Player.shared.playEpisode(LocalStore.recentEpisode(r),
+                                  book: LocalStore.recentBook(r),
+                                  sourceId: r.sourceId)
+        if openFullScreen { Player.shared.showFullScreen = true }
+    }
+
+    /// 点继续听卡本身：进专辑详情（有 albumId 才推得动，否则直接播）
+    private func showAlbumForRecent(_ r: LocalStore.Recent) {
+        let card = LocalStore.recentBook(r)
+        if card.albumId > 0 || !r.bookUrl.isEmpty {
+            pushAlbum = card
+            pushSourceId = r.sourceId
+            showAlbum = true
+        } else {
+            playRecent(r, openFullScreen: true)
+        }
     }
 
     // MARK: - 推荐分区
@@ -188,47 +248,84 @@ struct HomeView: View {
 
     // MARK: - 数据
 
+    /// 首页分区配置：关键词 / 标题 / 副标题 / 每个分区最多显示几本
+    private struct FeedSpec {
+        let key: String
+        let title: String
+        let subtitle: String
+        let limit: Int
+    }
+
+    private static let specs: [FeedSpec] = [
+        FeedSpec(key: "有声书", title: "精选有声书", subtitle: "编辑推荐", limit: 10),
+        FeedSpec(key: "悬疑", title: "悬疑推理", subtitle: "听了上头", limit: 10),
+        FeedSpec(key: "历史", title: "历史人文", subtitle: "慢慢听", limit: 10),
+    ]
+
+    /// 三个分区并发拉，每个分区独立落地。
+    ///
+    /// 原来是一个 for 循环串行 await：三个热词各 6~9 秒，最坏 27 秒首屏才出第一张卡。
+    /// 现在用 withTaskGroup 并发，首屏等待 = 最慢那一路（约 9 秒上限）；
+    /// 某一路失败只在自己分区显示「重试」，不清空整页（方案 §3.1 加载策略）。
     private func load(force: Bool) async {
         guard force || sections.isEmpty else { return }
+        // 代际：刷新/重复进入时旧结果直接丢弃（原来 force 刷新只加 generation，不取消旧任务）
         generation += 1
         let gen = generation
-        await MainActor.run { loading = true; errorText = nil }
+        await MainActor.run {
+            loading = true
+            errorText = nil
+        }
 
-        // 首页推荐只用免登录源，避免首屏就撞登录校验
         let src = "ximalaya-open"
-        var out: [FeedSection] = []
+        let specs = Self.specs
 
-        // 三个常用热词各取一批，组成「猜你喜欢 / 热门 / 新书」
-        let feeds: [(String, String, String)] = [
-            ("抖音热播", "抖音热播合集", "全网热播"),
-            ("有声书", "精选有声书", "编辑推荐"),
-            ("悬疑", "悬疑推理", "听了上头"),
-        ]
-
-        for (kw, title, sub) in feeds {
-            if let r = await SharedBridge.search(sourceId: src, keywords: kw, page: 1) {
-                let books = SharedBridge.cards(from: r).map { card in
-                    SharedBridge.BookCard(bookUrl: card.bookUrl, title: card.title,
-                                          author: card.author, coverUrl: card.coverUrl,
-                                          albumId: card.albumId, trackCount: card.trackCount,
-                                          playCount: card.playCount, isFinished: card.isFinished)
-                }
-                if !books.isEmpty {
-                    out.append(FeedSection(id: kw, title: title, subtitle: sub, books: Array(books.prefix(20))))
+        let results: [(String, FeedState)] = await withTaskGroup(
+            of: (String, FeedState).self, returning: [(String, FeedState)].self
+        ) { group in
+            for spec in specs {
+                group.addTask {
+                    guard let r = await SharedBridge.search(sourceId: src, keywords: spec.key, page: 1) else {
+                        return (spec.key, .failed(SharedBridge.lastWebSearchError ?? "请求失败"))
+                    }
+                    let books = Array(SharedBridge.cards(from: r).prefix(spec.limit))
+                    if books.isEmpty {
+                        return (spec.key, .empty)
+                    }
+                    return (spec.key, .loaded(books))
                 }
             }
-            await MainActor.run {
-                guard gen == self.generation else { return }
-                self.sections = out
+            var acc: [(String, FeedState)] = []
+            for await item in group {
+                acc.append(item)
+            }
+            return acc
+        }
+
+        guard gen == generation else { return }
+
+        // 按 specs 的固定顺序组装，避免并发完成顺序导致分区跳动
+        var built: [FeedSection] = []
+        var firstError: String?
+        for spec in specs {
+            guard let hit = results.first(where: { $0.0 == spec.key }) else { continue }
+            switch hit.1 {
+            case .loaded(let books):
+                built.append(FeedSection(id: spec.key, title: spec.title,
+                                         subtitle: spec.subtitle, books: books))
+            case .empty:
+                continue    // 空分区直接不渲染，不留标题空壳
+            case .failed(let why):
+                if firstError == nil { firstError = why }
             }
         }
 
         await MainActor.run {
             guard gen == self.generation else { return }
+            sections = built
             loading = false
-            if out.isEmpty {
-                errorText = SharedBridge.lastWebSearchError ?? "推荐加载失败，下拉重试"
-            }
+            // 全空才用整页错误；有任何一个分区成功就不打扰用户
+            errorText = built.isEmpty ? (firstError ?? "推荐加载失败，下拉重试") : nil
         }
     }
 }

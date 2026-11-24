@@ -443,7 +443,9 @@ final class Player: NSObject, ObservableObject {
     ) {
         currentSourceId = sourceId
         // 关键：把整本集列表存进 currentEpisodes，否则自动连播/倒序永远拿不到"下一集"
-        if let list = episodes, !list.isEmpty { currentEpisodes = list }
+        // nil 也要清空：否则首页续播（不传 episodes）会沿用上一本书的列表，
+        // trackId 撞号时自动连播跳到完全不相关的书
+        currentEpisodes = episodes ?? []
         beginRequest(ep, book: book)
 
         let gen = requestGeneration
@@ -672,6 +674,9 @@ final class Player: NSObject, ObservableObject {
         queue.play()
         errorText = nil
         durationText = fmt(ep.durationMs)
+        // 【在线主路径】音量增益必须在这里应用。之前两轮误加到 startItemWithLocalFile，
+        // 导致网播（99% 场景）增益设置完全不生效。
+        applyVolumeGain()
         apply(.playing)
 
         // 续播：上次听到哪就从哪开始（超过 95% 视为听完，从头放）
@@ -773,6 +778,12 @@ final class Player: NSObject, ObservableObject {
         for t in itemNotificationTokens { n.removeObserver(t) }
         itemNotificationTokens.removeAll()
         removeItemTimeObserver()
+        // endObserver 是 NotificationCenter 的 playToEnd 监听，之前从未清理 →
+        // 长连播下 token 线性增长（每集一个），最终内存与回调开销都上去了
+        if let eo = endObserver {
+            NotificationCenter.default.removeObserver(eo)
+            endObserver = nil
+        }
         observedItem = nil
     }
 
@@ -966,7 +977,8 @@ final class Player: NSObject, ObservableObject {
     /// 补一个绑在 item 上的 ticker 兜底：同一 item 只装一次，detachItem 统一摘。
     private func installItemTimeObserver() {
         removeItemTimeObserver()
-        installTimeObserver()              // 实例 observer 若已被摘，这里补回
+        // 不再重复安装实例级 observer：item 级已经每秒回调，两层同时跑会双写进度
+        // （实例级只在没有 item 的等待期兜底，这里不需要）
         guard let item = observedItem else { return }
         // AVPlayerItem 没有 addPeriodicTimeObserver，只能向 AVPlayer 注册；
         // 用 observedItem 校验回调仍属于当前 item，换章后旧回调自动忽略。

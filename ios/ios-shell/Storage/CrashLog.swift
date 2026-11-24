@@ -24,10 +24,15 @@ enum CrashLog {
     /// 安装未捕获异常处理器。放在 App 启动最早处（AppDelegate/init 里）。
     static func installUncaughtHandler() {
         NSSetUncaughtExceptionHandler { exception in
+            // 崩溃路径绝对不能抢 NSLock：如果主线程正持锁写日志，这里会死锁，
+            // 最需要的那条崩溃栈反而丢失。用独立文件 + 无锁直写。
             let name = exception.name.rawValue
             let reason = exception.reason ?? "(no reason)"
             let stack = exception.callStackSymbols.joined(separator: "\n")
-            CrashLog.write("FATAL", "\(name): \(reason)\n\(stack)")
+            let text = "=== FATAL ===\n\(name): \(reason)\n\(stack)\n"
+            let f = dir.appendingPathComponent("fatal-\(Int(Date().timeIntervalSince1970)).log")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try? text.data(using: .utf8)?.write(to: f)
         }
     }
 

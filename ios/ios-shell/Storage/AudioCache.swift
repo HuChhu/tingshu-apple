@@ -162,4 +162,44 @@ enum AudioCache {
         guard FileManager.default.fileExists(atPath: rootDir.path) else { return }
         try? FileManager.default.removeItem(at: rootDir)
     }
+
+    // MARK: - 按专辑统计（「缓存管理」页）
+
+    /// 磁盘上一个专辑缓存目录的统计结果
+    struct DirStat {
+        let dirName: String      // stableName(bookUrl)
+        let bytes: Int64
+        let fileCount: Int
+        let oldest: Date         // 最旧文件的修改时间（给界面显示「缓存于 …」）
+    }
+
+    /// 列出所有专辑缓存目录（不解析书名，纯文件系统事实）。
+    /// 以前只有 totalBytes() 一个总数，用户不知道缓存了哪些书、也没法单删。
+    static func listDirs() -> [DirStat] {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: rootDir.path) else { return [] }
+        var out: [DirStat] = []
+        for name in names {
+            let d = rootDir.appendingPathComponent(name, isDirectory: true)
+            guard let files = try? FileManager.default.contentsOfDirectory(
+                at: d, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { continue }
+            var bytes: Int64 = 0
+            var oldest = Date()
+            var counted = 0
+            for f in files {
+                let v = try? f.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                guard let v = v else { continue }
+                bytes += Int64(v.fileSize ?? 0)
+                counted += 1
+                if let d = v.contentModificationDate, d < oldest { oldest = d }
+            }
+            if counted > 0 { out.append(DirStat(dirName: name, bytes: bytes, fileCount: counted, oldest: oldest)) }
+        }
+        return out.sorted { $0.bytes > $1.bytes }
+    }
+
+    /// 删掉一个专辑的缓存（按 stableName 删目录）
+    static func removeDir(named dirName: String) {
+        guard !dirName.isEmpty else { return }
+        try? FileManager.default.removeItem(at: rootDir.appendingPathComponent(dirName, isDirectory: true))
+    }
 }

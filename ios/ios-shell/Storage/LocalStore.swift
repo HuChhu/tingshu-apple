@@ -260,18 +260,60 @@ enum LocalStore {
 
     static func clearRecent() { UserDefaults.standard.removeObject(forKey: recentKey) }
 
-    /// 从最近记录还原一集（首页「继续收听」点击播放用）
+    /// 从最近记录还原「播放要用的那一集」。
+    /// P1-07：优先用记录的 episodeUrl（模板集的 trackId 是数字，当 URL 会 ParseFailed）；
+    /// 老记录没有 episodeUrl 时，登录版可以用纯数字 trackId，其余退到专辑页。
+    /// 以前这段判断在 ShelfView 里抄了一份、MineView/HomeView 直接用空 URL，
+    /// 结果「书架能续播、历史/首页点了没反应」——统一收到这里，Views 只调它。
     static func recentEpisode(_ r: Recent) -> SharedBridge.EpisodeRow {
-        SharedBridge.episodeRow(title: r.episodeTitle, trackId: r.trackId,
-                                index: 0, durationMs: 0,
-                                coverUrl: r.coverUrl, url: r.episodeUrl)
+        let input: String
+        if !r.episodeUrl.isEmpty {
+            input = r.episodeUrl
+        } else if r.sourceId == "ximalaya", r.trackId > 0 {
+            input = String(r.trackId)
+        } else {
+            input = r.bookUrl
+        }
+        return SharedBridge.episodeRow(title: r.episodeTitle, trackId: r.trackId,
+                                       index: 1, durationMs: 0,
+                                       coverUrl: r.coverUrl, url: input)
     }
 
-    /// 从最近记录还原书卡
+    /// 从最近记录还原书卡（封面与 albumId 都要带上，否则锁屏没有封面）
     static func recentBook(_ r: Recent) -> SharedBridge.BookCard {
         SharedBridge.BookCard(bookUrl: r.bookUrl, title: r.bookTitle, author: "",
                               coverUrl: r.coverUrl, albumId: SharedBridge.albumId(from: r.bookUrl),
                               trackCount: 0, playCount: 0, isFinished: nil)
+    }
+
+    // MARK: - 缓存目录统计（「缓存管理」页用）
+    //
+    // AudioCache 把文件按 bookUrl 哈希分目录存，目录名是哈希，界面上没法直接显示。
+    // 这里用收藏/最近/进度里记过的 bookUrl 反查哈希，能把目录还原成书名；
+    // 反查不到的（比如已取消收藏的书）归到「其他专辑」，仍可统计与删除。
+
+    struct CacheEntry: Identifiable {
+        let id: String          // 目录名（AudioCache.stableName）
+        let bookUrl: String     // 反查到的 bookUrl；反查不到时为空
+        let title: String
+        let bytes: Int64
+        let files: Int
+    }
+
+    /// 已知 bookUrl 的全集（收藏 + 最近播放 + 播放进度）
+    static func knownBookUrls() -> [(bookUrl: String, title: String)] {
+        var seen = Set<String>()
+        var out: [(String, String)] = []
+        for f in loadFavorites() where seen.insert(f.bookUrl).inserted {
+            out.append((f.bookUrl, f.title))
+        }
+        for r in loadRecent() where seen.insert(r.bookUrl).inserted {
+            out.append((r.bookUrl, r.bookTitle))
+        }
+        for (_, p) in loadProgress() where seen.insert(p.bookUrl).inserted {
+            out.append((p.bookUrl, p.title))
+        }
+        return out
     }
 
     // MARK: - 清理

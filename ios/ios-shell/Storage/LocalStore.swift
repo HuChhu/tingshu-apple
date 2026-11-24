@@ -35,6 +35,7 @@ enum LocalStore {
         var albumId: Int64 = 0
 
         var bookKey: BookKey { BookKey(sourceId: sourceId, albumId: albumId, bookUrl: bookUrl) }
+
         let title: String
         let trackId: Int64
         let episodeTitle: String
@@ -57,8 +58,20 @@ enum LocalStore {
             positionMs = try c.decode(Int64.self, forKey: .positionMs)
             durationMs = try c.decode(Int64.self, forKey: .durationMs)
             updatedAt = try c.decode(Date.self, forKey: .updatedAt)
-            sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? "ximalaya-open"
+            // 历史数据里的 sourceId 可能是：空串、历史 UUID（a6f3c1de-...）或短 id。
+            // 前两种都不是合法源 key，续播会直接取不到地址 —— 统一归一成 ximalaya-open。
+            let raw = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? ""
+            sourceId = Self.normalizeSourceId(raw)
             albumId = try c.decodeIfPresent(Int64.self, forKey: .albumId) ?? 0
+        }
+
+        /// 把历史上的脏 sourceId 归一成合法 key。
+        /// 只知道三种脏值：空串、UUID 形态（含 "-" 且长度 36）、以及未来可能的新名字。
+        static func normalizeSourceId(_ raw: String) -> String {
+            let s = raw.trimmingCharacters(in: .whitespaces)
+            if s.isEmpty { return "ximalaya-open" }
+            if s.count == 36, s.filter({ $0 == "-" }).count == 4 { return "ximalaya" }
+            return s
         }
 
         init(bookUrl: String, title: String, trackId: Int64, episodeTitle: String,

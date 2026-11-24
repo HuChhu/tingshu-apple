@@ -13,61 +13,57 @@ struct MineView: View {
     var body: some View {
         NavigationStack {
             List {
-                // 账号卡
+                // 账号卡：整块可点进「账号与通用」（方案 §3.6：不再额外加一行「账号设置」）
                 Section {
-                    HStack(spacing: 14) {
-                        Image(systemName: loggedIn ? "checkmark.seal.fill" : "person.crop.circle.badge.questionmark")
-                            .font(.system(size: 34))
-                            .foregroundStyle(loggedIn ? Color.green : Color.secondary)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(loggedIn ? "已登录喜马拉雅" : "未登录")
-                                .font(.headline)
-                            Text(loggedIn ? "可听会员内容" : "登录后可听会员专辑")
-                                .font(.caption).foregroundStyle(.secondary)
+                    // 账号卡即「账号与通用」入口
+                    NavigationLink {
+                        SettingsView()
+                    } label: {
+                        HStack(spacing: 14) {
+                            Image(systemName: loggedIn ? "checkmark.seal.fill" : "person.crop.circle.badge.questionmark")
+                                .font(.system(size: 30))
+                                .foregroundStyle(loggedIn ? Color.green : Color.secondary)
+                                .frame(width: 36)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(loggedIn ? "已登录喜马拉雅" : "未登录")
+                                    .font(.headline)
+                                Text(loggedIn ? "可听会员内容" : "登录后可听会员专辑")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
                         }
-                        Spacer()
-                    }
-                    .padding(.vertical, 6)
-                }
-
-                Section("内容") {
-                    NavigationLink {
-                        FavoritesPage()
-                    } label: {
-                        Label("我的收藏", systemImage: "heart")
-                            .badge(favCount)
-                    }
-                    NavigationLink {
-                        HistoryPage()
-                    } label: {
-                        Label("播放历史", systemImage: "clock.arrow.circlepath")
-                    }
-                    NavigationLink {
-                        DownloadsPage()
-                    } label: {
-                        Label("下载管理", systemImage: "arrow.down.circle")
+                        .padding(.vertical, 4)
                     }
                 }
 
-                Section("设置") {
+                // 内容与服务（方案 §3.6：首屏最多 5 个入口；收藏/历史已在书架，这里不重复）
+                Section("内容与服务") {
                     NavigationLink {
                         SourcesView()
                     } label: {
                         Label("书源管理", systemImage: "antenna.radiowaves.left.and.right")
                     }
                     NavigationLink {
+                        CachePage()
+                    } label: {
+                        HStack {
+                            Label("缓存管理", systemImage: "internaldrive")
+                            Spacer()
+                            Text(byteText(cacheBytes)).foregroundStyle(.secondary).font(.caption)
+                        }
+                    }
+                }
+
+                // 「账号与通用」不在这里重复：账号卡本身已经是指向它的 NavigationLink，
+                // 再加一行就是两个入口通同一个页面（方案 §3.6：账号卡本身可点击，不再额外加行）
+                Section("偏好") {
+                    NavigationLink {
                         PlaybackSettingsPage()
                     } label: {
                         Label("播放设置", systemImage: "slider.horizontal.3")
                     }
-                    NavigationLink {
-                        SettingsView()
-                    } label: {
-                        Label("账号与通用", systemImage: "gearshape")
-                    }
                 }
 
-                Section("诊断") {
+                Section {
                     NavigationLink {
                         LogViewerPage()
                     } label: {
@@ -77,18 +73,11 @@ struct MineView: View {
                             Text(byteText(logBytes)).foregroundStyle(.secondary).font(.caption)
                         }
                     }
-                    Text("闪退或播放出错时，把这里的日志发给我能精确定位。")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-
-                Section {
-                    HStack {
-                        Text("缓存占用")
-                        Spacer()
-                        Text(byteText(cacheBytes)).foregroundStyle(.secondary)
-                    }
+                } header: {
+                    Text("支持")
                 } footer: {
-                    Text("版本 \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
+                    Text("闪退或播放出错时导出日志；分享前请检查隐私信息。")
+                        .font(.caption2)
                 }
             }
             .navigationTitle("我的")
@@ -97,6 +86,9 @@ struct MineView: View {
                 cacheBytes = AudioCache.totalBytes()
                 logBytes = CrashLog.totalBytes
                 favCount = LocalStore.loadFavorites().count
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .audioCacheCleared)) { _ in
+                cacheBytes = AudioCache.totalBytes()
             }
         }
     }
@@ -115,8 +107,15 @@ struct FavoritesPage: View {
     var body: some View {
         Group {
             if items.isEmpty {
-                ContentUnavailableView("还没有收藏", systemImage: "heart",
-                                       description: Text("在专辑详情页右上角点心形收藏"))
+                // 空态给明确去向（方案 §3.3：空态按钮有明确去向）
+                ContentUnavailableView {
+                    Label("还没有收藏", systemImage: "heart")
+                } description: {
+                    Text("在专辑详情页右上角点心形收藏")
+                } actions: {
+                    NavigationLink("去分类找书") { CategoryView() }
+                        .buttonStyle(.borderedProminent)
+                }
             } else {
                 List(items) { f in
                     NavigationLink {
@@ -132,8 +131,8 @@ struct FavoritesPage: View {
                             } placeholder: {
                                 RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.15))
                             }
-                            .frame(width: 48, height: 48)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .frame(width: Layout.thumbRow, height: Layout.thumbRow)
+                            .clipShape(RoundedRectangle(cornerRadius: Layout.radiusThumb))
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(f.title).font(.body).lineLimit(2)
                                 Text(f.author).font(.caption).foregroundStyle(.secondary)
@@ -158,34 +157,166 @@ struct HistoryPage: View {
                 ContentUnavailableView("还没有播放记录", systemImage: "clock",
                                        description: Text("点一集开始播放就会记录"))
             } else {
-                List(items) { r in
-                    Button {
-                        let ep = LocalStore.recentEpisode(r)
-                        Player.shared.playEpisode(ep, book: LocalStore.recentBook(r), sourceId: r.sourceId)
-                        Player.shared.showFullScreen = true
-                    } label: {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(r.bookTitle).font(.body).lineLimit(1)
-                            Text(r.episodeTitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            Text(r.playedAt.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption2).foregroundStyle(.tertiary)
+                List {
+                    ForEach(items) { r in
+                        HStack(spacing: 12) {
+                            Button {
+                                play(r)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(r.bookTitle).font(.body).lineLimit(1)
+                                    Text(r.episodeTitle).font(.subheadline).lineLimit(1)
+                                    Text(r.playedAt.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.caption2).foregroundStyle(.tertiary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            // 右侧独立播放按钮：热区 44pt，和整行点击同一个动作
+                            Button {
+                                play(r)
+                            } label: {
+                                Image(systemName: "play.circle")
+                                    .font(.title3)
+                                    .foregroundStyle(Color.accentColor)
+                                    .frame(width: Layout.hitTarget, height: Layout.hitTarget)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("续播 \(r.episodeTitle)")
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                LocalStore.removeRecent(id: r.id)
+                                items = LocalStore.loadRecent()
+                            } label: { Label("删除", systemImage: "trash") }
                         }
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
         .navigationTitle("播放历史")
         .onAppear { items = LocalStore.loadRecent() }
     }
+
+    /// 续播：还原一集交给播放器，再展开全屏页。
+    /// 以前这里直接用 LocalStore.recentEpisode，但老记录 episodeUrl 为空时
+    /// url 是空的 → 引擎拿到空地址直接失败，表现为「点了没反应」。
+    /// 现在 recentEpisode 内部已做 episodeUrl → trackId → bookUrl 回退。
+    private func play(_ r: LocalStore.Recent) {
+        Player.shared.playEpisode(LocalStore.recentEpisode(r),
+                                  book: LocalStore.recentBook(r),
+                                  sourceId: r.sourceId)
+        Player.shared.showFullScreen = true
+    }
 }
 
-/// 下载管理（占位，后续接 AudioCache 列表）
-struct DownloadsPage: View {
+/// 缓存管理（原「下载管理」占位页）。
+/// 之前标题写「下载管理」但只有一句自动缓存说明 —— 等于展示了一个不存在的能力。
+/// 现在按方案 §3.6 诚实命名为「缓存管理」：列真实目录大小、可单删、可全清。
+struct CachePage: View {
+    @State private var entries: [LocalStore.CacheEntry] = []
+    @State private var total: Int64 = 0
+    @State private var autoCacheNext = AudioCache.loadSettings().autoCacheNext
+    @State private var maxPerBook = AudioCache.loadSettings().maxEpisodesPerBook
+    @State private var confirmClearAll = false
+
     var body: some View {
-        ContentUnavailableView("下载管理", systemImage: "arrow.down.circle",
-                               description: Text("边听边缓存已开启时会自动保存最近 3 集。"))
-            .navigationTitle("下载管理")
+        List {
+            Section {
+                LabeledContent("已用空间", value: AudioCache.humanSize(total))
+                if entries.isEmpty {
+                    Text("还没有缓存音频。播放时开启「自动缓存」会把接下来几集存到本机。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("总览")
+            }
+
+            if !entries.isEmpty {
+                Section("按专辑") {
+                    ForEach(entries) { e in
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(e.title).font(.body).lineLimit(1)
+                                Text("\(e.files) 个文件").font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(AudioCache.humanSize(e.bytes))
+                                .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                AudioCache.removeDir(named: e.id)
+                                reload()
+                            } label: { Label("删除", systemImage: "trash") }
+                        }
+                    }
+                }
+            }
+
+            Section("自动缓存") {
+                Toggle("播放时缓存后续章节", isOn: $autoCacheNext)
+                    .onChange(of: autoCacheNext) { _, v in
+                        var s = AudioCache.loadSettings(); s.autoCacheNext = v; AudioCache.saveSettings(s)
+                    }
+                Stepper("每本书最多 \(maxPerBook) 集", value: $maxPerBook, in: 1...50)
+                    .onChange(of: maxPerBook) { _, v in
+                        var s = AudioCache.loadSettings(); s.maxEpisodesPerBook = v; AudioCache.saveSettings(s)
+                    }
+                Text("新建缓存按这里设置清理，已有缓存下次播放时再按新值收敛。")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+
+            Section {
+                Button("清除所有缓存", role: .destructive) { confirmClearAll = true }
+                    .disabled(total == 0)
+            } footer: {
+                Text("清除后不影响收藏与播放进度，下次播放会重新下载。")
+                    .font(.caption2)
+            }
+        }
+        .navigationTitle("缓存管理")
+        .onAppear { reload() }
+        .confirmationDialog("清除所有音频缓存？", isPresented: $confirmClearAll, titleVisibility: .visible) {
+            Button("清除", role: .destructive) {
+                AudioCache.clearAll()
+                NotificationCenter.default.post(name: .audioCacheCleared, object: nil)
+                reload()
+            }
+            Button("取消", role: .cancel) {}
+        }
+    }
+
+    /// 把磁盘目录还原成「书名」：目录名是 hash，用收藏/最近/进度里记过的 bookUrl 反查
+    private func reload() {
+        let known = LocalStore.knownBookUrls()
+        var byName: [String: (bookUrl: String, title: String)] = [:]
+        for k in known {
+            byName[AudioCache.stableName(k.bookUrl)] = (k.bookUrl, k.title)
+        }
+        var out: [LocalStore.CacheEntry] = []
+        var sum: Int64 = 0
+        for d in AudioCache.listDirs() {
+            let hit = byName[d.dirName]
+            // 反查不到书名的目录也要列出来（否则用户看着总占用和列表对不上）
+            if hit == nil {
+                CrashLog.write("CACHE", "orphan dir=\(d.dirName) bytes=\(d.bytes)")
+            }
+            out.append(LocalStore.CacheEntry(
+                id: d.dirName,
+                bookUrl: hit?.bookUrl ?? "",
+                title: hit?.title ?? "其他专辑",
+                bytes: d.bytes,
+                files: d.fileCount))
+            sum += d.bytes
+        }
+        entries = out.sorted { $0.bytes > $1.bytes }
+        total = sum
+        let s = AudioCache.loadSettings()
+        autoCacheNext = s.autoCacheNext
+        maxPerBook = s.maxEpisodesPerBook
     }
 }
 

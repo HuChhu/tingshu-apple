@@ -152,16 +152,16 @@ struct HomeView: View {
     // MARK: - 推荐分区
 
     private func sectionView(_ sec: FeedSection) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: Layout.titleGap) {
             HStack(alignment: .firstTextBaseline) {
                 Text(sec.title).font(.headline)
                 Text(sec.subtitle).font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
-            .padding(.horizontal)
+            .padding(.horizontal, Layout.hPadding)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
+                LazyHStack(spacing: Layout.cardSpacing) {
                     ForEach(sec.books, id: \.bookUrl) { card in
                         NavigationLink {
                             AlbumView(card: card, sourceId: sharedBridgeSource)
@@ -171,7 +171,7 @@ struct HomeView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal)
+                .padding(.horizontal, Layout.hPadding)
             }
         }
     }
@@ -182,21 +182,22 @@ struct HomeView: View {
             AsyncImage(url: URL(string: c.coverUrl)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.secondary.opacity(0.15))
+                RoundedRectangle(cornerRadius: Layout.radiusImage)
+                    .fill(Layout.cardFill)
                     .overlay(Image(systemName: "book.closed").foregroundStyle(.secondary))
             }
-            .frame(width: 116, height: 116)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .frame(width: Layout.thumbCard, height: Layout.thumbCard)
+            .clipShape(RoundedRectangle(cornerRadius: Layout.radiusImage))
 
-            Text(c.title).font(.caption).lineLimit(2)
-                .frame(width: 116, alignment: .leading)
+            Text(c.title).font(.caption).foregroundStyle(.primary).lineLimit(2)
+                .frame(width: Layout.thumbCard, alignment: .leading)
             Text(c.author.isEmpty ? " " : c.author)
                 .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                .frame(width: 116, alignment: .leading)
+                .frame(width: Layout.thumbCard, alignment: .leading)
             if c.playCount > 0 {
                 Text(fmtCount(c.playCount) + " 播放")
                     .font(.caption2).foregroundStyle(.tertiary)
+                    .frame(width: Layout.thumbCard, alignment: .leading)
             }
         }
     }
@@ -209,32 +210,47 @@ struct HomeView: View {
 
     // MARK: - 骨架屏
 
+    /// 骨架屏：形状/间距/底色全部走 Layout，三个分区一个样式
     private var skeleton: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: Layout.sectionSpacing) {
             ForEach(0..<3, id: \.self) { _ in
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: Layout.titleGap) {
                     RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.secondary.opacity(0.12))
+                        .fill(Layout.skeletonFill)
                         .frame(width: 100, height: 16)
-                        .padding(.horizontal)
-                    HStack(spacing: 12) {
+                        .padding(.horizontal, Layout.hPadding)
+                    HStack(spacing: Layout.cardSpacing) {
                         ForEach(0..<4, id: \.self) { _ in
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.secondary.opacity(0.10))
-                                .frame(width: 116, height: 116)
+                            RoundedRectangle(cornerRadius: Layout.radiusImage)
+                                .fill(Layout.skeletonFill)
+                                .frame(width: Layout.thumbCard, height: Layout.thumbCard)
                         }
                     }
-                    .padding(.horizontal)
+                    .padding(.horizontal, Layout.hPadding)
                 }
             }
         }
+        .accessibilityLabel("正在加载推荐")
     }
 
-    private func unit(title: String, detail: String) -> some View {
-        VStack(spacing: 8) {
-            Image(systemName: "wifi.exclamationmark").font(.system(size: 32)).foregroundStyle(.secondary)
+    /// 整页空/错态。showRetry=true 时带重试按钮（原来失败只能靠下拉，没有明确入口）
+    private func unit(title: String, detail: String, showRetry: Bool = false) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "books.vertical").font(.system(size: 32)).foregroundStyle(.secondary)
             Text(title).font(.subheadline)
-            Text(detail).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Text(detail).font(.caption).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, Layout.hPadding)
+            if showRetry {
+                Button {
+                    Task { await load(force: true) }
+                } label: {
+                    Label("重新加载", systemImage: "arrow.clockwise")
+                        .font(.footnote)
+                }
+                .buttonStyle(.bordered)
+                .disabled(loading)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)

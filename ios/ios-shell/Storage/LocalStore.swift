@@ -260,6 +260,13 @@ enum LocalStore {
 
     static func clearRecent() { UserDefaults.standard.removeObject(forKey: recentKey) }
 
+    /// 删一条最近记录（历史页左滑删除）。id 是 bookUrl#trackId，与 pushRecent 去重口径一致。
+    static func removeRecent(id: String) {
+        var list = loadRecent()
+        list.removeAll { $0.id == id }
+        persist(list, recentKey)
+    }
+
     /// 从最近记录还原「播放要用的那一集」。
     /// P1-07：优先用记录的 episodeUrl（模板集的 trackId 是数字，当 URL 会 ParseFailed）；
     /// 老记录没有 episodeUrl 时，登录版可以用纯数字 trackId，其余退到专辑页。

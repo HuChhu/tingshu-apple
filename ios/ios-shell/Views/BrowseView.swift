@@ -84,18 +84,21 @@ struct CategoryView: View {
                                 HStack(spacing: 8) {
                                     // id 用分类 URL 而不是下标：同站重载后顺序可能变，下标 key 会串行
                                     ForEach(Array(categories.enumerated()), id: \.element.1) { idx, cat in
+                                        let on = (idx == selectedCatIndex)
                                         Button(cat.0) {
                                             selectedCatIndex = idx
                                             loadCategory(idx)
                                         }
-                                        // P2-1：选中分类高亮。buttonStyle 的三目类型是基类 ButtonStyle，
-                                        // contentShape 会把点击区裁成胶囊大小，反而缩手，所以用 tint 区分。
+                                        // 选中态：主色浅底 + 主色字（方案 §3.2-4，不用多个彩色按钮）。
+                                        // buttonStyle 的三目类型是基类 ButtonStyle，会让点击区缩小，所以用 tint。
                                         .buttonStyle(.bordered)
-                                        .tint(idx == selectedCatIndex ? Color.accentColor : Color.secondary)
-                                        .font(.caption)
+                                        .tint(on ? Color.accentColor : Color.secondary)
+                                        .font(.footnote)
+                                        .lineLimit(1)
                                     }
                                 }
                                 .padding(.vertical, 4)
+                                .padding(.horizontal, 2)
                             }
                         }
                     }
@@ -272,12 +275,12 @@ struct BookRow: View {
                 AsyncImage(url: URL(string: card.coverUrl)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.secondary.opacity(0.15))
+                    RoundedRectangle(cornerRadius: Layout.radiusThumb)
+                        .fill(Layout.cardFill)
                         .overlay(Image(systemName: "book.closed").foregroundStyle(.secondary))
                 }
                 .frame(width: 52, height: 52)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: Layout.radiusThumb))
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(card.title).font(.body).lineLimit(2)

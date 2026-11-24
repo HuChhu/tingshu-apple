@@ -182,31 +182,11 @@ struct ShelfView: View {
 
     /// 点最近记录 → 还原成 EpisodeRow 交给播放器，sourceId 用记录里那个
     private func playRecent(_ r: LocalStore.Recent) {
-        let card = SharedBridge.BookCard(
-            bookUrl: r.bookUrl, title: r.bookTitle, author: "",
-            coverUrl: "", albumId: SharedBridge.albumId(from: r.bookUrl),
-            trackCount: 0, playCount: 0, isFinished: nil)
-        // P1-07：优先用记录的 episodeUrl（模板集的 trackId 是数字，不能当 URL）
-        // 老记录没有 episodeUrl 时回退到 trackId（登录版兼容），再不行用 bookUrl
-        // 老记录可能没有 episodeUrl：登录版能用 trackId 直接播，
-        // 但模板站的 trackId 也是数字，把它当 URL 会 ParseFailed。
-        // 判断依据：登录版的 url 形如纯数字是合法的；模板站必须要有页面 URL。
-        let isLoginSource = (r.sourceId == "ximalaya")
-        let input: String
-        if !r.episodeUrl.isEmpty {
-            input = r.episodeUrl
-        } else if isLoginSource && r.trackId > 0 {
-            input = String(r.trackId)
-        } else {
-            input = r.bookUrl      // 模板站缺 URL 时退到专辑页，至少不会拼出错误地址
-        }
-        let ep = SharedBridge.episodeRow(
-            title: r.episodeTitle, trackId: r.trackId, index: 1,
-            durationMs: 0, coverUrl: "", url: input)
-        // UI-02：一律带 sourceId，不再对 ximalaya 特判。
-        // 之前 ximalaya-open（免登录）也被送进不带 sourceId 的重载，
-        // 播放器把 currentSourceId 写成 "ximalaya"，于是拿登录版去取地址 → 报「需要登录」。
-        Player.shared.playEpisode(ep, book: card, sourceId: r.sourceId)
+        // episodeUrl → trackId → bookUrl 的回退已经在 LocalStore.recentEpisode 里统一处理，
+        // 这里不再抄一份（之前书架/历史/首页三处各写一份，行为还不一致）
+        Player.shared.playEpisode(LocalStore.recentEpisode(r),
+                                  book: LocalStore.recentBook(r),
+                                  sourceId: r.sourceId)
         reloadLists()
     }
 
@@ -228,10 +208,12 @@ struct ShelfView: View {
         AsyncImage(url: URL(string: url)) { img in
             img.resizable().scaledToFill()
         } placeholder: {
-            RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.15))
+            RoundedRectangle(cornerRadius: Layout.radiusThumb).fill(Layout.cardFill)
+                .overlay(Image(systemName: "book.closed")
+                    .font(.caption2).foregroundStyle(.secondary))
         }
         .frame(width: w, height: h)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: Layout.radiusThumb))
     }
 
     private func placeholder(icon: String, title: String, detail: String) -> some View {
@@ -421,14 +403,7 @@ struct AlbumView: View {
                                 }
                             }
 
-                            if loadingMore {
-                                HStack {
-                                    Spacer()
-                                    ProgressView().controlSize(.small)
-                                    Text("加载更多…").font(.caption).foregroundStyle(.secondary)
-                                    Spacer()
-                                }
-                            }
+                            chapterFooter
                         }
                     } header: {
                         HStack {
@@ -465,7 +440,8 @@ struct AlbumView: View {
                         sourceId: sourceId)
                 } label: {
                     Image(systemName: favorited ? "heart.fill" : "heart")
-                        .foregroundStyle(favorited ? Color.pink : Color.secondary)
+                        // 收藏态用主色：Color.pink 在深色模式下与背景对比不足
+                        .foregroundStyle(favorited ? Color.accentColor : Color.secondary)
                 }
             }
         }
@@ -494,12 +470,12 @@ struct AlbumView: View {
                 AsyncImage(url: URL(string: shown.coverUrl)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.secondary.opacity(0.15))
+                    RoundedRectangle(cornerRadius: Layout.radiusImage)
+                        .fill(Layout.cardFill)
                         .overlay(Image(systemName: "book.closed").foregroundStyle(.secondary))
                 }
-                .frame(width: 96, height: 96)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .frame(width: Layout.thumbHeader, height: Layout.thumbHeader)
+                .clipShape(RoundedRectangle(cornerRadius: Layout.radiusImage))
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(shown.title)
@@ -526,8 +502,9 @@ struct AlbumView: View {
                         if shown.isFinished == true {
                             Text("已完结").font(.caption2)
                                 .padding(.horizontal, 6).padding(.vertical, 2)
+                                // 用语义色：深色模式下 green 会自动提亮，写死 Color.green 在深色里发灰
                                 .background(Capsule().fill(Color.green.opacity(0.15)))
-                                .foregroundStyle(.green)
+                                .foregroundStyle(Color.green)
                         }
                     }
                 }
@@ -637,6 +614,39 @@ struct AlbumView: View {
         if let saved = saved, saved.trackId > 0 {
             lastPlayedTrackId = saved.trackId
             lastPlayedRow = episodes.firstIndex(where: { $0.trackId == saved.trackId }) ?? -1
+        }
+    }
+
+    /// 章节列表底部状态：加载中 / 已全部加载 / 可上滑加载。
+    /// 原来只有 loadingMore 一个分支，全部加载完什么都没有，用户不知道是不是卡住了。
+    @ViewBuilder
+    private var chapterFooter: some View {
+        if episodes.isEmpty {
+            EmptyView()
+        } else if loadingMore {
+            HStack(spacing: 8) {
+                Spacer()
+                ProgressView().controlSize(.small)
+                Text("正在加载…").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
+        } else if loadedAll {
+            Text(episodes.count >= 1
+                 ? "已全部加载（共 \(totalChapters > 0 ? totalChapters : episodes.count) 集）"
+                 : "")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+        } else {
+            Button {
+                loadNextPageIfNeeded()
+            } label: {
+                Text("加载更多（还有 \(max(0, (totalChapters > 0 ? totalChapters : allEpisodes.count) - episodes.count)) 集）")
+                    .font(.caption)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
         }
     }
 

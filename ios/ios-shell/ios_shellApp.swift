@@ -16,7 +16,7 @@ struct TingshuRootApp: App {
 }
 
 struct RootTabView: View {
-    /// 跨页跳转用（搜索失败 → 「用其他源搜」切到首页分类）
+    /// 跨页跳转用（搜索失败 → 「用其他源搜」切到分类页；值是 Tab 下标 1）
     @AppStorage("selectedTab") private var tab = 0
     /// 必须订阅 Player，否则 showFullScreen 变化不会驱动 fullScreenCover
     @ObservedObject private var player = Player.shared
@@ -39,7 +39,8 @@ struct RootTabView: View {
                     .tag(1)
 
                 ShelfView()
-                    .tabItem { Label("书架", systemImage: "heart.fill") }
+                    // 书架是「我的内容」，不是「喜欢」：原来用 heart.fill 与收藏图标语义打架
+                    .tabItem { Label("书架", systemImage: "books.vertical.fill") }
                     .tag(2)
 
                 MineView()

@@ -34,7 +34,7 @@ struct PlayerView: View {
                 Text(player.state.rawValue)
                     .font(.subheadline).foregroundStyle(.secondary)
                     .padding(.horizontal, 12).padding(.vertical, 5)
-                    .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                    .background(Capsule().fill(Layout.pillFill))
                 if player.nowPlaying.isEmpty {
                     Text("先去「书架」搜索，或到「浏览」按源找书")
                         .font(.caption)
@@ -112,37 +112,26 @@ struct PlayerView: View {
             }
             .padding(.top, 8)
 
-            // ===== 播放设置条（v1.3.0）=====
-            HStack(spacing: 10) {
-                Button {
-                    showSpeed = true
-                } label: {
-                    Text(String(format: "%.2fx", player.currentSpeed))
-                        .font(.caption).monospacedDigit()
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
-                }
+            // ===== 播放设置条（v1.3.0 / R3 收口）=====
+            // 原来三个控件挤在一个 HStack 里，定时文案一旦变成「定时 29:58」+ 倒序图标，
+            // 小屏（SE 375pt）会把两侧挤出屏幕。现在三个等宽均分，标签固定两行高度，
+            // 文案再长也只是截断，不改变布局。
+            HStack(spacing: 8) {
+                settingButton(title: String(format: "%.2fx", player.currentSpeed),
+                              hint: "倍速",
+                              active: player.currentSpeed != 1.0) { showSpeed = true }
 
-                Button {
-                    showSleep = true
-                } label: {
-                    Label(sleepLabel, systemImage: "moon.zzz")
-                        .font(.caption)
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(Capsule().fill(Color.secondary.opacity(0.15)))
-                }
+                settingButton(title: sleepShortLabel,
+                              hint: "定时",
+                              active: player.sleepRemainingText != nil) { showSleep = true }
 
-                Button {
+                settingButton(title: player.isReverseOrder ? "倒序" : "正序",
+                              hint: "播放顺序",
+                              active: player.isReverseOrder) {
                     player.setReverseOrder(!player.isReverseOrder)
-                } label: {
-                    Image(systemName: player.isReverseOrder ? "arrow.up.arrow.down.circle.fill" : "arrow.up.arrow.down.circle")
-                        .font(.title3)
-                        .foregroundStyle(player.isReverseOrder ? Color.accentColor : Color.secondary)
                 }
-
-                Spacer()
             }
-            .padding(.horizontal)
+            .padding(.horizontal, Layout.hPadding)
             .padding(.top, 10)
 
             Spacer()
@@ -161,6 +150,15 @@ struct PlayerView: View {
             }
         }
         .onAppear { CrashLog.write("UI", "player appear track=\(player.nowPlaying)") }
+        // 全屏页下拉收起（方案 §3.5）；在 Tab 里也允许，只是把 showFullScreen 置 false
+        .gesture(
+            DragGesture(minimumDistance: 24)
+                .onEnded { v in
+                    if v.translation.height > 120 || v.predictedEndTranslation.height > 220 {
+                        player.showFullScreen = false
+                    }
+                }
+        )
         .onDisappear { CrashLog.write("UI", "player disappear track=\(player.nowPlaying)") }
         .sheet(isPresented: $showSpeed) { speedSheet }
         .sheet(isPresented: $showSleep) { sleepSheet }
@@ -169,6 +167,35 @@ struct PlayerView: View {
     private var sleepLabel: String {
         if let left = player.sleepRemainingText { return left }
         return "定时"
+    }
+
+    /// 定时按钮上的短标签：完整文案「定时 29:58」在等宽按钮里会截断，
+    /// 这里只取冒号后面的剩余时间；按章节模式显示「剩 N 章」。
+    private var sleepShortLabel: String {
+        guard let full = player.sleepRemainingText else { return "定时" }
+        if let r = full.range(of: " ") { return String(full[r.upperBound...]) }
+        return full
+    }
+
+    /// 统一的辅助功能按钮：上图标/数值 + 下标签，热区 44pt
+    private func settingButton(title: String, hint: String, active: Bool,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Text(title)
+                    .font(.caption).monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(hint).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: Layout.hitTarget)
+            .background(Capsule().fill(active ? Color.accentColor.opacity(0.18) : Layout.pillFill))
+            .foregroundStyle(active ? Color.accentColor : Color.primary)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(hint) \(title)")
     }
 
     /// 倍速面板：滑块 + 快捷档 + 「应用全局」开关

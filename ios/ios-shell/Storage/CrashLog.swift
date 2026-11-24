@@ -1,7 +1,8 @@
 import Foundation
 import UIKit
 
-/// 崩溃与错误记录（写在 Documents/crash/ 下，用户能直接导出）。
+/// 崩溃与错误记录（写在 Documents/crash/ 下；通过「我的 → 运行日志」页分享导出，
+/// 不依赖 UIFileSharingEnabled，避免整个 Documents 暴露给文件 App）。
 /// 参考摸鱼听书的 RepoLog / SourceLog：它把关键路径都打日志，出问题能定位。
 /// iOS 有个限制：App 自己闪退时进程被杀，来不及写日志，所以这里分两类：
 ///   ① 可捕获的错误（Kotlin 异常、网络失败、解码失败）—— 立即落盘

@@ -23,10 +23,20 @@ enum DiskCache {
     }
 
     private static func url(namespace: String, key: String) -> URL {
-        let safe = key.replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "-")
-        return root.appendingPathComponent(namespace, isDirectory: true)
-            .appendingPathComponent(safe + ".json")
+        // 文件名用哈希而不是原文：搜索缓存原来叫「三体.json」，
+        // iCloud/本地备份里能直接看出用户听过什么。哈希后不可读，且天然避开路径注入。
+        root.appendingPathComponent(namespace, isDirectory: true)
+            .appendingPathComponent(fnvHex(key) + ".json")
+    }
+
+    /// FNV-1a 64 位（与 AudioCache.stableName 同一算法，便于对照）
+    private static func fnvHex(_ s: String) -> String {
+        var h: UInt64 = 0xcbf29ce484222325
+        for b in s.utf8 {
+            h ^= UInt64(b)
+            h = h &* 0x100000001b3
+        }
+        return String(h, radix: 16)
     }
 
     private static let encoder: JSONEncoder = {

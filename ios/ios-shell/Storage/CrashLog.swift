@@ -9,6 +9,12 @@ import UIKit
 ///   ② 未捕获异常（NSException）—— 用 NSSetUncaughtExceptionHandler 抢在进程结束前写
 enum CrashLog {
     private static let dirName = "crash"
+
+    // 崩溃处理器专用常量：必须是 internal static let，
+    // 写成函数内字面量会被优化掉（实测 Release 包里 FATAL 串 0 命中）。
+    static let fatalDirName = "crash"
+    static let fatalFilePrefix = "fatal-"
+    static let fatalHeader = "=== FATAL ===\n"
     private static let lock = NSLock()
 
     static var dir: URL {
@@ -137,11 +143,13 @@ enum CrashLog {
 /// 崩溃处理器专用：无锁、不捕获上下文（C 函数指针限制）。
 /// 崩溃路径绝对不能抢 NSLock —— 主线程若正持锁写日志，这里会死锁，
 /// 最需要的那条崩溃栈反而丢失。
+@inline(never)
 private func writeFatalSync(name: String, reason: String, stack: String) {
     let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    let dir = base.appendingPathComponent("crash", isDirectory: true)
-    let text = "=== FATAL ===\n\(name): \(reason)\n\(stack)\n"
-    let f = dir.appendingPathComponent("fatal-\(Int(Date().timeIntervalSince1970)).log")
+    let dir = base.appendingPathComponent(CrashLog.fatalDirName, isDirectory: true)
+    let text = CrashLog.fatalHeader + name + ": " + reason + "\n" + stack + "\n"
+    let f = dir.appendingPathComponent(CrashLog.fatalFilePrefix
+        + String(Int(Date().timeIntervalSince1970)) + ".log")
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     try? text.data(using: .utf8)?.write(to: f)
 }

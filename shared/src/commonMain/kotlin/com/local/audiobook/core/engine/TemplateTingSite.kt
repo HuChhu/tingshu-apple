@@ -131,9 +131,12 @@ class TemplateTingSite(
         }
         val uniq = out.distinctBy { it.bookUrl }
         val filtered = if (kw.isEmpty()) uniq else uniq.filter { it.title.contains(kw, ignoreCase = true) }
-        val result = if (filtered.isNotEmpty()) filtered else uniq.take(10)
+        // 注意：搜不到时**不能**用 uniq.take(10) 冒充结果。
+        // 那会让用户搜「zzzz不存在」也看到 10 本当红书，误以为搜到了。
+        // 关键词为空（比如首页推荐）才用前半页当"随便看看"。
+        val result = if (kw.isEmpty()) uniq.take(20) else filtered
         return SearchResult(result, page, sourceId, page,
-            if (result.isEmpty()) "没搜到，试试分类浏览" else null)
+            if (result.isEmpty()) "「" + kw + "」在这个源没搜到，试试分类浏览或换个源" else null)
     }
 
     suspend fun categoryBooks(catIndex: Int): List<Book> {

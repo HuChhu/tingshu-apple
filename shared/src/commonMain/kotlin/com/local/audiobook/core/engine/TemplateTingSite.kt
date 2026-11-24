@@ -173,7 +173,7 @@ class TemplateTingSite(
             // 标题来源优先级：title= 属性 > 锚点正文
             val attrTitle = unescape(titleRe.find(attrs)?.groupValues?.get(1)?.trim() ?: "")
             val bodyTitle = unescape(html.substring(afterIdx, stopAt).replace(Regex("<[^>]*>"), " "))
-                .replace(Regex("\\s+"), " ").trim().take(60)
+                .replace(Regex("\\s+"), " ").trim()
 
             // 逐字段收集，最后统一合并（29/32 站都是「同 id 多锚点」结构：
             // 封面锚点没 title、正文是评分；标题锚点才有真书名。所以不能整条丢弃）
@@ -252,6 +252,8 @@ class TemplateTingSite(
         fun score(t: String): Int {
             // 一票否决：通用 UI 词绝不可能是书名
             if (t.trim() in GENERIC_UI_WORDS) return -1
+            // 超长不是书名（多半是简介/正文碎片）。注意是「判无效」不是「截断」——
+            // 截断会把长书名切成半句话，比留空更糟。
             if (t.length < 2 || t.length > 60) return -1
             if (t.startsWith("http")) return -1
             if (t.count { it == '，' || it == '。' || it == ',' || it == '.' || it == '?' } >= 2) return -1

@@ -368,7 +368,8 @@ object TemplateSites {
             bookHrefPattern = "/book/detail/([A-Za-z0-9-]+)/0",
             // 章节在 /book/ting/<uuid>，一页 40 集；第 N 页 = /book/detail/<uuid>/<N*40>
             chapterPattern = "/book/ting/([A-Za-z0-9-]+)",
-            chapterPathGroup = -1,
+            // 注意：这里不要配 chapterPathGroup —— htmlPageStart=200 让 hasCustomPaging=true，
+            // 走的是 episodesFromHtmlPages()，该函数全文不引用 chapterPathGroup，配了也是死的。
             chapterMode = TemplateTingSite.ChapterMode.HtmlPages,
             htmlPagePattern = "{url}/{page}",
             // P1-3：实测这本书 931 集，分页是 /0、/200、/400、/600、/800。

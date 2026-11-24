@@ -84,6 +84,9 @@ class NeteaseSource(
                 coverUrl = picUrl,
                 intro = "",
                 albumId = songId.toLongOrNull() ?: 0L,
+                // 网易云搜索/详情接口都不返回播放量（实测 song keys 无 pop/score/playCount），
+                // 所以 playCount 保持 0；UI 侧对 playCount<=0 不渲染（BookRow 已有判断），
+                // 不会出现「0 播放」这种误导文案。
                 trackCount = 1L,
                 playCount = 0L,
                 isFinished = true,
@@ -114,13 +117,18 @@ class NeteaseSource(
             bookUrl = "netease://song/" + songId,
             title = "网易云单曲 " + songId,
             author = "",
-            coverUrl = META + "?server=netease&type=pic&id=" + songId,
+            // 封面必须和搜索走同一条路（song/detail 的 album.picUrl）。
+            // meting 的 type=pic 实测跟跳后 5/5 全 404，详情页会裂图。
+            coverUrl = "",
             intro = "",
             albumId = songId.toLongOrNull() ?: 0L,
             trackCount = 1L,
             playCount = 0L,
             isFinished = true,
         )
+
+        // 复用 fillCovers 拉真实封面（失败返回原对象，不影响详情）
+        val withCover = fillCovers(listOf(book)).firstOrNull() ?: book
 
         val eps = if (loadEpisodes) listOf(
             Episode(
@@ -133,7 +141,7 @@ class NeteaseSource(
             )
         ) else emptyList()
 
-        return BookDetail(book, eps)
+        return BookDetail(withCover, eps)
     }
 
     // ---------- 播放 ----------

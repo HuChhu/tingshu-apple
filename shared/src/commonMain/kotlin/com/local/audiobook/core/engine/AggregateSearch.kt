@@ -88,7 +88,19 @@ object AggregateSearch {
             async {
                 val t0 = clock()
                 val outcome = withTimeoutOrNull(perTimeoutMs) {
-                    try { Result.success(ch.run(keyword, page)) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { Result.failure(e) }
+                    try {
+                        Result.success(ch.run(keyword, page))
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        throw e            // 超时是"这一路失败"，但不能打断聚合
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        // 只有本协程真被取消才透传；通道内部自己 cancel 的当这一路失败处理，
+                        // 否则单通道被取消会打挂整次聚合搜索（违反本文件纪律④）
+                        val job = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]
+                        if (job != null && !job.isActive) throw e
+                        Result.failure(e)
+                    } catch (e: Throwable) {
+                        Result.failure(e)
+                    }
                 }
                 val elapsed = clock() - t0
                 when {

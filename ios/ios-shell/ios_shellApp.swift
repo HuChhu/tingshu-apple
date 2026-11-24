@@ -6,6 +6,8 @@ struct TingshuRootApp: App {
         // 最早时机装崩溃钩子：未捕获 NSException 会在进程退出前落盘
         CrashLog.installUncaughtHandler()
         CrashLog.write("BOOT", "app start v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
+        // 进后台/退出时把缓冲日志刷盘（平时不做 fsync 省开销）
+        CrashLog.installFlushObservers()
     }
 
     var body: some Scene {
@@ -54,7 +56,12 @@ struct RootTabView: View {
             get: { player.showFullScreen },
             set: { player.showFullScreen = $0 }
         )) {
-            PlayerView()
+            // 全屏页必须自带导航容器：PlayerView 顶层是 GeometryReader + VStack，
+            // 它的 navigationTitle / toolbar 只有在 NavigationStack 里才渲染。
+            // 没有容器 → 收起按钮不显示 → 用户被困在全屏页。
+            NavigationStack {
+                PlayerView()
+            }
         }
         .onAppear { CrashLog.write("UI", "root appear tab=\(tab) fullscreen=\(player.showFullScreen)") }
         .onDisappear { CrashLog.write("UI", "root disappear tab=\(tab) fullscreen=\(player.showFullScreen)") }

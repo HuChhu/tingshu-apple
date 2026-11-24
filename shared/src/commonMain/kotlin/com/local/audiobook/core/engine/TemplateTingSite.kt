@@ -148,7 +148,8 @@ class TemplateTingSite(
      *  - title 为空：只取 <a> 到 </a> 之间的文本，不跨标签，不做 HTML 实体外的截断
      *  - 书标题本身 >40 字（长书名剧）：上限放到 60，靠"含标点密度"和"像 URL"筛
      */
-    private fun parseBookList(html: String): List<Book> {
+    /** internal 供单测直接喂 HTML（29/32 站共用这条路径，必须可测） */
+    internal fun parseBookList(html: String): List<Book> {
         val out = LinkedHashMap<String, Book>()
         val idRe = runCatching { Regex(bookHrefPattern) }.getOrElse { return emptyList() }
         val anchorRe = Regex("<a\\s+([^>]*)>", RegexOption.IGNORE_CASE)
@@ -169,33 +170,54 @@ class TemplateTingSite(
             // stopAt 严格夹在 </a> 之内：跨标签抓到的必然是下一块的正文，直接丢弃
             val stopAt = if (endA in afterIdx..minOf(html.length, afterIdx + 400)) endA
                          else minOf(html.length, afterIdx + 200)
-            var title = unescape(titleRe.find(attrs)?.groupValues?.get(1)?.trim() ?: "")
-            if (title.length < 2) {
-                title = unescape(html.substring(afterIdx, stopAt).replace(Regex("<[^>]*>"), " "))
-                    .replace(Regex("\\s+"), " ").trim().take(60)
-            }
-            if (title.length < 2 || title.length > 60 || title.startsWith("http")) continue
-            // 正文段落：句读密集或含大量空白，一律不是书名
-            if (title.count { it == '，' || it == '。' || it == ',' || it == '.' || it == '?' } >= 2) continue
-            if (title.count { it == ' ' } >= 5) continue
+            // 标题来源优先级：title= 属性 > 锚点正文
+            val attrTitle = unescape(titleRe.find(attrs)?.groupValues?.get(1)?.trim() ?: "")
+            val bodyTitle = unescape(html.substring(afterIdx, stopAt).replace(Regex("<[^>]*>"), " "))
+                .replace(Regex("\\s+"), " ").trim().take(60)
+
+            // 逐字段收集，最后统一合并（29/32 站都是「同 id 多锚点」结构：
+            // 封面锚点没 title、正文是评分；标题锚点才有真书名。所以不能整条丢弃）
+            val existing = out[id]
+            val prevTitle = existing?.title ?: ""
+            val prevTitleFromAttr = attrTitle.isNotEmpty() && prevTitle == attrTitle
+            val candidate = chooseTitle(prevTitle, attrTitle, bodyTitle)
 
             val tail2 = html.substring(afterIdx, minOf(html.length, afterIdx + 500))
             val cover = coverRe.find(tail2)?.groupValues?.get(1)?.let { toAbs(it) } ?: ""
 
-            // 取优：已有条目的话，只有当新标题更可信（长度更长、且旧标题像评分/纯数字）才覆盖。
-            // 判据来自实测：ting954 的封面锚点文本是 "0.0"，标题锚点是真书名。
-            val existing = out[id]
-            if (existing != null) {
-                // 旧标题像评分/纯数字（如 "0.0"）→ 允许被真书名覆盖；否则保持先到的
-                val oldLikelyBad = existing.title.count { it.isDigit() || it == '.' } >= existing.title.length - 1
-                if (!oldLikelyBad || title.length <= existing.title.length) continue
+            // 首次命中但两个来源都不像书名（典型：封面锚点只有评分和缩略图）：
+            // 先把封面存下来当占位，等标题锚点来了再补标题。直接丢弃会丢封面。
+            if (candidate == null && existing == null) {
+                if (cover.isNotEmpty()) {
+                    out[id] = Book(
+                        sourceId = sourceId, bookUrl = toAbs(href), title = "",
+                        author = "", coverUrl = cover, intro = "",
+                        albumId = id.tokenLong(), trackCount = 0L, playCount = 0L, isFinished = false,
+                    )
+                }
+                continue
             }
+
+            val finalTitle = candidate ?: prevTitle
+            if (finalTitle.isEmpty()) continue
+            // 已有条目且没有更好的标题 → 只补封面，不覆盖整条
+            if (existing != null && candidate == null) {
+                if (existing.coverUrl.isEmpty() && cover.isNotEmpty()) {
+                    out[id] = existing.copy(coverUrl = cover)
+                }
+                continue
+            }
+            // 已由 title= 属性确定的书名，不让正文标题覆盖
+            if (existing != null && prevTitleFromAttr && attrTitle.isEmpty()) continue
+
+            // 封面取非空：新锚点没有封面时，保留之前占位记录里存的那张
+            val mergedCover = cover.ifEmpty { existing?.coverUrl ?: "" }
             out[id] = Book(
                 sourceId = sourceId,
                 bookUrl = toAbs(href),
-                title = title,
+                title = finalTitle,
                 author = "",
-                coverUrl = cover,
+                coverUrl = mergedCover,
                 intro = "",
                 albumId = id.tokenLong(),
                 trackCount = 0L,
@@ -204,6 +226,39 @@ class TemplateTingSite(
             )
         }
         return out.values.toList()
+    }
+
+    /**
+     * 在两个候选里选更像书名的那个，不像书名返回 null。
+     * 判据（来自 29 个站在线样本）：
+     *   - 长度 2..60，不以 http 开头
+     *   - 不含 ≥2 个句读（正文特征）
+     *   - 空格 <5（正文特征）
+     *   - 不能是纯评分（形如 9.8 / 1.2万 / 0.0）
+     */
+    private fun chooseTitle(prev: String, attr: String, body: String): String? {
+        fun score(t: String): Int {
+            if (t.length < 2 || t.length > 60) return -1
+            if (t.startsWith("http")) return -1
+            if (t.count { it == '，' || it == '。' || it == ',' || it == '.' || it == '?' } >= 2) return -1
+            if (t.count { it == ' ' } >= 5) return -1
+            // 纯评分：去掉数字/点/万字后为空
+            val stripped = t.filter { !it.isDigit() && it != '.' && it != '万' && it != '分' }
+            if (stripped.isEmpty()) return -1
+            // 越像书名分越高：含中文、长度适中、不是纯数字
+            var sc = 0
+            if (t.any { it.code in 0x4E00..0x9FFF }) sc += 50
+            sc += minOf(t.length, 30)
+            return sc
+        }
+        val sa = score(attr)
+        val sb = score(body)
+        val best = when {
+            sa >= 0 && (sb < 0 || sa >= sb) -> attr
+            sb >= 0 -> body
+            else -> return null
+        }
+        return if (best == prev) null else best
     }
 
     override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {

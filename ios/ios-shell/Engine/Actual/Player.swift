@@ -263,6 +263,8 @@ final class Player: NSObject, ObservableObject {
     private var isLive: Bool { Player.shared === self }
 
     // ===== 睡眠定时 =====
+    /// 用户是否手动取消过定时。取消后自动连播换章不得再按 prefs 自动重开。
+    private var sleepCancelledByUser = false
     /// 按时间停：到点执行的截止时刻
     private var sleepDeadline: Date?
     /// 按章节停：还剩几章（<0 表示没启用）
@@ -270,6 +272,7 @@ final class Player: NSObject, ObservableObject {
 
     /// 启动定时（minutes > 0 用时间；chapters > 0 用章节，二者取一个）
     func startSleepTimer(minutes: Int, chapters: Int) {
+        sleepCancelledByUser = false
         var prefs = LocalStore.loadPlayPrefs()
         if minutes > 0 {
             sleepDeadline = Date().addingTimeInterval(TimeInterval(minutes * 60))
@@ -286,6 +289,7 @@ final class Player: NSObject, ObservableObject {
 
     /// 取消定时
     func cancelSleepTimer() {
+        sleepCancelledByUser = true
         sleepDeadline = nil
         sleepChaptersLeft = -1
         sleepTimer?.invalidate()
@@ -320,6 +324,8 @@ final class Player: NSObject, ObservableObject {
 
     /// 重启 App 后按上次设置重新定时（prefs.sleepAutoEnable）
     func restoreSleepTimerIfNeeded() {
+        // 用户手动取消过 → 本次会话不再自动恢复（否则自动连播会把它"复活"）
+        guard !sleepCancelledByUser else { return }
         let prefs = LocalStore.loadPlayPrefs()
         guard prefs.sleepAutoEnable else { return }
         if prefs.sleepLastMinutes > 0 {
@@ -366,6 +372,11 @@ final class Player: NSObject, ObservableObject {
         let db = effectivePlayback.volumeGainDb
         let linear = db.isFinite ? pow(10.0, db / 20.0) : 1.0
         queue.currentItem?.volume = Float(min(1.0, max(0.0, linear)))
+    }
+
+    /// 设置里改完音量增益，立即生效（不用等下一集）
+    func refreshVolumeGain() {
+        applyVolumeGain()
     }
 
     /// 运行时改倍速（播放页调用，同时写回专辑配置）
@@ -577,6 +588,7 @@ final class Player: NSObject, ObservableObject {
     
     /// 用本地文件起播（缓存命中时走这里）
     private func startItemWithLocalFile(_ item: AVPlayerItem, ep: SharedBridge.EpisodeRow) {
+        applyVolumeGain()
         CrashLog.write("PLAY", "start local track=\(ep.trackId) src=\(currentSourceId) scheme=file host=")
         let prefs = LocalStore.loadPlayPrefs()
         if prefs.skipSilence, #available(iOS 16.4, *) {
@@ -591,7 +603,7 @@ final class Player: NSObject, ObservableObject {
         queue.play()
         errorText = nil
         durationText = fmt(ep.durationMs)
-        // 音量增益：dB → 线性倍数再夹到 0...1（AVPlayerItem.volume 上限是 1）
+        // 音量增益：远程路径同样要应用（之前只接了本地缓存分支，等于网播时设置无效）
         applyVolumeGain()
         // 倍速：专辑值 > 全局默认（这里再兜一次，AVPlayer 对 rate<=0/NaN 不友好）
         let sp = effectivePlayback.speed

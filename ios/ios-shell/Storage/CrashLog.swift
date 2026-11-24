@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// 崩溃与错误记录（写在 Documents/crash/ 下，用户能直接导出）。
 /// 参考摸鱼听书的 RepoLog / SourceLog：它把关键路径都打日志，出问题能定位。
@@ -78,6 +79,16 @@ enum CrashLog {
         try? handle?.synchronize()
     }
 
+    /// 装「进后台 / 将终止」钩子：非关键事件的日志这时统一刷盘，
+    /// 平时不做 fsync 省主线程开销，真正退出前一条都不丢。
+    static func installFlushObservers() {
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                       object: nil, queue: nil) { _ in flush() }
+        nc.addObserver(forName: UIApplication.willTerminateNotification,
+                       object: nil, queue: nil) { _ in flush() }
+    }
+
     /// 便捷：记录一次播放失败（带上下文，出问题时一眼看出是哪本书哪一集）
     static func playbackFailed(book: String, episode: String, trackId: Int64,
                                source: String, reason: String) {
@@ -106,6 +117,12 @@ enum CrashLog {
     }
 
     static func clear() {
+        lock.lock()
+        defer { lock.unlock() }
+        // 必须先关句柄再删文件：否则后续写入会进已 unlink 的 fd，静默丢日志
+        try? handle?.close()
+        handle = nil
+        handlePath = nil
         for f in allFiles() { try? FileManager.default.removeItem(at: f) }
     }
 

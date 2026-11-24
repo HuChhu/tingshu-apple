@@ -23,16 +23,11 @@ enum CrashLog {
 
     /// 安装未捕获异常处理器。放在 App 启动最早处（AppDelegate/init 里）。
     static func installUncaughtHandler() {
+        // C 函数指针不能捕获上下文（dir 是实例属性）→ 用文件级自由函数
         NSSetUncaughtExceptionHandler { exception in
-            // 崩溃路径绝对不能抢 NSLock：如果主线程正持锁写日志，这里会死锁，
-            // 最需要的那条崩溃栈反而丢失。用独立文件 + 无锁直写。
-            let name = exception.name.rawValue
-            let reason = exception.reason ?? "(no reason)"
-            let stack = exception.callStackSymbols.joined(separator: "\n")
-            let text = "=== FATAL ===\n\(name): \(reason)\n\(stack)\n"
-            let f = dir.appendingPathComponent("fatal-\(Int(Date().timeIntervalSince1970)).log")
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try? text.data(using: .utf8)?.write(to: f)
+            writeFatalSync(name: exception.name.rawValue,
+                           reason: exception.reason ?? "(no reason)",
+                           stack: exception.callStackSymbols.joined(separator: "\n"))
         }
     }
 
@@ -136,4 +131,16 @@ enum CrashLog {
             sum + Int64((try? f.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
         }
     }
+}
+
+/// 崩溃处理器专用：无锁、不捕获上下文（C 函数指针限制）。
+/// 崩溃路径绝对不能抢 NSLock —— 主线程若正持锁写日志，这里会死锁，
+/// 最需要的那条崩溃栈反而丢失。
+private func writeFatalSync(name: String, reason: String, stack: String) {
+    let base = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    let dir = base.appendingPathComponent("crash", isDirectory: true)
+    let text = "=== FATAL ===\n\(name): \(reason)\n\(stack)\n"
+    let f = dir.appendingPathComponent("fatal-\(Int(Date().timeIntervalSince1970)).log")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    try? text.data(using: .utf8)?.write(to: f)
 }

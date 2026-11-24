@@ -74,7 +74,10 @@ struct MiniPlayerBar: View {
     private var shouldShow: Bool {
         switch player.state {
         case .playing, .paused, .loading: return !player.nowPlaying.isEmpty
-        case .stopped, .error: return false
+        case .error:
+            // 出错时保留入口：否则用户收起播放页就再也找不到重试按钮
+            return !Player.shared.nowPlaying.isEmpty
+        case .stopped: return false
         }
     }
 }

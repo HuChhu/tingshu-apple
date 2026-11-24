@@ -434,7 +434,12 @@ struct AlbumView: View {
                         HStack {
                             Text("节目列表")
                             Spacer()
-                            if !episodes.isEmpty {
+                            // 分页后 episodes.count 只是「已加载」数，总数要用 trackCount
+                            if totalChapters > episodes.count {
+                                Text("已加载 \(episodes.count) / 共 \(totalChapters) 集")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else if !episodes.isEmpty {
                                 Text("共 \(episodes.count) 集")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
@@ -508,7 +513,9 @@ struct AlbumView: View {
                     }
                     Spacer(minLength: 0)
                     HStack(spacing: 14) {
-                        if episodes.count > 0 {
+                        if totalChapters > 0 {
+                            stat("\(totalChapters)", "集数")
+                        } else if episodes.count > 0 {
                             stat("\(episodes.count)", "集数")
                         } else if shown.trackCount > 0 {
                             stat("\(shown.trackCount)", "集数")

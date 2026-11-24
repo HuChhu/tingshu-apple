@@ -244,6 +244,8 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
         pendingRequests[dataTask.taskIdentifier] = st
 
         let wantLo = dr.requestedOffset
+        // requestedLength 是 Int，offsets 是 Int64 —— 必须显式转，不然编译期就报
+        // binary operator '+' cannot be applied to operands of type 'Int64' and 'Int'
         let wantHi = wantLo + Int64(dr.requestedLength)
         let chunkHi = chunkStart + Int64(data.count)
         // 200 响应 + 要求中段：数据从 0 开始，要丢掉前面的 (wantLo - 0) 字节
@@ -260,7 +262,7 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
         // 掐之前先打 fulfilled：cancel 会让 didCompleteWithError 带一个 -999 回来，
         // 不标记的话会被当成真失败，界面直接跳「请求被系统中断」。
         if dr.requestsAllDataToEndOfResource == false, dr.requestedLength > 0,
-           st.written >= (wantLo - st.base) + dr.requestedLength {
+           st.written >= (wantLo - st.base) + Int64(dr.requestedLength) {
             var done = pendingRequests[dataTask.taskIdentifier] ?? st
             done.fulfilled = true
             pendingRequests[dataTask.taskIdentifier] = done
@@ -941,7 +943,11 @@ final class Player: NSObject, ObservableObject {
                 self.failAddress("引擎返回的地址无法解析")
                 return
             }
-            self.startItem(url: u, headers: audio.headers, ep: ep)
+            // 登录版这条链也要补兜底 UA：引擎部分分支返回空 headers，
+            // 裸请求打 xmcdn 直接 403（实测 deny by rule engine），表现就是起播超时。
+            // 按源那条 playEpisode 早就补了，这条漏了 —— 两条入口行为必须一致。
+            let fixed = SharedBridge.audioWithDefaultUA(audio)
+            self.startItem(url: u, headers: fixed.headers, ep: ep)
         }
     }
 

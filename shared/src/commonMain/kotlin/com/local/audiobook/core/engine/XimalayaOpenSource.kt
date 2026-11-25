@@ -276,12 +276,24 @@ class XimalayaOpenSource(
         else -> "https://imagev2.xmcdn.com/" + raw.trimStart(47.toChar())
     }
 
-    /** 把一页曲目解析追加进 eps（index 按当前条数续排） */
+    /**
+     * 把一页曲目解析追加进 eps（index 按当前条数续排）。
+     *
+     * 【2026-11-25 P0 放行】mobwsa 的 VIP 专辑里，**前 20 集对所有人免费**（isFree=true / isAuthorized=true），
+     * 但它的 playUrl64 同样返回空串 —— 地址只有客户端通道 `track/baseInfo` 能给。
+     * 如果这里把 20 集也标成 playable=false，Player 的 `guard ep.playable` 会直接拒播，
+     * 那条通道就永远走不到了（用户连免费集都听不了）。
+     *
+     * 所以：只要曲子带 trackId，就标 playable=true，让 Player 去调 extractor ——
+     * extractor 会用 isAuthorized 判权限，没权限时给出准确文案（比这里瞎猜准）。
+     */
     private fun appendTracks(list: JsonArray, eps: MutableList<Episode>) {
         for (el in list) {
             val t = el.asObj() ?: continue
             if (t["trackId"]?.asLong() == null) continue
-            eps.add(TrackNormalizer.normalizeTrack(t, eps.size + 1, sourceId))
+            val ep = TrackNormalizer.normalizeTrack(t, eps.size + 1, sourceId)
+            // 有 trackId 就走客户端通道试一次；没权限时由 extractor 给出「需要会员」文案。
+            eps.add(if (ep.playable) ep else ep.copy(playable = true, url = ""))
         }
     }
 

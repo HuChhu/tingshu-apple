@@ -84,8 +84,14 @@ class XimalayaAudioExtractor(
             if (v is kotlinx.serialization.json.JsonNull) return ""
             return v.content
         }
-        if (strOf("ret") != "0") {
-            throw SourceErrors.ParseFailed("单集接口返回 ret=" + strOf("ret"))
+        val ret = strOf("ret")
+        if (ret != "0") {
+            // ret=999 是限流（裸 IP 长冷却），ret=1001 是风控校验 —— 不能一律说「解析失败」
+            throw when (ret) {
+                "999" -> SourceErrors.Network("喜马拉雅限流（ret=999），等一会儿再试")
+                "1001" -> SourceErrors.Network("喜马拉雅风控校验（ret=1001），稍后重试")
+                else -> SourceErrors.ParseFailed("单集接口返回 ret=" + ret)
+            }
         }
 
         // 优先 HQ（aacv1 64k），其次 64k，再次 32k。空串/null 都跳过。

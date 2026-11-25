@@ -907,6 +907,12 @@ final class Player: NSObject, ObservableObject {
             if SharedBridge.looksLikeWebPage(input), ep.trackId > 0 {
                 input = "https://www.ximalaya.com/sound/\(ep.trackId)"
             }
+            // 【2026-11-25】VIP 集的 ep.url 是空串（mobwsa 不给 playUrl），只留了 trackId。
+            // 引擎的 extractor 认纯数字 = trackId，所以这里直接把 trackId 当输入，
+            // 让它走客户端通道 mobile/v1/track/baseInfo 换地址。
+            if input.isEmpty, ep.trackId > 0 {
+                input = String(ep.trackId)
+            }
             // 【2026-11-25 排查用】打一行取地址实况：
             //   src  = 走的哪个通道（免登录拿不到 VIP 集的地址，一眼能看出来）
             //   cookie= 引擎侧看到的 Cookie 长度（0 就是登录态没灌进去，不是会员问题）

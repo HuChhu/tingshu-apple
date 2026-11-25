@@ -47,8 +47,12 @@ object TrackNormalizer {
         val displayPrice = AlbumNormalizer.str(t, "displayPrice")
         val hint = when {
             direct != null -> ""
+            // 注意：mobwsa 是匿名接口，**登录了且是会员**时这里拿到的 playUrl 同样是空的，
+            // 但 Player 会带 Cookie 走官方 extract 拿到会员直链，功能不受影响。
+            // 所以文案不能把话说死成「你得去开通会员」—— 已经是会员的人会以为坏了。
             paid -> "本集为付费内容" + (if (displayPrice.isNotEmpty()) "（" + displayPrice + "）" else "") +
-                (if (sample > 0) "，可试听前 " + sample + " 秒；登录并开通会员后完整收听" else "，登录并开通会员后可听")
+                (if (sample > 0) "，可试听前 " + sample + " 秒" else "") +
+                "；已开通会员会自动走会员通道，未开通请先登录并开通"
             else -> "该源没给这一集的音频地址（可能已下架或需要登录）"
         }
         return Episode(

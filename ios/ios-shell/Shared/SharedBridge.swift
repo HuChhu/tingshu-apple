@@ -166,11 +166,6 @@ enum SharedBridge {
     ///   ② 有些集 trackId=0，只剩网页地址
     /// 这两种都拿去给 extract() 就会被判「不是直链」。这里拿 trackId 反向补真直链：
     /// 先用免登录源的 track 接口换一次 playUrl，换不到再让 Player 走 WebView 嗅探。
-    static func usableURL(_ ep: EpisodeRow) -> String {
-        if ep.url.hasPrefix("http") { return ep.url }
-        if ep.trackId > 0 { return "https://www.ximalaya.com/sound/\(ep.trackId)" }
-        return ep.url
-    }
 
     /// 视作「需要重新解析」的地址：网页详情页，不是媒体文件
     static func looksLikeWebPage(_ url: String) -> Bool {

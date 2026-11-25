@@ -931,7 +931,7 @@ final class Player: NSObject, ObservableObject {
                 guard gen == self.requestGeneration else { return }
                 self.requestingEpisode = false
                 // P0-3：显示真实原因（登录失效/网络异常/触发限流），不再一律「取不到」
-                self.failAddress(SharedBridge.lastAudioError ?? "这个源取不到播放地址")
+                self.failAddress(SharedBridge.lastAudioError ?? Player.fallbackAddressReason(src))
                 return
             }
             guard gen == self.requestGeneration else { return }   // 用户已经点了别的集
@@ -1134,6 +1134,19 @@ final class Player: NSObject, ObservableObject {
                       headers: headers, sourceURL: url, loader: loader)
     }
 
+    /// 引擎没给具体原因时的兜底文案。按源分开，免得用户看到一句万能废话：
+    /// 网易云走的是 meting 代理，代理挂了/歌曲下架都表现成「播不了」，
+    /// 说成「源站返回了网页」会把排查方向带偏。
+    static func fallbackAddressReason(_ sourceId: String) -> String {
+        switch sourceId {
+        case "netease": return "网易云代理没返回音频（代理可能挂了，或这首歌已下架）"
+        case "kuwo": return "酷我没有返回可播地址（可能要会员，或该曲已下架）"
+        case "bilibili": return "B 站没有返回可播音频（可能是番剧/付费内容，或该分片已失效）"
+        case "qingting": return "蜻蜓没有返回可播地址（该节目可能需要登录或已下架）"
+        case "ximalaya", "ximalaya-open": return "喜马拉雅没有返回可播地址（可能需要登录或已下架）"
+        default: return "这个源取不到播放地址"
+        }
+    }
     /// 建 item。三条路，按「能带 header 且不会挂住 asset」的优先级排：
     ///
     /// A. 有 header + http(s) → 自定义 scheme + ResourceLoaderDelegate（主力）。

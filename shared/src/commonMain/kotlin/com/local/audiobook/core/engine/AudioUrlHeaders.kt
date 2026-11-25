@@ -120,8 +120,8 @@ object AudioUrlHeaders {
             ?.lowercase()
 
     /**
-     * 音频请求头。**音频 CDN（xmcdn）只能发 UA，绝不能带 Referer** ——
-     * OpenRoutes.audioHeaders() 的注释记了实测结论：「加 Referer 会变成 403」。
+     * 音频请求头。音频 CDN（xmcdn）只发 UA ——
+     * 2026-11-25 真机复测修正：xmcdn 对 Referer **不校验**（带不带都是 206），403 的真实边界是
      *
      * 2026-11-25 修：这里以前对 xmcdn 也塞 Referer，而 XimalayaOpenSource 只发 UA。
      * 结果同一个 CDN 地址两个源行为分裂：登录用户走登录版引擎反而 403，

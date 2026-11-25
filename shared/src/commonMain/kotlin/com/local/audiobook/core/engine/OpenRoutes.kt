@@ -53,7 +53,7 @@ object OpenRoutes {
      *   "ting_6.6.90(Galaxy,Android15)" → 200 ✓
      *
      * 规律：CDN 校验 UA 的「像不像真实客户端」，短 UA 会被拦。
-     * Referer 反而是有害的（带上就 403）。
+     * 2026-11-25 复测修正：xmcdn 不校验 Referer（带不带都 206），真正的边界是缺 UA。
      */
     const val AUDIO_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -92,8 +92,9 @@ object OpenRoutes {
     )
 
     /**
-     * 请求头：音频 CDN 只需要 UA，且**不能带 Referer**。
-     * 实测：加 Referer 会变成 403。
+     * 请求头：音频 CDN 只发 UA。
+     * 不带 Referer 是「够用、变量最少」，不是因为带了会挂。
+     * 实测（2026-11-25 复测修正）：带不带 Referer 都是 206；缺 UA 才 403。
      */
     fun audioHeaders(): Map<String, String> = mapOf(
         "User-Agent" to AUDIO_UA,

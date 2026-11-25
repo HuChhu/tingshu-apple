@@ -154,15 +154,20 @@ class SourceRegistry(
      * 按源取详情。
      * 返回 BookDetailResult 而不是抛异常（K/N fatal 语义同上）。
      */
-    suspend fun bookDetail(sourceId: String, bookUrl: String, loadEpisodes: Boolean): BookDetailResult = try {
+    suspend fun bookDetail(sourceId: String, bookUrl: String, loadEpisodes: Boolean,
+                           loadFullPages: Boolean = true): BookDetailResult = try {
+        // 【P0 2026-11-25】这里原来把 loadFullPages 写死成 false，全部源都只抓第一页。
+        // 引擎侧 XimalayaOpenSource 是 `maxPages = if (loadFullPages) 60 else 1`，
+        // 于是 App 上「在暴雪时分」显示 20 集、官方 App 是 67 集 —— 后 47 集根本没请求过。
+        // 默认改成 true（详情页就是要全书）；真要只取一页的调用方显式传 false。
         val d = when (sourceId) {
-            "ximalaya-open" -> ximalayaOpen.bookDetail(bookUrl, loadEpisodes, false)
-            "kuwo" -> kuwo.bookDetail(bookUrl, loadEpisodes, false)
-            "bilibili" -> bilibili.bookDetail(bookUrl, loadEpisodes, false)
-            "qingting" -> qingting.bookDetail(bookUrl, loadEpisodes, false)
-            "netease" -> netease.bookDetail(bookUrl, loadEpisodes, false)
-            "ximalaya" -> ximalayaLogin.bookDetail(bookUrl, loadEpisodes, false)
-            else -> templates[sourceId]?.bookDetail(bookUrl, loadEpisodes, false)
+            "ximalaya-open" -> ximalayaOpen.bookDetail(bookUrl, loadEpisodes, loadFullPages)
+            "kuwo" -> kuwo.bookDetail(bookUrl, loadEpisodes, loadFullPages)
+            "bilibili" -> bilibili.bookDetail(bookUrl, loadEpisodes, loadFullPages)
+            "qingting" -> qingting.bookDetail(bookUrl, loadEpisodes, loadFullPages)
+            "netease" -> netease.bookDetail(bookUrl, loadEpisodes, loadFullPages)
+            "ximalaya" -> ximalayaLogin.bookDetail(bookUrl, loadEpisodes, loadFullPages)
+            else -> templates[sourceId]?.bookDetail(bookUrl, loadEpisodes, loadFullPages)
                 ?: return BookDetailResult(reason = unknownSource(sourceId))
         }
         BookDetailResult(detail = d)

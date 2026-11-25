@@ -732,7 +732,7 @@ enum SharedBridge {
 
     private static func rawBookDetail(sourceId: String, bookUrl: String) async -> BookDetail? {
         let r = await bridge { done in
-            registry.bookDetail(sourceId: sourceId, bookUrl: bookUrl, loadEpisodes: true,
+            registry.bookDetail(sourceId: sourceId, bookUrl: bookUrl, loadEpisodes: true, loadFullPages: true,
                                 completionHandler: { res, e in done(res, e) })
         }
         guard let r = r else { return nil }

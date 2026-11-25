@@ -907,6 +907,11 @@ final class Player: NSObject, ObservableObject {
             if SharedBridge.looksLikeWebPage(input), ep.trackId > 0 {
                 input = "https://www.ximalaya.com/sound/\(ep.trackId)"
             }
+            // 【2026-11-25 排查用】打一行取地址实况：
+            //   src  = 走的哪个通道（免登录拿不到 VIP 集的地址，一眼能看出来）
+            //   cookie= 引擎侧看到的 Cookie 长度（0 就是登录态没灌进去，不是会员问题）
+            //   login= 壳侧认为是否已登录
+            CrashLog.write("PLAY", "resolve src=\(src) cookie=\(SharedBridge.engineCookieLength) login=\(SharedBridge.loggedIn) track=\(ep.trackId)")
             // 用 audioEx：失败原因随返回值带出来，不再依赖会被别的调用清空的静态字段
             let first = await SharedBridge.audioEx(sourceId: src, url: input)
             var audio = first.audio

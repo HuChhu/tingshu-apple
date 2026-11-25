@@ -737,6 +737,18 @@ enum SharedBridge {
                 return d
             }
         }
+        // 兜底 1b：反过来 —— 免登录通道拿到的专辑「一条都播不了」而用户已登录时，
+        // 换登录通道再取一次。VIP/付费专辑的曲目只有登录通道能换到试听/直链，
+        // 免登录通道对它们永远是空 playUrl。没有这一步，登录用户点进去还是满屏锁。
+        if sourceId == "ximalaya-open", bookUrl.contains("/album/"), loggedIn {
+            if let d = await rawBookDetail(sourceId: "ximalaya", bookUrl: bookUrl) {
+                let rows = (d.episodes as? [Episode]) ?? []
+                if rows.contains(where: { $0.playable }) {
+                    lastDetailError = nil
+                    return d
+                }
+            }
+        }
         // 兜底 2：书是酷我/B站等别的源搜出来的，专辑地址却是网页地址 → 试一次模板/原生解析
         lastDetailError = firstReason
         return nil

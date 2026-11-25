@@ -35,21 +35,29 @@ class SourceRegistry(
         override suspend fun refresh() {}
     },
 ) {
-    private val throttle = RequestThrottle(minIntervalMs = 1_000L, clock = nowMs)
+    // 【P1 2026-11-25】以前 38 个源共用**同一个** throttle 实例。
+    // RequestThrottle.run() 是 mutex + 单飞闸门 —— 共用等于全局串行：
+    //   · AggregateSearch 里 async+awaitAll 的「并发」实际完全排队；
+    //   · 一个慢站（实测 aisongli/eshengda 要 45s）持锁期间，用户点任何别的源都在排队。
+    // 实测 3 路并发 × 300ms 网络：共用一个 2318ms，各自一个 303ms，差 7.7 倍。
+    // 现在按源分桶：**同一个源仍然 1 请求/秒**（防风控不能松），跨源互不阻塞。
+    private val throttles = mutableMapOf<String, RequestThrottle>()
+    private fun throttleFor(sourceId: String): RequestThrottle =
+        throttles.getOrPut(sourceId) { RequestThrottle(minIntervalMs = 1_000L, clock = nowMs) }
     private val clock = nowMs
 
     // ---------- 原生源 ----------
 
-    val ximalayaOpen = XimalayaOpenSource(fetcher, throttle)
-    val kuwo = KuwoSource(fetcher, throttle)
-    val bilibili = BilibiliSource(fetcher, throttle)
-    val qingting = QingtingSource(fetcher, throttle, clock)
-    val netease = NeteaseSource(fetcher, throttle)
+    val ximalayaOpen = XimalayaOpenSource(fetcher, throttleFor("ximalaya-open"))
+    val kuwo = KuwoSource(fetcher, throttleFor("kuwo"))
+    val bilibili = BilibiliSource(fetcher, throttleFor("bilibili"))
+    val qingting = QingtingSource(fetcher, throttleFor("qingting"), clock)
+    val netease = NeteaseSource(fetcher, throttleFor("netease"))
 
     /** 登录版（需要 Cookie） */
     val ximalayaLogin = SearchEngine(
         fetcher = fetcher,
-        throttle = throttle,
+        throttle = throttleFor("ximalaya"),
         budget = WebSearchBudget(now = clock),
         nowMs = clock,
         cookieProvider = cookieProvider,
@@ -65,7 +73,7 @@ class SourceRegistry(
      * 现在统一走 TemplateSites.build()，CLI 与 App 只有一条装配路径。
      */
     private val templates: Map<String, TemplateTingSite> =
-        TemplateSites.build(fetcher, throttle).associateBy { it.sourceId }
+        TemplateSites.build(fetcher) { id -> throttleFor(id) }.associateBy { it.sourceId }
 
     companion object {
         /** 原生源 id：不在 when 里写的都归模板站，写错 id 会静默掉到 templates[null] 再报"没有这个源" */

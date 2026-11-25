@@ -439,8 +439,13 @@ object TemplateSites {
         ),
     )
 
+    /** 全量装配。throttleFor 按源分桶：同一个站仍然 1 请求/秒，站与站之间不互相排队。 */
+    fun build(fetcher: JsonFetcher, throttleFor: (String) -> RequestThrottle): List<TemplateTingSite> =
+        all.map { it.toSite(fetcher, throttleFor(it.key)) }
+
+    /** 兼容旧签名（单测/CLI 用同一个 throttle 就够了） */
     fun build(fetcher: JsonFetcher, throttle: RequestThrottle): List<TemplateTingSite> =
-        all.map { it.toSite(fetcher, throttle) }
+        build(fetcher) { throttle }
 
     fun byKey(key: String, fetcher: JsonFetcher, throttle: RequestThrottle): TemplateTingSite? =
         all.firstOrNull { it.key == key }?.toSite(fetcher, throttle)

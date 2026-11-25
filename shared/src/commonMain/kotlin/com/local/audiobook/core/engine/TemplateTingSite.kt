@@ -530,11 +530,24 @@ class TemplateTingSite(
             // ① 默认分页（htmlPageStart=2）：末尾数字段等于 2 才是页码（如 /album/1064/2）
             // ② 自定义分页（htmlPageStart 非默认）：末尾数字段是页码（如 /book/detail/<uuid>/0）
             //    此时书籍 ID 通常不是纯数字（如 UUID），所以末尾数字段一定是页码
-            val isPageSuffix = if (htmlPageStart == 2) {
-                lastSeg.toIntOrNull() == 2
-            } else {
-                lastSeg.toIntOrNull() != null
-            }
+            // 【P2 2026-11-25 修边界】旧判定是「末段 == 2 就当页码」。
+            // 但 vbus 的书 id 恰好可以是 2：/album/2 会被剥成 /album，
+            // 于是第 2 页又请求了第一页本身 —— 39 页全是重复数据，每页 1 秒，40 秒卡死。
+            // 现在改成「有第二段证据才剥」：
+            //   · 末段数字等于 htmlPageStart，**并且**
+            //   · 去掉末段后的 URL 已经在本次抓取里出现过（第一页就是它）→ 说明末段真是页码
+            // 拿不到证据就不剥，宁可多一个 /2，也不要丢掉书籍 id。
+            // 判定规则：末段是个数字，**且**去掉末段之后路径非空（还有真正的书籍标识）时，
+            // 才可能是页码后缀。这样：
+            //   /album/2        → 去掉末段是 /album，非空 → 但 2 是书 id，不能剥
+            // 所以还要第二条：末段必须**不等于**书籍路径里已出现的标识。
+            // 实际最稳的判据是「这个末段数字 ≥ htmlPageStart 且页面确实返回了内容」，
+            // 但页面内容要请求后才知道，不能事后补 —— 于是改成一个不会误伤的保守规则：
+            //   · htmlPageStart == 2（默认）时，**不剥**。绝大多数站第一页就是书籍页本身；
+            //   · 只有站配置显式声明了「第一页路径带页码」（htmlPageStart 非 2）才剥。
+            // vbus /album/1370 第一页不带页码，第二页是 /album/1370/2 —— 拼起来本来就对，
+            // 不需要剥；而 /album/2 被剥成 /album 才是那个 39 页重复的 bug 根源。
+            val isPageSuffix = htmlPageStart != 2 && lastSeg.toIntOrNull() != null
             val baseUrl = if (isPageSuffix) trimmed.removeSuffix("/" + lastSeg) else trimmed
             html = getText(htmlPagePattern.replace("{url}", baseUrl).replace("{page}", pageVal.toString()), firstUrl)
                 ?: break

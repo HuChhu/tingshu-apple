@@ -116,13 +116,35 @@ enum SharedBridge {
         let index: Int32             // 全书序号 1 起，跨页连续
         let durationMs: Int64        // 毫秒；UI 显示需 /1000
         let coverUrl: String
-        let url: String              // 上游给的曲目地址；trackId<=0 时作为 extract 回退输入
+        let url: String              // 音频直链；**空串 = 本集没有直链**（VIP/付费/已下架）
+        /// 本集能不能直接播。false 时 hint 一定非空。
+        ///
+        /// 2026-11-25：这是「搜出来的书播不了」的正面解。
+        /// 喜马 VIP 轨在 mobwsa 里 playUrl64=""、isPaid=true，旧引擎拿 /sound/{id} 网页顶上，
+        /// 播放器出口闸拦下后只报「只给了网页地址」，用户看不出是要钱。
+        /// 现在引擎直接告诉我们「这集不能播 + 为什么」，UI 和播放器都不用瞎猜。
+        let playable: Bool
+        let hint: String
+
+        init(title: String, trackId: Int64, index: Int32, durationMs: Int64,
+             coverUrl: String, url: String, playable: Bool = true, hint: String = "") {
+            self.title = title
+            self.trackId = trackId
+            self.index = index
+            self.durationMs = durationMs
+            self.coverUrl = coverUrl
+            self.url = url
+            self.playable = playable
+            self.hint = hint
+        }
     }
     /// 壳内自造一行（最近播放/队列续播用）：不经过 KMP，纯 Swift 值类型
     static func episodeRow(title: String, trackId: Int64, index: Int32,
-                           durationMs: Int64, coverUrl: String, url: String) -> EpisodeRow {
+                           durationMs: Int64, coverUrl: String, url: String,
+                           playable: Bool = true, hint: String = "") -> EpisodeRow {
         EpisodeRow(title: title, trackId: trackId, index: index,
-                   durationMs: durationMs, coverUrl: coverUrl, url: url)
+                   durationMs: durationMs, coverUrl: coverUrl, url: url,
+                   playable: playable, hint: hint)
     }
 
     static func row(from e: Episode) -> EpisodeRow {
@@ -132,7 +154,9 @@ enum SharedBridge {
             index: e.index,
             durationMs: e.durationMs,
             coverUrl: e.coverUrl,
-            url: e.url
+            url: e.url,
+            playable: e.playable,
+            hint: e.hint
         )
     }
 

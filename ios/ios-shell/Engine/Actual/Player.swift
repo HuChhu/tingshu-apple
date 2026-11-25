@@ -884,6 +884,16 @@ final class Player: NSObject, ObservableObject {
         currentEpisodes = episodes ?? []
         beginRequest(ep, book: book)
 
+        // 【2026-11-25 P0】引擎已经明确告诉我们这集有没有直链了。
+        // 以前这里不看 playable，一律去取地址：喜马 VIP 轨 playUrl 空 → 引擎拿网页顶上 →
+        // 出口闸拦住 → 用户看到「只给了网页地址」，完全不知道是要钱。
+        // 现在直接拿 hint 说话，并且不发那次注定失败的请求。
+        guard ep.playable else {
+            requestingEpisode = false
+            failAddress(ep.hint.isEmpty ? "本集暂时无法播放" : ep.hint)
+            return
+        }
+
         let gen = requestGeneration
         let src = sourceId
         let url = ep.url
@@ -937,6 +947,12 @@ final class Player: NSObject, ObservableObject {
     func playEpisode(_ ep: SharedBridge.EpisodeRow, book: SharedBridge.BookCard? = nil) {
         currentSourceId = "ximalaya"
         beginRequest(ep, book: book)
+
+        guard ep.playable else {
+            requestingEpisode = false
+            failAddress(ep.hint.isEmpty ? "本集暂时无法播放" : ep.hint)
+            return
+        }
 
         let gen = requestGeneration
         let input = ep.trackId > 0 ? String(ep.trackId) : ep.url
@@ -1247,12 +1263,32 @@ final class Player: NSObject, ObservableObject {
             updateNowPlayingInfo()
             return
         }
+        advanceAfterEnding(from: ep, skipped: 0)
+    }
+
+    /// 自动连播的下一条。遇到不可播的集（VIP/付费/已失效）就跳过继续找，
+    /// 最多连跳 3 集 —— 整本都不可播时不能无限递归，停下来把原因显示给用户。
+    /// 必须带 episodes: currentEpisodes：不传的话 playEpisode 会把队列清空，
+    /// 跳一条之后「下一集」就永远拿不到了。
+    private func advanceAfterEnding(from ep: SharedBridge.EpisodeRow, skipped: Int) {
         guard let next = nextEpisode(after: ep, forward: !effectivePlayback.reverseOrder) else {
             apply(.paused)
             updateNowPlayingInfo()
             return
         }
-        playEpisode(next, book: currentBook, sourceId: currentSourceId)
+        guard next.playable else {
+            CrashLog.write("PLAY", "auto skip unplayable track=\(next.trackId) skipped=\(skipped + 1)")
+            guard skipped < 2 else {
+                // 连续三集都不可播：停在这里，把最后一集的原因说清楚
+                pause()
+                failAddress(next.hint.isEmpty ? "连续多集无法播放，已停止自动连播" : next.hint)
+                updateNowPlayingInfo()
+                return
+            }
+            advanceAfterEnding(from: next, skipped: skipped + 1)
+            return
+        }
+        playEpisode(next, book: currentBook, sourceId: currentSourceId, episodes: currentEpisodes)
     }
     
     /// 找当前集的下一集（Player 需要持有当前书的章节列表）

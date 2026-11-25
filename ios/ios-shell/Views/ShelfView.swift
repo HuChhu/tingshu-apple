@@ -319,6 +319,14 @@ struct AlbumView: View {
     /// 注意：不能存 BookDetail——那是 KMP 类型，Views 层禁止 import shared。
     @State private var allEpisodes: [SharedBridge.EpisodeRow] = []
     @State private var introExpanded = false
+    /// 点了不可播章节时弹出的原因（VIP/付费/已失效…）。
+    /// 用 alert 而不是 toast：这类原因用户需要读完，1.4 秒的提示留不住。
+    @State private var episodeNotice: EpisodeNotice?
+
+    private struct EpisodeNotice: Identifiable {
+        let id: Int
+        let message: String
+    }
 
     /// 跨源唯一键（收藏/进度/分页都用它）
     private var bookKey: BookKey {
@@ -392,8 +400,22 @@ struct AlbumView: View {
                         if episodes.isEmpty {
                             Text("该专辑暂无曲目").font(.footnote).foregroundStyle(.secondary)
                         } else {
-                            ForEach(Array(episodes.enumerated()), id: \.element.url) { (idx: Int, ep: SharedBridge.EpisodeRow) in
+                            // 多数章节不可播时先说一句，省得用户一集一集点着失望。
+                            // 按已加载的 episodes 统计，不按 totalChapters（分页没加载完会误判）。
+                            episodeHealthBanner
+                            // id 用 offset 不用 element.url：不可播章节的 url 是空串，
+                            // 多集会同时得到 id == ""，SwiftUI 会报重复 id 并串行/丢行。
+                            // 分页是 append 追加，已有行的 offset 恒定，够用。
+                            ForEach(Array(episodes.enumerated()), id: \.offset) { (idx: Int, ep: SharedBridge.EpisodeRow) in
                                 Button {
+                                    if !ep.playable {
+                                        // 不调 Player、不动播放行标：只把原因说清楚
+                                        episodeNotice = EpisodeNotice(
+                                            id: idx,
+                                            message: ep.hint.isEmpty ? "这一集暂时无法播放，可以换一集或换个书源试试。" : ep.hint
+                                        )
+                                        return
+                                    }
                                     playingRow = idx
                                     lastPlayedRow = idx
                                     lastPlayedTrackId = ep.trackId
@@ -458,6 +480,19 @@ struct AlbumView: View {
         }
         // 绑定 bookKey：父视图重建（比如迷你播放条刷新）不会重跑 load()，
         // 否则会把 episodes 重置回 loading 态，看起来像「闪退 / 闪一下回加载」
+        // 不可播章节的原因弹窗。挂在 body 最外层，切换章节/页面都不会丢。
+        .alert(
+            "暂时无法播放",
+            isPresented: Binding(
+                get: { episodeNotice != nil },
+                set: { if !$0 { episodeNotice = nil } }
+            ),
+            presenting: episodeNotice
+        ) { _ in
+            Button("知道了", role: .cancel) { episodeNotice = nil }
+        } message: { notice in
+            Text(notice.message)
+        }
         .task(id: bookKey.id) {
             guard !loadedOnce else { return }
             loadedOnce = true
@@ -551,10 +586,12 @@ struct AlbumView: View {
         }
     }
 
+    /// 章节行。不可播的集：标题降为次要色 + 右侧锁图标 + 仍可点（点了看原因）。
+    /// 不用 .disabled —— 禁用后用户点不动，也就永远不知道为什么会失败。
     private func episodeRow(_ ep: SharedBridge.EpisodeRow, row: Int) -> some View {
-        // 只有一行能被标记：优先「正在播的这一行」，其次「上次播放的那一行」
-        let isCurrent = playingRow == row
-        let isLast = !isCurrent && lastPlayedRow == row
+        // 不可播的集不标「播放中/上次播放到」，避免视觉状态误导
+        let isCurrent = ep.playable && playingRow == row
+        let isLast = ep.playable && !isCurrent && lastPlayedRow == row
         return HStack(spacing: 10) {
             Text("\(ep.index)")
                 .font(.caption).foregroundStyle(.secondary)
@@ -562,7 +599,8 @@ struct AlbumView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(ep.title)
                     .lineLimit(2)
-                    .foregroundStyle(isCurrent || isLast ? Color.accentColor : Color.primary)
+                    .foregroundStyle(!ep.playable ? Color.secondary
+                        : (isCurrent || isLast ? Color.accentColor : Color.primary))
                 if isCurrent {
                     Text("播放中")
                         .font(.caption2)
@@ -577,8 +615,28 @@ struct AlbumView: View {
             if ep.durationMs > 0 {
                 Text(dur(ep.durationMs)).font(.caption).foregroundStyle(.secondary)
             }
+            if !ep.playable {
+                // 用 lock 不用 crown：hint 不一定是会员问题，锁形不会误述原因
+                Image(systemName: "lock.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("本集暂时无法播放")
+            }
         }
         .contentShape(Rectangle())
+    }
+
+    /// 一半以上章节不可播时的一条说明。用中性底不用告警红 —— 可播章节一切正常。
+    @ViewBuilder private var episodeHealthBanner: some View {
+        let bad = episodes.filter { !$0.playable }.count
+        if bad > 0 && bad * 2 > episodes.count {
+            Label("本专辑多数章节暂不可播，点章节可查看原因。",
+                  systemImage: "info.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 6)
+                .listRowBackground(Color.secondary.opacity(0.08))
+        }
     }
 
     private func playText(_ n: Int64) -> String {

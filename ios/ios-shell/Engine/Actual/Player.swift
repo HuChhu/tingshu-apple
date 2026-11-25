@@ -383,6 +383,9 @@ final class Player: NSObject, ObservableObject {
 
     @Published private(set) var state: PlayerState = .stopped
     @Published private(set) var nowPlaying: String = ""
+
+    /// 自动连播停下的位置要同步到标题，否则用户看到「第2集」却被告知第4集不可播
+    func setNowPlayingTitle(_ t: String) { nowPlaying = t }
     /// 是否展示全屏播放页（迷你条点击 → true；全屏页下拉关闭 → false）
     /// 放在 Player 上而不是根视图，是因为「播完自动进全屏」「错误页跳播放」都要能触发它。
     @Published var showFullScreen: Bool = false
@@ -1283,22 +1286,33 @@ final class Player: NSObject, ObservableObject {
     /// 最多连跳 3 集 —— 整本都不可播时不能无限递归，停下来把原因显示给用户。
     /// 必须带 episodes: currentEpisodes：不传的话 playEpisode 会把队列清空，
     /// 跳一条之后「下一集」就永远拿不到了。
-    private func advanceAfterEnding(from ep: SharedBridge.EpisodeRow, skipped: Int) {
+    private func advanceAfterEnding(from ep: SharedBridge.EpisodeRow, skipped: Int,
+                                    firstSkipped: SharedBridge.EpisodeRow? = nil) {
         guard let next = nextEpisode(after: ep, forward: !effectivePlayback.reverseOrder) else {
+            // 播到全书末尾。以前这里静默 pause，用户分不清「播完了」还是「卡住了」。
+            // 正常结束不能伪装成错误，所以只给一句提示，状态仍是 paused。
+            stageHint = .idle
+            errorText = "《\(ep.title)》已播完"
             apply(.paused)
             updateNowPlayingInfo()
             return
         }
         guard next.playable else {
+            let first = firstSkipped ?? next
             CrashLog.write("PLAY", "auto skip unplayable track=\(next.trackId) skipped=\(skipped + 1)")
             guard skipped < 2 else {
-                // 连续三集都不可播：停在这里，把最后一集的原因说清楚
+                // 连跳三集都不可播：说清楚是「第几集到第几集」不可播，
+                // 而不是只报最后一集的 hint —— 那时界面标题还停在第 2 集，用户会对不上号。
+                let low = min(Int(first.index), Int(next.index))
+                let high = max(Int(first.index), Int(next.index))
+                let reason = next.hint.isEmpty ? "本集不可播" : next.hint
+                setNowPlayingTitle("第\(next.index)集：\(next.title)")
                 pause()
-                failAddress(next.hint.isEmpty ? "连续多集无法播放，已停止自动连播" : next.hint)
+                failAddress("第\(low)-第\(high)集无法播放，已停止自动连播。\(reason)")
                 updateNowPlayingInfo()
                 return
             }
-            advanceAfterEnding(from: next, skipped: skipped + 1)
+            advanceAfterEnding(from: next, skipped: skipped + 1, firstSkipped: first)
             return
         }
         playEpisode(next, book: currentBook, sourceId: currentSourceId, episodes: currentEpisodes)

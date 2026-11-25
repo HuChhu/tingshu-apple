@@ -331,7 +331,8 @@ enum SharedBridge {
         private let lock = NSLock()
         private var _cards: [BookCard] = []
         private var _reason: String?
-        private var _seen = Set<String>()
+        /// 键 -> 在 _cards 里的下标（合并需要定位，不能只存 seen 集合）
+        private var _indexByKey: [String: Int] = [:]
 
         var cards: [BookCard] {
             lock.lock(); defer { lock.unlock() }; return _cards
@@ -341,15 +342,57 @@ enum SharedBridge {
             lock.lock(); defer { lock.unlock() }; return _reason
         }
 
+        /// 去重 + **合并**（不是丢弃）。
+        ///
+        /// 2026-11-25：以前键是 sourceId:albumId，而 engine 路给的是 "ximalaya"、
+        /// open 路给的是 "ximalaya-open" —— 同一本喜马书出两行，用户看到重复结果。
+        /// 现在把两个喜马源归一成 "ximalaya" 作为身份，然后按「登录态适用性」择优保留：
+        /// 登录了留登录通道的卡（能取会员集），未登录留免登录的卡（否则点进去要登录）。
+        /// 并发三路到达顺序不定，所以不能「先到先赢」。
         func add(_ items: [BookCard]) {
             lock.lock(); defer { lock.unlock() }
+            let preferLogin = SharedBridge.loggedIn
             for c in items {
-                // 去重键必须带来源：喜马拉雅和模板站可能有同一个 albumId，
-                // 按裸 albumId 去重会把另一条结果吞掉。
-                let key = (c.sourceId.isEmpty ? "-" : c.sourceId) + ":"
-                    + (c.albumId > 0 ? String(c.albumId) : c.bookUrl)
-                if _seen.insert(key).inserted { _cards.append(c) }
+                let src = Self.identitySource(c.sourceId)
+                let idPart = c.albumId > 0 ? String(c.albumId) : c.bookUrl
+                let key = src + ":" + idPart
+                if let idx = _indexByKey[key] {
+                    if Self.richer(c, than: _cards[idx], preferLogin: preferLogin) {
+                        _cards[idx] = c
+                    }
+                } else {
+                    _indexByKey[key] = _cards.count
+                    _cards.append(c)
+                }
             }
+        }
+
+        /// 身份用源：两个喜马通道视为同一个源，其它源保持原样
+        private static func identitySource(_ sourceId: String) -> String {
+            switch sourceId {
+            case "ximalaya", "ximalaya-open": return "ximalaya"
+            case "": return "-"
+            default: return sourceId
+            }
+        }
+
+        /// 同一本书的两个候选，留哪个：先看登录态适用性，再看信息完整度
+        private static func richer(_ candidate: BookCard, than existing: BookCard,
+                                   preferLogin: Bool) -> Bool {
+            let wanted = preferLogin ? "ximalaya" : "ximalaya-open"
+            let candOK = candidate.sourceId == wanted
+            let existOK = existing.sourceId == wanted
+            if candOK != existOK { return candOK }
+            func score(_ c: BookCard) -> Int {
+                var n = 0
+                if !c.author.isEmpty { n += 1 }
+                if !c.coverUrl.isEmpty { n += 1 }
+                if !c.intro.isEmpty { n += 1 }
+                if c.trackCount > 0 { n += 1 }
+                if c.playCount > 0 { n += 1 }
+                return n
+            }
+            return score(candidate) > score(existing)
         }
 
         func note(_ why: String) {

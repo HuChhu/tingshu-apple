@@ -15,16 +15,21 @@ struct PlayerView: View {
     @State private var isFavorite = false
 
     private enum PlayerSheet: Identifiable {
-        case chapters, sleep, speed, volume
+        case chapters, sleep, speed, volume, sources
         var id: Int {
             switch self {
             case .chapters: return 0
             case .sleep: return 1
             case .speed: return 2
             case .volume: return 3
+            case .sources: return 4
             }
         }
     }
+
+    /// 换源状态：正在搜 / 搜到了没 / 为什么没搜到
+    @State private var sourceSwitching = false
+    @State private var sourceSwitchMessage: String?
 
     var body: some View {
         // 【v1.4.8 修「播放页整屏发白」】
@@ -332,6 +337,16 @@ struct PlayerView: View {
                     .frame(minHeight: 44)
                     .accessibilityLabel("重试这一集")
             }
+            // 以前换源要：播放页 → 返回 → 书架 → 分类页 → 选源重搜，四步。
+            // 现在原地一步：这个源不行就换一个，不用离开播放页。
+            Button("换个源听") {
+                sourceSwitchMessage = nil
+                activeSheet = .sources
+            }
+            .foregroundStyle(.white.opacity(0.9))
+            .frame(minHeight: 44)
+            .disabled(sourceSwitching)
+            .accessibilityLabel("换个源听")
         }
         .padding(.horizontal, 32)
     }
@@ -374,6 +389,108 @@ struct PlayerView: View {
             speedSheet
         case .volume:
             volumeSheet
+        case .sources:
+            sourceSwitcher
+        }
+    }
+
+    // MARK: - 换个源听
+
+    /// 可选源清单：排除当前源；用户若在「源管理」里限定了启用集，只列启用的。
+    private var switchableSources: [SharedBridge.SourceItem] {
+        // 全部列出来，只排除当前正在用的那个源。
+        // 这里**不**按「源管理」里的启用集过滤：那个设置控制的是浏览页里显示哪些站，
+        // 不是「播放失败时允许换到哪些站」—— 换源本来就是救命动作，不该被限量。
+        SharedBridge.allSources().filter { $0.id != player.currentSourceId }
+    }
+
+    private var sourceSwitcher: some View {
+        SheetContainer {
+            SheetTitle(icon: "square.stack.3d.up.fill", title: "换个源听")
+            if sourceSwitching {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text("正在这个源里找同一本书…").font(.footnote).foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 8)
+            }
+            if let msg = sourceSwitchMessage {
+                Text(msg)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.vertical, 6)
+            }
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(switchableSources, id: \.id) { src in
+                        Button {
+                            switchToSource(src.id)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(src.name).font(.callout)
+                                    if !src.desc.isEmpty {
+                                        Text(src.desc).font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                            }
+                            .contentShape(Rectangle())
+                            .padding(.vertical, 10)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(sourceSwitching)
+                        Divider().opacity(0.3)
+                    }
+                }
+            }
+            .frame(maxHeight: 340)
+            Button("关闭") { activeSheet = nil }.disabled(sourceSwitching)
+        }
+    }
+
+    /// 换源：用书名在新源里搜 → 取详情 → 找同名/同 trackId 的集 → 原地起播。
+    /// 找不到就如实说，不偷偷播另一本。
+    private func switchToSource(_ sourceId: String) {
+        guard !sourceSwitching else { return }
+        let title = player.currentBookTitle
+        let trackId = player.currentTrackId
+        let episodeTitle = player.nowPlaying
+        guard !title.isEmpty else {
+            sourceSwitchMessage = "当前播放没有书名信息，去书架里重新打开这本书再换源"
+            return
+        }
+        sourceSwitching = true
+        sourceSwitchMessage = nil
+        Task { @MainActor in
+            defer { sourceSwitching = false }
+            guard let result = await SharedBridge.search(sourceId: sourceId, keywords: title, page: 1) else {
+                sourceSwitchMessage = "这个源搜索失败，换个源试试"
+                return
+            }
+            let cards = SharedBridge.cards(from: result)
+            guard !cards.isEmpty else {
+                sourceSwitchMessage = "这个源没有《\(title)》"
+                return
+            }
+            // 优先完全同名；没有再取第一条（用户比过一眼就能判断是不是同一本）
+            let match = cards.first { $0.title == title } ?? cards[0]
+            guard let detail = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: match.bookUrl) else {
+                sourceSwitchMessage = SharedBridge.lastDetailError ?? "这个源读取章节失败"
+                return
+            }
+            let episodes = SharedBridge.rows(from: detail)
+            let book = SharedBridge.card(from: detail.book)
+            let episode = episodes.first { trackId > 0 && $0.trackId == trackId }
+                ?? episodes.first { $0.title == episodeTitle }
+                ?? episodes.first
+            guard let episode else {
+                sourceSwitchMessage = "这个源里没有可播章节"
+                return
+            }
+            player.playEpisode(episode, book: book, sourceId: sourceId, episodes: episodes)
+            activeSheet = nil
         }
     }
 

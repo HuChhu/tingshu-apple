@@ -25,10 +25,23 @@ object SourceRegistryFactory {
      */
     private var injectedCookie: String? = null
 
+    /**
+     * 壳在登录成功 / 启动时刷新的「重读钩子」。
+     *
+     * 【2026-11-25】以前 refresh() 是空实现，什么都没做。
+     * 引擎在 XimalayaAudioExtractor 遇到 need_login 时会调 refresh() 期望重读登录态，
+     * 走这条通道就是空转 —— Cookie 过期后同一进程内永远恢复不了，
+     * 用户只能杀掉 App 重开。现在把壳的注入动作接上来。
+     */
+    private var onRefresh: () -> Unit = {}
+
     var cookieProvider: CookieProvider = object : CookieProvider {
         override suspend fun cookie(): String? = injectedCookie
-        override suspend fun refresh() {}
+        override suspend fun refresh() { onRefresh() }
     }
+
+    /** 壳注册：refresh() 被调用时怎么重读 Cookie（一般就是 SharedBridge.injectCookie） */
+    fun setRefreshHook(hook: () -> Unit) { onRefresh = hook }
 
     /** 壳调用：把 HTTPCookieStorage 里的喜马拉雅 Cookie 串灌进引擎 */
     fun setCookie(cookie: String?) {

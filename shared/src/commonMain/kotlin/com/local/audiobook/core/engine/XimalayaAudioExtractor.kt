@@ -72,7 +72,16 @@ class XimalayaAudioExtractor(
         val headers = if (cookie != null) base + mapOf("Cookie" to cookie) else base
 
         val resp = throttle.run { fetcher.get(DetailRoutes.playAudio(trackId), headers) }
-        if (resp !is FetchOutcome.Ok) throw SourceErrors.Network((resp as FetchOutcome.Failed).kind)
+        if (resp !is FetchOutcome.Ok) {
+            val f = resp as FetchOutcome.Failed
+            // 【2026-11-25】以前一律抛 Network，界面显示「网络异常：HTTP」——
+            // 而真实情况是这个端点返回 404（带账号才通，匿名 404）。
+            // 让“网络不好”和“接口不认你”在文案上分开，否则永远查不到真因。
+            if (f.kind.contains("404") || f.kind.contains("status=404")) {
+                throw SourceErrors.ParseFailed("播放接口返回 404：需要登录，或该接口已改版")
+            }
+            throw SourceErrors.Network(f.kind)
+        }
 
         val json = parse(resp.text) ?: throw SourceErrors.ParseFailed("播放接口响应非JSON")
         val (status, err) = ErrorClassifier.classifyJson(resp.httpStatus, json)

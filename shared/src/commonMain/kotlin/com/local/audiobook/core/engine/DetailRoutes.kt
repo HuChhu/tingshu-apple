@@ -9,7 +9,9 @@ object DetailRoutes {
 
     // 官方播放接口（级3 主路线）
     fun playAudio(trackId: Long): String =
-        SearchRoutes.WEB_BASE + "/revision/play/v1/audio?ptype=1&id=" + trackId + "&xmSignType=1"
+        // 【2026-11-25】删掉 xmSignType=1 —— 从官方网页 JS 里挖出的真实 URL 只有 id 和 ptype，
+        // 这个参数是我们自己加的，服务端不认，还可能干扰签名校验。
+        SearchRoutes.WEB_BASE + "/revision/play/v1/audio?ptype=1&id=" + trackId
 
     fun soundUrl(trackId: Long): String = SearchRoutes.WEB_BASE + "/sound/" + trackId
 }

@@ -623,6 +623,18 @@ enum SharedBridge {
 
     /// 把 HTTPCookieStorage 里的喜马拉雅 Cookie 灌进引擎。
     /// 登录成功、登出、启动时都要调。
+    /// 注册「引擎要求重读登录态」的回调。
+    /// 引擎在遇到 need_login 时会调 CookieProvider.refresh()，
+    /// 以前那个实现是空的，所以 Cookie 过期后同一进程内永远恢复不了。
+    private static var refreshHookInstalled = false
+    static func installRefreshHookOnce() {
+        guard !refreshHookInstalled else { return }
+        refreshHookInstalled = true
+        SourceRegistryFactory().setRefreshHook(hook: {
+            injectCookie()
+        })
+    }
+
     static func injectCookie() {
         let cookies = CookieStore.ximalayaCookies()
         guard !cookies.isEmpty else {

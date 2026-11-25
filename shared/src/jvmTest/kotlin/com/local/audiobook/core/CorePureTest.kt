@@ -249,6 +249,10 @@ class CorePureTest {
         assertEquals("", ep.url, "VIP 轨不许填网页地址")
         assertFalse(ep.playable)
         assertTrue(ep.hint.contains("付费"), "原因里必须说清是付费内容：" + ep.hint)
+        // 2026-11-25 纠正：这批 VIP 专辑 priceTypeId=1（按集购买），会员不豁免。
+        // 文案里不许再出现「已开通会员会自动走会员通道」这种误导。
+        assertFalse(ep.hint.contains("自动走会员通道"), "不能暗示会员能解：" + ep.hint)
+        assertTrue(ep.hint.contains("会员不包含"), "必须说清会员不包含：" + ep.hint)
         assertTrue(ep.hint.contains("0.20喜点/集"), "要带上价格：" + ep.hint)
         assertTrue(ep.hint.contains("90"), "要带上试听时长：" + ep.hint)
         assertEquals(1800000L, ep.durationMs)

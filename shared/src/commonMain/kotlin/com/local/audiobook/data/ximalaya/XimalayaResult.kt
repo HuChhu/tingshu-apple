@@ -56,6 +56,11 @@ object ErrorClassifier {
             return ErrorKind.RISK_CONTROL
         }
         if (isNeedLogin == true || ret == 401 || ret == 402) return ErrorKind.NOT_LOGGED_IN
+        // 【2026-11-25】4xx 以前落到 `return null`（= 当成功处理），
+        // 于是 /revision/play/v1/audio 返回 404 时既不说“接口没了”、也不报错，
+        // 而是继续往下取 data，最后抛一句「上游未返回可播放地址」——误诊的源头。
+        // 现在 4xx 一律算接口改版（401/402 上面已经先判成“未登录”）。
+        if (httpCode in 400..499) return ErrorKind.API_CHANGED
         if (httpCode in 500..599) return ErrorKind.API_CHANGED
         if (httpCode == 200 && ret != null && ret != 0 && ret != 200) return ErrorKind.API_CHANGED
         return null

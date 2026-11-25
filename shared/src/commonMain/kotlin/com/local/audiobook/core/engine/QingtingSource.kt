@@ -94,7 +94,8 @@ class QingtingSource(
 
     // ---------- 频道详情 ----------
 
-    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {
+    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean,
+                                cancel: com.local.audiobook.core.CancelToken): BookDetail {
         val channelId = Regex("channels/(\\d+)").find(bookUrl)?.groupValues?.get(1)
             ?: bookUrl.filter { it.isDigit() }.takeIf { it.isNotEmpty() }
             ?: throw SourceErrors.ParseFailed("无法解析 channelId：" + bookUrl)

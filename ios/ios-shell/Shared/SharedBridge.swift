@@ -664,6 +664,25 @@ enum SharedBridge {
         let kind: String
     }
 
+    // MARK: - 取消令牌（跨 K/N 桥传递）
+
+    /// Kotlin 的 CancelToken 实现。
+    /// SwiftUI 取消 .task 只会丢弃 await 的挂起点，**传不到 Kotlin 协程** ——
+    /// 那个协程会继续翻完 40 页、占着全局 1 秒/次的限速队列，
+    /// 用户返回后点别的书、点播放取地址都要排队。这个对象是唯一能过桥的信号。
+    final class CancelFlag: NSObject, CancelToken {
+        private let lock = NSLock()
+        private var _cancelled = false
+        var isCancelled: Bool {
+            lock.lock(); defer { lock.unlock() }
+            return _cancelled
+        }
+        func cancel() {
+            lock.lock(); defer { lock.unlock() }
+            _cancelled = true
+        }
+    }
+
     // MARK: - 会员状态（接口优先，WebView 兜底）
 
     /// 会员状态。**先问接口**（`/revision/main/getCurrentUser` + `/revision/user/basic`），
@@ -725,9 +744,10 @@ enum SharedBridge {
         set { detailErrLock.lock(); defer { detailErrLock.unlock() }; _lastDetailError = newValue }
     }
 
-    static func bookDetail(sourceId: String, bookUrl: String) async -> BookDetail? {
+    static func bookDetail(sourceId: String, bookUrl: String,
+                           cancel: CancelFlag? = nil) async -> BookDetail? {
         lastDetailError = nil
-        if let d = await rawBookDetail(sourceId: sourceId, bookUrl: bookUrl) {
+        if let d = await rawBookDetail(sourceId: sourceId, bookUrl: bookUrl, cancel: cancel) {
             // 【2026-11-25 修语义】上一版这里直接 return，于是「详情取到了但一条都播不了」
             // 的免登录结果被当成成功返回，1b 那段永远跑不到（它的触发条件是「取详情失败」）。
             // 现在：免登录通道成功但**全不可播**且用户已登录时，换登录通道再取一次；
@@ -735,7 +755,7 @@ enum SharedBridge {
             if sourceId == "ximalaya-open", bookUrl.contains("/album/"), loggedIn {
                 let rows = (d.episodes as? [Episode]) ?? []
                 let anyPlayable = rows.contains(where: { $0.playable })
-                if !anyPlayable, let login = await rawBookDetail(sourceId: "ximalaya", bookUrl: bookUrl) {
+                if !anyPlayable, let login = await rawBookDetail(sourceId: "ximalaya", bookUrl: bookUrl, cancel: cancel) {
                     let loginRows = (login.episodes as? [Episode]) ?? []
                     if loginRows.contains(where: { $0.playable }) {
                         lastDetailError = nil
@@ -749,7 +769,7 @@ enum SharedBridge {
 
         // 兜底 1：喜马拉雅登录版失败（Cookie 过期/风控）→ 换免登录版同一专辑
         if sourceId == "ximalaya", bookUrl.contains("/album/") {
-            if let d = await rawBookDetail(sourceId: "ximalaya-open", bookUrl: bookUrl) {
+            if let d = await rawBookDetail(sourceId: "ximalaya-open", bookUrl: bookUrl, cancel: cancel) {
                 lastDetailError = nil
                 return d
             }
@@ -759,9 +779,11 @@ enum SharedBridge {
         return nil
     }
 
-    private static func rawBookDetail(sourceId: String, bookUrl: String) async -> BookDetail? {
+    private static func rawBookDetail(sourceId: String, bookUrl: String,
+                                     cancel: CancelFlag? = nil) async -> BookDetail? {
         let r = await bridge { done in
             registry.bookDetail(sourceId: sourceId, bookUrl: bookUrl, loadEpisodes: true, loadFullPages: true,
+                               cancel: cancel ?? CancelFlag(),
                                 completionHandler: { res, e in done(res, e) })
         }
         guard let r = r else { return nil }

@@ -84,7 +84,8 @@ class VodSource(
 
     // ---------- 详情 ----------
 
-    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {
+    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean,
+                                    cancel: com.local.audiobook.core.CancelToken): BookDetail {
         val id = bookUrl.substringAfterLast('/').substringBefore('?')
         if (id.isEmpty()) throw SourceErrors.ParseFailed("bookUrl 里没有 id：" + bookUrl)
 

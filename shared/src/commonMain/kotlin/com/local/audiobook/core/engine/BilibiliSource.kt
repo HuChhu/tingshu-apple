@@ -91,7 +91,8 @@ class BilibiliSource(
             if (books.isEmpty()) "B站没搜到" else null)
     }
 
-    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {
+    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean,
+                                cancel: com.local.audiobook.core.CancelToken): BookDetail {
         val bvid = bookUrl.substringAfterLast('/')
         if (bvid.isEmpty()) throw SourceErrors.ParseFailed("无法解析 bvid：" + bookUrl)
         val root = getJson("https://api.bilibili.com/x/web-interface/view?bvid=" + bvid)

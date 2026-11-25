@@ -144,7 +144,8 @@ class XimalayaOpenSource(
         )
     }
 
-    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {
+    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean,
+                                cancel: com.local.audiobook.core.CancelToken): BookDetail {
         val albumId = parseAlbumId(bookUrl) ?: throw SourceErrors.ParseFailed("无法解析 albumId：" + bookUrl)
         val detailRoot = getJson(OpenRoutes.albumSimple(albumId), OpenRoutes.desktopHeaders())
         val data = detailRoot["data"]?.asObj() ?: throw SourceErrors.NotFound(bookUrl)
@@ -179,6 +180,10 @@ class XimalayaOpenSource(
         val maxPages = if (loadFullPages) 40 else 1
         var realTotal = 0L
         while (pg <= maxPages) {
+            // 用户已经返回/换书了：立刻停，不再占着限速队列翻剩下的页。
+            if (cancel.isCancelled) {
+                break
+            }
             val tr = getJson(OpenRoutes.tracksMobile(albumId, pg), OpenRoutes.desktopHeaders())
             val list = tr["list"]?.asArr()
                 ?: tr["data"]?.asObj()?.get("list")?.asArr()

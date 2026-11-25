@@ -68,7 +68,8 @@ class KuwoSource(
             if (books.isEmpty()) "酷我没搜到这本书" else null)
     }
 
-    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {
+    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean,
+                                cancel: com.local.audiobook.core.CancelToken): BookDetail {
         val albumId = Regex("(\\d+)").findAll(bookUrl).lastOrNull()?.value?.toLongOrNull()
             ?: throw SourceErrors.ParseFailed("无法解析 albumId：" + bookUrl)
         val target = SEARCH_BASE + "/r.s?stype=albuminfo&albumid=" + albumId +

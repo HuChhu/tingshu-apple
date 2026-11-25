@@ -104,7 +104,8 @@ class NeteaseSource(
 
     // ---------- 详情 ----------
 
-    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {
+    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean,
+                                cancel: com.local.audiobook.core.CancelToken): BookDetail {
         val songId = Regex("(\\d+)").find(bookUrl)?.groupValues?.get(1)
             ?: throw SourceErrors.ParseFailed("无法解析 songId：" + bookUrl)
 

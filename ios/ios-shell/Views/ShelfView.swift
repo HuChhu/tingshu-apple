@@ -322,6 +322,10 @@ struct AlbumView: View {
     /// 点了不可播章节时弹出的原因（VIP/付费/已失效…）。
     /// 用 alert 而不是 toast：这类原因用户需要读完，1.4 秒的提示留不住。
     @State private var episodeNotice: EpisodeNotice?
+    /// 当前详情加载的取消令牌。用户返回上一页时置为已取消 ——
+    /// 否则 Kotlin 侧那个翻页协程会继续跑完 40 页，占着全局 1 秒/次的限速队列，
+    /// 导致「返回后点别的书/点播放取地址都要排队」这种无法归因的变慢。
+    @State private var detailCancel: SharedBridge.CancelFlag?
 
     private struct EpisodeNotice: Identifiable {
         let id: Int
@@ -518,6 +522,9 @@ struct AlbumView: View {
         }
         .onDisappear {
             CrashLog.write("UI", "album disappear album=\(card.albumId) src=\(sourceId)")
+            // 返回/换书：让 Kotlin 侧那个翻页协程立刻停，别继续占着限速队列。
+            detailCancel?.cancel()
+            detailCancel = nil
         }
     }
 
@@ -667,7 +674,9 @@ struct AlbumView: View {
         }
         defer { loading = false }
         let saved = LocalStore.progress(for: bookKey)
-        guard let d = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl) else {
+        let flag = SharedBridge.CancelFlag()
+        await MainActor.run { detailCancel = flag }
+        guard let d = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl, cancel: flag) else {
             let why = SharedBridge.lastDetailError ?? ""
             errorText = why.isEmpty ? "专辑加载失败（该源可能已下架或需要登录）" : why
             CrashLog.write("UI", "album load failed album=\(card.albumId) reason=\(errorText ?? "")")

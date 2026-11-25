@@ -290,7 +290,8 @@ class TemplateTingSite(
         return if (bestScore >= prevScore + 8) best else null
     }
 
-    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {
+    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean,
+                                cancel: com.local.audiobook.core.CancelToken): BookDetail {
         // 【2026-11-25 说明】loadFullPages 在这里**只影响 ChapterMode.HtmlPages**：
         //   · Html（30 站）：只有 bookDetail 开头那 1 次请求，章节靠纯正则抽，翻页参数无意义；
         //   · Playlist（1 站）：分页由清单本身决定；

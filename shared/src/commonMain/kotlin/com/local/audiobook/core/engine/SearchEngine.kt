@@ -112,7 +112,8 @@ class SearchEngine(
     }
 
     // ---------- 动作二：bookDetail（M2，bridge get_book_detail 语义对齐） ----------
-    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {
+    override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean,
+                                 cancel: com.local.audiobook.core.CancelToken): BookDetail {
         val albumId = parseAlbumId(bookUrl)
             ?: throw SourceErrors.ParseFailed("无法从 bookUrl 解析 albumId：" + bookUrl)
 
@@ -167,6 +168,8 @@ class SearchEngine(
         var totalCount = 0L
         var maxPageId = 0L
         while (true) {
+            // 用户返回上一页 / 换书 → 停止翻页。Swift 的取消传不过 K/N 桥，只能靠这个令牌。
+            if (cancel.isCancelled) break
             val resp = throttle.run { fetcher.get(DetailRoutes.albumPage(albumId, page, pageSize, nowMs()), headers) }
             if (resp !is FetchOutcome.Ok) throw SourceErrors.Network((resp as FetchOutcome.Failed).kind)
             val tjson = parse(resp.text) ?: throw SourceErrors.ParseFailed("曲目响应非JSON（page=" + page + "）")

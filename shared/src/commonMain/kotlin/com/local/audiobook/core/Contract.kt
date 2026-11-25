@@ -12,7 +12,8 @@ interface SourceActions {
     val capabilities: Capabilities
 
     suspend fun search(keywords: String, page: Int): SearchResult
-    suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail
+    suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean,
+                           cancel: CancelToken = NeverCancelled): BookDetail
     fun audioExtractor(): AudioExtractor
 
     /**
@@ -111,6 +112,23 @@ data class Episode(
     /** 不能播的原因，UI 原样展示（例：本集为付费内容 0.20 喜点/集，登录并开通会员后可听）。 */
     val hint: String = "",
 )
+
+/**
+ * 取消令牌：Swift 侧在发起 bookDetail 时传一个对象进来，返回上一页/换书时把它标记为已取消。
+ *
+ * 【为什么需要】SwiftUI 取消 .task 只会丢弃 await 的挂起点，**不会穿过 K/N 桥**，
+ * Kotlin 侧那个协程会继续翻完 40 页、占着全局 1 秒/次的限速队列。
+ * 表现为「返回之后再点别的书、甚至点播放取地址都要排队 0-40 秒」，用户能感觉到但无法归因。
+ * 翻页循环每页检查一次 isCancelled，过期就停 —— 这是唯一能跨桥传递的信号。
+ */
+interface CancelToken {
+    val isCancelled: Boolean
+}
+
+/** 默认令牌：永不取消（CLI / 测试用） */
+object NeverCancelled : CancelToken {
+    override val isCancelled: Boolean get() = false
+}
 
 interface AudioExtractor {
     suspend fun extract(url: String, timeoutMs: Int = 15_000): ExtractedAudio

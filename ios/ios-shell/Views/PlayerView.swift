@@ -482,7 +482,9 @@ struct PlayerView: View {
             }
             let episodes = SharedBridge.rows(from: detail)
             let book = SharedBridge.card(from: detail.book)
-            let episode = episodes.first { trackId > 0 && $0.trackId == trackId }
+            let episode = episodes.first { t in
+                (trackId ?? 0) > 0 && t.trackId == (trackId ?? -1)
+            }
                 ?? episodes.first { $0.title == episodeTitle }
                 ?? episodes.first
             guard let episode else {

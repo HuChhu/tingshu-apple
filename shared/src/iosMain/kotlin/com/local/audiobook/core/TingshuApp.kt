@@ -36,9 +36,13 @@ class TingshuApp(
 
     private val client: HttpClient = HttpClient(Darwin) {
         install(HttpTimeout) {
-            requestTimeoutMillis = 32_000
+            // 45s 不是拍的：aisongli / eshengda / ting954 三个模板站首页实测要 40-45 秒才返回 200，
+            // 原来是 32s —— 那几个站在真机上永远 0 本，用户看到的是「这个源没书」。
+            // 代价是真正失败的请求要多等 13 秒；换来的是慢站能用。搜索本身另有 9s 硬上限，
+            // 所以这里放宽不会拖慢搜索（搜索超时在 SharedBridge.searchTimeoutSeconds）。
+            requestTimeoutMillis = 45_000
             connectTimeoutMillis = 12_000
-            socketTimeoutMillis = 32_000
+            socketTimeoutMillis = 45_000
         }
     }
 

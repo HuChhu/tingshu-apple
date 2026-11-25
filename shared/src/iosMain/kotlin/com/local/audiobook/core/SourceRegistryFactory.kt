@@ -48,9 +48,9 @@ object SourceRegistryFactory {
                     // 折中：连接 12s（连不上就是连不上），
                     //       请求 32s（够慢站拉完，又不至于让用户干等一分钟）。
                     install(HttpTimeout) {
-                        requestTimeoutMillis = 32_000
+                        requestTimeoutMillis = 45_000
                         connectTimeoutMillis = 12_000
-                        socketTimeoutMillis = 32_000
+                        socketTimeoutMillis = 45_000
                     }
                 }
             ),

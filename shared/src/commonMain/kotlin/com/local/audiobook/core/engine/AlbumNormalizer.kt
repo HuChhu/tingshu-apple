@@ -30,7 +30,9 @@ object AlbumNormalizer {
             val v = o?.get(k)
             if (v == null || v is kotlinx.serialization.json.JsonNull) continue
             val c = (v as? kotlinx.serialization.json.JsonPrimitive)?.content ?: continue
-            if (c.isNotEmpty()) return c
+            // isNotBlank 而不是 isNotEmpty：上游偶发给纯空格（"   "），
+            // isNotEmpty 会把它当有效值返回，书名显示成空白、playUrl 变成一串空格。
+            if (c.isNotBlank()) return c
         }
         return ""
     }

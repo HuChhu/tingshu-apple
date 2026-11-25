@@ -31,6 +31,27 @@ class CorePureTest {
         assertEquals(0L, TrackNormalizer.maxPage(100, 0))
     }
 
+    // ---- 2026-11-25：suggest 返回体结构（官方主推那一张） ----
+    @Test fun suggestEnvelopeShape() {
+        val j = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"albumResultNum":1,"albumResultList":[{"id":77615573,
+               "keyword":"【高甜剧场】在暴雪时分","category":"有声书",
+               "imgPath":"http://fdfs.xmcdn.com/x.jpeg"}],
+               "queryResultNum":1,"queryResultList":[{"id":0,"keyword":"在暴雪时分"}]}"""
+        ) as kotlinx.serialization.json.JsonObject
+        val arr = j["albumResultList"] as kotlinx.serialization.json.JsonArray
+        val first = arr.first() as kotlinx.serialization.json.JsonObject
+        assertEquals("77615573", (first["id"] as kotlinx.serialization.json.JsonPrimitive).content)
+        assertEquals("【高甜剧场】在暴雪时分", (first["keyword"] as kotlinx.serialization.json.JsonPrimitive).content)
+    }
+
+    // ---- suggest 与 front/v1 是两个池子：前者给官方主推，后者免费优先 ----
+    @Test fun suggestUrlShape() {
+        val u = com.local.audiobook.core.engine.OpenRoutes.suggest("在暴雪时分")
+        assertTrue(u.startsWith("https://search.ximalaya.com/suggest?kw="), u)
+        assertFalse(u.contains(" "), "关键词必须编码过：" + u)
+    }
+
     // ---- 头部纪律：正例注入、错配必须原样 ----
     @Test fun headersHostMatchInjects() {
         // 2026-11-25 改：音频 CDN（xmcdn）只发 UA，绝不带 Referer（加了 403，见 OpenRoutes.audioHeaders）

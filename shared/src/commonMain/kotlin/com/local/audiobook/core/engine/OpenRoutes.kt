@@ -26,6 +26,26 @@ object OpenRoutes {
     /** 搜索：返回 response.docs[] */
     const val SEARCH = "https://search.ximalaya.com/front/v1"
 
+    /**
+     * 搜索联想：返回 albumResultList[]（**单条**），结构与 front/v1 完全不同。
+     *
+     * 【2026-11-25 实测发现，很关键】front/v1 和 suggest 是**两个不同的池子**：
+     *   · front/v1（网页搜索池）：免费优先。搜「在暴雪时分」返回 19 条，numFound=19 就封顶，
+     *     VIP 专辑一条都没有。
+     *   · suggest（官方运营联想池）：每个词只给 1 条，但给的是**官方主推那张** ——
+     *     正是官方 App 搜索页第一名的那个。
+     * 对照实测（同一时刻）：
+     *   在暴雪时分 → 77615573（1510 万播放，边江工作室，VIP）
+     *   三体       → 40121646（王明军单播）
+     *   盗墓笔记   → 3544633（周建龙经典版）
+     *   鬼吹灯     → 59325711（潘粤明影视原著）
+     *   雪中悍刀行 → 2684034（大斌精品有声）
+     *   诡秘之主   → 49808826（多人有声剧）
+     * 全都是那条「用户觉得应该有、我们却搜不到」的官方扛把子。
+     * 所以主搜之后必须再打一次 suggest 合并，否则用户永远看不到官方主推。
+     */
+    const val SUGGEST = "https://search.ximalaya.com/suggest"
+
     /** 专辑详情：返回 data.albumPageMainInfo */
     const val ALBUM_SIMPLE = "https://www.ximalaya.com/revision/album/v1/simple"
 
@@ -66,6 +86,8 @@ object OpenRoutes {
             "&page=" + page +
             "&rows=" + rows +
             "&spellchecker=true&condition=relation&device=android&version=9.0.75"
+
+    fun suggest(keyword: String): String = SUGGEST + "?kw=" + SearchRoutes.enc(keyword)
 
     fun albumSimple(albumId: Long): String =
         ALBUM_SIMPLE + "?albumId=" + albumId

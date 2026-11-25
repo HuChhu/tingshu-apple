@@ -53,7 +53,19 @@ class XimalayaOpenSource(
     override suspend fun search(keywords: String, page: Int): SearchResult {
         val root = getJson(OpenRoutes.search(keywords, page), OpenRoutes.desktopHeaders())
         val docs = root["response"]?.asObj()?.get("docs")?.asArr() ?: JsonArray(emptyList())
-        val books = docs.mapNotNull { d -> d.asObj()?.let { docToBook(it) } }
+        val books = docs.mapNotNull { d -> d.asObj()?.let { docToBook(it) } }.toMutableList()
+
+        // 主搜之外再打一次 suggest。两个是**不同的池子**：
+        //   front/v1 是网页搜索池（免费优先，VIP 专辑压根不进结果）；
+        //   suggest 是官方运营联想池（每个词 1 条，但给的是官方主推那张）。
+        // 只在第一页补，按 albumId 去重；补在最前面，因为它是「用户心里的第一名」。
+        if (page <= 1) {
+            val official = fetchOfficialPick(keywords)
+            if (official != null && books.none { it.albumId == official.albumId }) {
+                books.add(0, official)
+            }
+        }
+
         val maxPage = if (books.size >= 20) page + 1 else page
         return SearchResult(
             books = books,
@@ -62,6 +74,41 @@ class XimalayaOpenSource(
             page = page,
             hint = if (books.isEmpty()) "喜马拉雅没搜到这本书" else null,
         )
+    }
+
+    /**
+     * 官方主推那一张。失败一律返回 null —— 搜索不能因为补一条而整体失败。
+     * 只取 albumResultList 第一条，它是官方运营挑过的，正好就是官方 App 里的第一名。
+     */
+    private suspend fun fetchOfficialPick(keywords: String): Book? = try {
+        val r = throttle.run {
+            fetcher.get(OpenRoutes.suggest(keywords), OpenRoutes.desktopHeaders())
+        }
+        val ok = (r as? FetchOutcome.Ok)?.text
+        if (ok.isNullOrBlank()) null
+        else {
+            val j = Json.parseToJsonElement(ok).asObj() ?: return null
+            val first = j["albumResultList"]?.asArr()?.firstOrNull()?.asObj()
+            val id = first?.get("id")?.asLong() ?: 0L
+            val kw = first?.get("keyword")?.asStr() ?: ""
+            if (id <= 0L || kw.isBlank()) null
+            else Book(
+                sourceId = sourceId,
+                bookUrl = "https://www.ximalaya.com/album/" + id,
+                title = kw,
+                author = "",
+                coverUrl = normalizeCover(first?.get("imgPath")?.asStr() ?: ""),
+                intro = "",
+                albumId = id,
+                trackCount = 0L,
+                playCount = 0L,
+                isFinished = null,
+            )
+        }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        null
     }
 
     private fun docToBook(o: JsonObject): Book? {

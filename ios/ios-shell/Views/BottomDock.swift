@@ -108,8 +108,10 @@ struct BottomDock: View {
                         RoundedRectangle(cornerRadius: Layout.radiusBar, style: .continuous)
                             .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
                     )
-                    // 向上抬：胶囊高 + 播放键凸出 + 底部边距 8 + 间隙
-                    .offset(y: -(Layout.dockHeight + Self.playKeyOverhang + 8 + Self.gapBetweenMiniBarAndDock))
+                    // 向上抬：胶囊高 + 底部边距 8 + 间隙 = 56+8+6 = 70。
+                    // 不要再加 playKeyOverhang —— 它已经含在 dockCapsule 的布局高度里，
+                    // 加了就多抬 8pt，实测间隙变成 22pt（第四轮 UI 复检的数字）。
+                    .offset(y: -(Layout.dockHeight + 8 + Self.gapBetweenMiniBarAndDock))
                     .opacity(hasMiniPlayer ? 1 : 0)
                     // 幽灵热区防线：透明度 0 的条不许吃触摸
                     .allowsHitTesting(hasMiniPlayer)

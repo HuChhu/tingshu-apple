@@ -1090,15 +1090,21 @@ final class Player: NSObject, ObservableObject {
         if let cached = AudioCache.playableCachedFile(bookUrl: currentBook?.bookUrl ?? "",
                                                  trackId: ep.trackId) {
             // 必须先记下这一集的远程 URL 与 headers ——
-            // 下面的 beginPlayback 会拿 headers=[:] 覆盖 currentHeaders，
+            // 下面的 beginPlayback 会用它收到的 headers 覆盖 currentHeaders，
             // 而 currentOriginalURL 只有 remote 分支才赋值（在 return 之后）。
             // 不在这里补，本地播放失败要回退远程时用的是上一集的陈旧 URL ——
             // 轻则播错书，重则取不到地址。
             currentOriginalURL = url
             let litem = AVPlayerItem(url: cached)
-            beginPlayback(litem, ep: ep, via: "local", headers: [:], sourceURL: cached)
-            // 必须在 beginPlayback **之后**写回：它内部会 `currentHeaders = headers`，
-            // local 分支传的是 [:] —— 先存后写等于白存，回退远程时 UA 丢了又 403。
+            beginPlayback(litem, ep: ep, via: "local", headers: headers, sourceURL: cached)
+            // 【v1.4.9-R4 P0】以前这里写的是 headers: [] 再在下一行补写 currentHeaders。
+            // 问题不在补写，在时间窗：beginPlayback 里 detachItem() 会让被摘掉的 item
+            // 立刻补一次 .failed(-999)，handleStatus 判到 viaOfCurrent == local 就删缓存并
+            // startItem(url: currentOriginalURL, headers: currentHeaders) —— 那一刻
+            // currentHeaders 还是刚被清空的空字典，拿空头去打 xmcdn/kuwo 必 403，
+            // 用户看到的就是「缓存里的书突然播不了」。现在直接把真 headers 传进去。
+            currentOriginalURL = url
+            // 幂等保险：防止将来有人把 beginPlayback 的写法改回去。
             currentHeaders = headers
             return
         }
@@ -1392,9 +1398,18 @@ final class Player: NSObject, ObservableObject {
     private func applyPendingStartSeek(_ item: AVPlayerItem) {
         guard let targetMs = pendingStartSeekMs else { return }
         pendingStartSeekMs = nil
-        let durSec = item.duration.seconds
+        let durCM = item.duration
+        // readyToPlay != duration 已知。m4s / fragmented MP4 / octet-stream 在这一刻
+        // 常常还是 indefinite（.seconds 返回 nan 或 inf）。这时候丢掉续播位置是错的降级：
+        // 用户会以为进度丢了。所以挂回去，等 duration KVO 到数再来一次。
+        guard durCM.isNumeric, !durCM.isIndefinite else {
+            CrashLog.write("PLAY", "pending seek deferred: duration indefinite")
+            pendingStartSeekMs = targetMs
+            return
+        }
+        let durSec = durCM.seconds
         guard durSec.isFinite, durSec > 0 else {
-            CrashLog.write("PLAY", "pending seek dropped: duration unknown")
+            CrashLog.write("PLAY", "pending seek dropped: duration invalid")
             return
         }
         let durMs = Int64(durSec * 1000)
@@ -1753,6 +1768,9 @@ final class Player: NSObject, ObservableObject {
 
     func stop() {
         saveProgress(force: true)
+        // 停止要连「播不动」哨兵一起收掉，否则它会继续跑 30 秒才自己退出
+        progressWatchdog?.cancel()
+        progressWatchdog = nil
         // 停止后不再续播：挂起的起播位置必须作废，否则下次 playEpisode 会沿用上一次的目标
         pendingStartSeekMs = nil
         requestGeneration &+= 1            // 让在途的取地址响应作废
@@ -1795,6 +1813,9 @@ final class Player: NSObject, ObservableObject {
         queue.play()
         apply(.playing)
         updateNowPlayingInfo()
+        // 打断恢复同样要重新武装「播不动」哨兵：暂停时已经 cancel 掉了，
+        // 这条路径不经过 resume()，不补就整段监听缺失（第四轮播放器复检指出）。
+        armProgressWatchdog(gen: requestGeneration)
     }
 
     /// 拔耳机 / 蓝牙断开：暂停并落进度（由 BackgroundSession 路由过来）

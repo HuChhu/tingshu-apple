@@ -470,7 +470,14 @@ struct AlbumView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    guard let favCard = resolvedCard ?? (card.title.hasPrefix("专辑 ") ? nil : card) else {
+                    // 【2026-11-25】收藏时优先用**搜索卡片**（card）而不是详情回填的 resolvedCard：
+                    // 详情里的 trackCount 已经被钳到「实际拿到的条数」（比如 800），
+                    // 而搜索卡片带的是上游真实总集数（5546）。用后者收藏，
+                    // 才能在收藏列表里显示真实集数，不至于同一本书两个地方两个数字。
+                    // 占位卡（标题以「专辑 」开头）在详情回来之前不该收藏 —— 那时连书名都是假的。
+                    let isPlaceholder = card.title.hasPrefix("专辑 ")
+                    let favSource: SharedBridge.BookCard? = isPlaceholder ? resolvedCard : card
+                    guard let favCard = favSource else {
                         errorText = "专辑信息还没加载完，稍等再收藏"
                         return
                     }

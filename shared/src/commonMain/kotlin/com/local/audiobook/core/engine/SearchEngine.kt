@@ -156,6 +156,13 @@ class SearchEngine(
         // 翻页收口三重闸：totalCount（信封实录）→ book.trackCount → maxPageId/硬上限 200
         val pageSize = 30
         val episodes = ArrayList<Episode>()
+        // 【2026-11-25 P0 去重】实测登录版 `albumPage` 的**分页参数全部失效**：
+        //   page=1/2/3 返回的首条 trackId 完全相同；pageId/pageNum/p/index 换遍都无效。
+        //   只有 mobwsa 会真翻页。
+        // 而这里是 `episodes.addAll(tp.episodes)` 一股脑塞 —— 40 页 × 30 条 = 1200 条，
+        // 全是同一批 30 条的重复。UI 显示「共 1200 集」，滑到第 31 集又回到第 1 集。
+        // 同文件 fetchOpenTracks 早就用 seen 去重了，两条路纪律必须一致。
+        val seen = HashSet<Long>()
         var page = 1
         var totalCount = 0L
         var maxPageId = 0L
@@ -172,13 +179,21 @@ class SearchEngine(
 
             val tp = TrackExtractor.fromDetail(tjson["data"] as? JsonObject ?: JsonObject(emptyMap()), page, pageSize, sourceId)
             if (tp.episodes.isEmpty()) break
-            episodes.addAll(tp.episodes)
+            val before = episodes.size
+            for (e in tp.episodes) {
+                // trackId>0 才有意义；重复的（登录版分页失效时会整页重复）直接丢
+                if (e.trackId > 0L && !seen.add(e.trackId)) continue
+                episodes.add(e)
+            }
             totalCount = tp.totalCount
             maxPageId = tp.maxPageId
             if (!loadFullPages) break
+            // 这一页一条新的都没拿到 → 说明分页参数对上游无效，再翻只是白等 1 秒/页。
+            // 实测登录版就是这样：这一行能把 40 秒降到 2 秒。
+            if (episodes.size == before) break
             if (totalCount > 0 && episodes.size >= totalCount) break
             if (book.trackCount > 0 && episodes.size >= book.trackCount) break
-            if (page >= maxOf(maxPageId, 40L).toInt()) break
+            if (page >= 40) break
             page++
         }
         // 【2026-11-25 P0】和免登录通道同一条纪律：总集数不能超过**实际拿到的条数**。

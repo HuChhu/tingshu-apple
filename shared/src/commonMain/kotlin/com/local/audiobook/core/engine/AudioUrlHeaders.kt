@@ -119,9 +119,21 @@ object AudioUrlHeaders {
             .takeIf { it.isNotEmpty() }
             ?.lowercase()
 
-    fun headersFor(audioUrl: String): Map<String, String> =
-        if (isAudioHost(audioUrl))
-            mapOf("User-Agent" to SearchRoutes.WEB_UA, "Referer" to "https://www.ximalaya.com/")
-        else
-            emptyMap()
+    /**
+     * 音频请求头。**音频 CDN（xmcdn）只能发 UA，绝不能带 Referer** ——
+     * OpenRoutes.audioHeaders() 的注释记了实测结论：「加 Referer 会变成 403」。
+     *
+     * 2026-11-25 修：这里以前对 xmcdn 也塞 Referer，而 XimalayaOpenSource 只发 UA。
+     * 结果同一个 CDN 地址两个源行为分裂：登录用户走登录版引擎反而 403，
+     * 未登录走 open 源反而正常 —— 表现就是「同一个源，有时能播有时不能」。
+     * 页面请求（ximalaya.com 的网页/接口）仍然需要 Referer。
+     */
+    fun headersFor(audioUrl: String): Map<String, String> = when {
+        isAudioCdn(audioUrl) -> mapOf("User-Agent" to OpenRoutes.AUDIO_UA)
+        isAudioHost(audioUrl) -> mapOf("User-Agent" to SearchRoutes.WEB_UA, "Referer" to "https://www.ximalaya.com/")
+        else -> emptyMap()
+    }
+
+    /** 音频 CDN 专属：与 OpenRoutes.isAudioCdn 同一套判定，避免两处漂移 */
+    private fun isAudioCdn(url: String): Boolean = OpenRoutes.isAudioCdn(url)
 }

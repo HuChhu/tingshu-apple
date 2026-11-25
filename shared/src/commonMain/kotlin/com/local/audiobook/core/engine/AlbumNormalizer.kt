@@ -17,7 +17,23 @@ object AlbumNormalizer {
         }
         return null
     }
-    fun str(o: JsonObject?, vararg keys: String) = pick(o, *keys)?.content ?: ""
+    /**
+     * 取第一个**非空**的字符串字段。
+     *
+     * 2026-11-25：以前是 pick(...)?.content ?: ""，而 pick 只要拿到 JsonPrimitive 就返回 ——
+     * 空串也是 JsonPrimitive。于是 str(t,"playUrl64","playUrl32") 在 playUrl64="" 时
+     * 永远读不到 playUrl32，把「有 32 直链」的轨道判成不可播。
+     * 这里改成逐个 key 找第一个非空值；pick 本身不动（其它字段依赖它的 null 语义）。
+     */
+    fun str(o: JsonObject?, vararg keys: String): String {
+        for (k in keys) {
+            val v = o?.get(k)
+            if (v == null || v is kotlinx.serialization.json.JsonNull) continue
+            val c = (v as? kotlinx.serialization.json.JsonPrimitive)?.content ?: continue
+            if (c.isNotEmpty()) return c
+        }
+        return ""
+    }
     fun lng(o: JsonObject?, vararg keys: String) = pick(o, *keys)?.content?.trim()?.toLongOrNull() ?: 0L
 
     /** 布尔字段。上游有 true / "true" / 1 / "1" 四种写法，全认。 */

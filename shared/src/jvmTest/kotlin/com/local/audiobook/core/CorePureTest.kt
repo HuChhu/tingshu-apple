@@ -33,10 +33,15 @@ class CorePureTest {
 
     // ---- 头部纪律：正例注入、错配必须原样 ----
     @Test fun headersHostMatchInjects() {
-        val h = AudioUrlHeaders.headersFor("https://a1.xmcdn.com/storages/x/y.jpeg")
-        assertEquals(2, h.size)
-        assertTrue(h.containsKey("User-Agent"))
-        assertTrue(h.containsKey("Referer"))
+        // 2026-11-25 改：音频 CDN（xmcdn）只发 UA，绝不带 Referer（加了 403，见 OpenRoutes.audioHeaders）
+        val cdn = AudioUrlHeaders.headersFor("https://a1.xmcdn.com/storages/x/y.mp3")
+        assertEquals(1, cdn.size)
+        assertTrue(cdn.containsKey("User-Agent"))
+        assertFalse(cdn.containsKey("Referer"), "xmcdn 不许带 Referer：" + cdn)
+        // 页面/接口域仍然要 Referer
+        val page = AudioUrlHeaders.headersFor("https://mobile.ximalaya.com/x.json")
+        assertEquals(2, page.size)
+        assertTrue(page.containsKey("Referer"))
         assertTrue(AudioUrlHeaders.isAudioHost("https://mobile.ximalaya.com/x"))
     }
 
@@ -171,6 +176,27 @@ class CorePureTest {
         assertEquals(5L, tp2.episodes[0].trackId)
         Unit
     }
+    // ---- 2026-11-25：playUrl64 为空串、playUrl32 有值 → 必须拿到 32 的直链（不能判死） ----
+    @Test fun fallbackToPlayUrl32When64IsEmptyString() {
+        val o = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"trackId":9,"title":"第9集","duration":10,
+               "playUrl64":"","playUrl32":"https://aod.cos.tx.xmcdn.com/storages/x/32.mp3"}"""
+        ) as kotlinx.serialization.json.JsonObject
+        val ep = com.local.audiobook.core.engine.TrackNormalizer.normalizeTrack(o, 1, "ximalaya-open")
+        assertTrue(ep.playable, "有 playUrl32 就必须可播：" + ep.hint)
+        assertTrue(ep.url.contains("32.mp3"), "必须回退到 playUrl32：" + ep.url)
+    }
+
+    // ---- 2026-11-25：AlbumNormalizer.str 跳过空串，取第一个非空 ----
+    @Test fun albumNormalizerStrSkipsEmpty() {
+        val o = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"a":"","b":"x","c":"y"}"""
+        ) as kotlinx.serialization.json.JsonObject
+        assertEquals("x", com.local.audiobook.core.engine.AlbumNormalizer.str(o, "a", "b", "c"))
+        assertEquals("", com.local.audiobook.core.engine.AlbumNormalizer.str(o, "a"))
+        assertEquals("x", com.local.audiobook.core.engine.AlbumNormalizer.str(o, "zzz", "b"))
+    }
+
     // ---- P0 2026-11-25 回归：VIP/付费轨（playUrl 全空 + isPaid=true）必须标不可播并给原因 ----
     @Test fun vipTrackCarriesPayHintNotWebpage() {
         val o = kotlinx.serialization.json.Json.parseToJsonElement(

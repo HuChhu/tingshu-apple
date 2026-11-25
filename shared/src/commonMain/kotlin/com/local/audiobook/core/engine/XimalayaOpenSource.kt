@@ -113,16 +113,15 @@ class XimalayaOpenSource(
             if (list.isEmpty()) break
             for (el in list) {
                 val t = el.asObj() ?: continue
-                val trackId = t["trackId"]?.asLong() ?: continue
-                val direct = t["playUrl64"]?.asStr() ?: t["playUrl32"]?.asStr()
-                eps.add(Episode(
-                    title = t["title"]?.asStr() ?: ("第" + (eps.size + 1) + "集"),
-                    url = direct ?: ("https://www.ximalaya.com/sound/" + trackId),
-                    trackId = trackId,
-                    index = eps.size + 1,
-                    durationMs = (t["duration"]?.asLong() ?: 0L) * 1000,
-                    coverUrl = normalizeCover(t["coverLarge"]?.asStr() ?: ""),
-                ))
+                // 【2026-11-25 P0】这里原来是 TrackNormalizer 的第二份手抄版：
+                //   val direct = playUrl64 ?: playUrl32      // playUrl64="" 时 asStr 得空串，Elvis 不触发
+                //   url = direct ?: ("https://www.ximalaya.com/sound/" + trackId)
+                // 两个坑叠在一起：VIP 轨（playUrl64="" 且 playUrl32=""）落成网页地址；
+                // 半残轨（64 空、32 有）落成空串。而且没传 playable，默认 true ——
+                // 于是「能播不能播」这条信息在推荐页/详情页这条路上彻底丢了。
+                // 直接复用 TrackNormalizer，一份逻辑一处维护。
+                if (t["trackId"]?.asLong() == null) continue
+                eps.add(TrackNormalizer.normalizeTrack(t, eps.size + 1, sourceId))
             }
             val maxPageId = tr["maxPageId"]?.asLong() ?: 0L
             if (maxPageId in 1L..pg.toLong()) break

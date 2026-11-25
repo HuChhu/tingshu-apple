@@ -10,7 +10,7 @@ object TrackNormalizer {
 
     /** 只接受真正能播的直链（网页地址不算） */
     private fun firstPlayableUrl(vararg candidates: String): String? =
-        candidates.firstOrNull { it.isNotEmpty() && AudioUrlHeaders.isPlayableAudio(it) }
+        candidates.firstOrNull { it.isNotEmpty() && AudioUrlHeaders.isPlayableAudioOrRelay(it) }
 
     /** 供调用方判断：这个 track 是否已经带直链（免登录源不用再去换） */
     fun directAudio(t: JsonObject): String? = firstPlayableUrl(

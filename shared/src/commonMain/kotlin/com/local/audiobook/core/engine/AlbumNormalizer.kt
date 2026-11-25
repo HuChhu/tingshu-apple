@@ -19,6 +19,12 @@ object AlbumNormalizer {
     }
     fun str(o: JsonObject?, vararg keys: String) = pick(o, *keys)?.content ?: ""
     fun lng(o: JsonObject?, vararg keys: String) = pick(o, *keys)?.content?.trim()?.toLongOrNull() ?: 0L
+
+    /** 布尔字段。上游有 true / "true" / 1 / "1" 四种写法，全认。 */
+    fun bool(o: JsonObject?, vararg keys: String): Boolean {
+        val raw = pick(o, *keys)?.content?.trim()?.lowercase() ?: return false
+        return raw == "true" || raw == "1"
+    }
     fun boo(o: JsonObject?, vararg keys: String) = pick(o, *keys)?.content?.let { it == "true" }
 
     fun normalizeAlbum(a: JsonObject, sourceId: String) = Book(

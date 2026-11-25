@@ -146,7 +146,11 @@ class CorePureTest {
         assertEquals(2, d.episodes[1].index)
         assertEquals(31, d.episodes[2].index)   // 第2页首条 = (2-1)*30+0+1 = 31（数学事实，与 bridge baseIndex 一致）
         assertEquals(100000L, d.episodes[0].durationMs)   // duration 秒→毫秒（修正③）
-        assertEquals("https://www.ximalaya.com/sound/1", d.episodes[0].url)
+        // 2026-11-25 改：没直链的轨道 url 必须是**空串**，不允许再填 /sound/{id} 网页地址。
+        // 旧断言锁的是 bug 本身 —— 正是它让 VIP 轨把网页喂给 AVPlayer，报「播不了」。
+        assertEquals("", d.episodes[0].url)
+        assertFalse(d.episodes[0].playable, "没直链的轨道必须标 playable=false")
+        assertTrue(d.episodes[0].hint.isNotEmpty(), "不可播必须带原因")
         Unit
     }
 
@@ -167,6 +171,32 @@ class CorePureTest {
         assertEquals(5L, tp2.episodes[0].trackId)
         Unit
     }
+    // ---- P0 2026-11-25 回归：VIP/付费轨（playUrl 全空 + isPaid=true）必须标不可播并给原因 ----
+    @Test fun vipTrackCarriesPayHintNotWebpage() {
+        val o = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"trackId":671821892,"title":"第1集VIP","duration":1800,
+               "playUrl64":"","playUrl32":"","isPaid":true,"price":0.2,
+               "displayPrice":"0.20喜点/集","sampleDuration":90}"""
+        ) as kotlinx.serialization.json.JsonObject
+        val ep = com.local.audiobook.core.engine.TrackNormalizer.normalizeTrack(o, 1, "ximalaya-open")
+        assertEquals("", ep.url, "VIP 轨不许填网页地址")
+        assertFalse(ep.playable)
+        assertTrue(ep.hint.contains("付费"), "原因里必须说清是付费内容：" + ep.hint)
+        assertTrue(ep.hint.contains("0.20喜点/集"), "要带上价格：" + ep.hint)
+        assertTrue(ep.hint.contains("90"), "要带上试听时长：" + ep.hint)
+        assertEquals(1800000L, ep.durationMs)
+    }
+
+    // ---- 免费轨：有直链时 playable=true 且 hint 为空 ----
+    @Test fun freeTrackOmitsHint() {
+        val o = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"trackId":2,"title":"第2集","duration":10,"playUrl64":"https://aod.cos.tx.xmcdn.com/b.m4a","isPaid":false}"""
+        ) as kotlinx.serialization.json.JsonObject
+        val ep = com.local.audiobook.core.engine.TrackNormalizer.normalizeTrack(o, 1, "ximalaya-open")
+        assertTrue(ep.playable)
+        assertEquals("", ep.hint, "能播就不要带提示")
+    }
+
     // ---- 2026-11-24 P0 回归：网页地址绝不能被当成音频直链返回 ----
     @Test fun webpageUrlIsNeverPlayableAudio() {
         // 真机现场：https://www.ximalaya.com/sound/{id} 这个网页被当音频播了，AVPlayer 报 -12847
@@ -203,10 +233,10 @@ class CorePureTest {
             """{"trackId":1011694179,"title":"第2集","duration":60}"""
         ) as kotlinx.serialization.json.JsonObject
         val ep2 = com.local.audiobook.core.engine.TrackNormalizer.normalizeTrack(t2, 2, "ximalaya")
-        assertFalse(
-            AudioUrlHeaders.isPlayableAudio(ep2.url),
-            "只给 trackId 时 url 是网页地址，必须被 isPlayableAudio 判否（不能直接交给播放器）"
-        )
+        // 2026-11-25 改：以前 url 填 /sound/{id} 网页，靠 isPlayableAudio 判否兜底；
+        // 现在直接留空，连「把网页当音频」这条路径都不存在了。
+        assertEquals("", ep2.url, "只给 trackId 时 url 必须为空，不能是网页地址")
+        assertFalse(ep2.playable)
     }
 
     // ---- P0 回归：曲目列表富化后，Episode.url 不能是门户网页 ——

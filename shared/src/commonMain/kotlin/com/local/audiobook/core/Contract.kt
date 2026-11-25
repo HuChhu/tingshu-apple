@@ -90,7 +90,27 @@ data class Book(
     val albumId: Long = 0L, val trackCount: Long = 0L, val playCount: Long = 0L, val isFinished: Boolean? = null,
 )
 data class BookDetail(val book: Book, val episodes: List<Episode>)
-data class Episode(val title: String, val url: String, val trackId: Long = 0L, val index: Int = 0, val durationMs: Long = 0L, val coverUrl: String = "")
+/**
+ * 一集。url 的语义是「音频直链」；取不到直链时**留空**，绝不填网页地址。
+ *
+ * 2026-11-25 修「搜出来的书播不了」：以前 playUrl 为空时拿 DetailRoutes.soundUrl 顶上，
+ * 于是 https://www.ximalaya.com/sound/{id} 这个**网页**一路流到 AVPlayer，
+ * 被出口闸拦下后报「只给了网页地址」，用户看到的是「播不了」但不知道为什么。
+ * 现在：url 空 = 本集没有直链（典型就是喜马 VIP/付费轨，mobwsa 返回 playUrl64="" ），
+ * 由 playable=false + hint 说明原因，UI 直接展示，不再走「取地址失败」那条含糊的错路。
+ */
+data class Episode(
+    val title: String,
+    val url: String,
+    val trackId: Long = 0L,
+    val index: Int = 0,
+    val durationMs: Long = 0L,
+    val coverUrl: String = "",
+    /** 本集能否直接播（有直链）。false 时 hint 一定非空。 */
+    val playable: Boolean = true,
+    /** 不能播的原因，UI 原样展示（例：本集为付费内容 0.20 喜点/集，登录并开通会员后可听）。 */
+    val hint: String = "",
+)
 
 interface AudioExtractor {
     suspend fun extract(url: String, timeoutMs: Int = 15_000): ExtractedAudio

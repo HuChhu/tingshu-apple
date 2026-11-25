@@ -124,15 +124,31 @@ struct BottomDock: View {
                     .accessibilityHidden(!hasMiniPlayer)
                     .animation(.easeInOut(duration: 0.2), value: hasMiniPlayer)
             }
-            // 【v1.5.3 再修缝隙】
-            // 只删掉 .padding(.bottom, 8) 还不够 —— 截图里胶囊下面仍然露出一条底色。
-            // 原因：safeAreaInset 的内容默认**按安全区排版**，系统会在内容底部再让出
-            // Home 指示条那一段；而这块透明区域仍然属于「我们这一块」，于是胶囊底边
-            // 和屏幕底边之间就留出一段谁也没画的空白。
-            // 现在让这块自己延伸到屏幕物理底边（ignoresSafeArea(edges: .bottom)），
-            // 胶囊是最后一行所以会贴到底；指示条那层留白由系统叠在**上面**，
-            // 不再撑开我们的布局高度。
-            .ignoresSafeArea(edges: .bottom)
+            // 【v1.5.6 第三次修缝隙 —— 前两次都没修在点上，这次说清楚】
+            //
+            // 事实：这块是 `safeAreaInset(edge: .bottom, spacing: 0)` 的内容。
+            // 系统给 safeAreaInset 内容的布局高度 = 内容自身高度，**然后**再在屏幕底部
+            // 额外保留 home indicator 的那一段（34pt 左右）。也就是说：
+            //   屏幕底 ↑34pt  [系统保留区，透明]  ← 用户看到的就是"缝"
+            //   再往上        [dockCapsule]
+            // v1.5.1 删了 .padding(.bottom, 8)，缝还在；
+            // v1.5.3 加 .ignoresSafeArea(edges: .bottom)，被 safeAreaInset 的容器裁掉，也没生效。
+            //
+            // 正确做法：把 home indicator 那一段**自己画掉**。
+            //   · 外层用 safeAreaInset 给的常规布局（胶囊位置不动）
+            //   · 里面套一层 background，背景材质向下延伸到物理屏幕底边
+            // 这样胶囊下方那段不再是"透出页面底色"，而是与胶囊同材质的一片，视觉上严丝合缝。
+            .background(alignment: .bottom) {
+                // 高度取一个足够大的值即可：它会从 dock 底边往下铺，多出来的部分被屏幕裁掉。
+                // 不能写死 34 —— 不同机型/横竖屏的 home indicator 高度不同，铺满就不会露边。
+                Rectangle()
+                    .fill(.clear)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 120)
+                    .background(.ultraThinMaterial)
+                    .allowsHitTesting(false)
+                    .padding(.bottom, -100)
+            }
         // 封面下载挂在**稳定的最外层**，不在 vinylDisc 内部：
         // vinylDisc 的形态随状态（空/加载/播放/暂停/失败）变化，视图身份一变 task 就被取消重跑，
         // 表现为盘面每换一次状态就重新下一遍图 —— 这也是「盘面闪变」的一条来源。

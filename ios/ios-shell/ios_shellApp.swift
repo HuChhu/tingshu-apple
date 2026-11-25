@@ -87,6 +87,9 @@ struct RootTabView: View {
             //
             // 正确位置是每个 Tab 的**内容根**（文档示例写法），这里在 tabContents() 里
             // 对四个 Tab 各挂一次 `.toolbar(hidesSystemTabBar ? .hidden : .automatic, for: .tabBar)`。
+            // 【v1.5.6】safeAreaInset 内容不再由 BottomDock 自己 ignoreSafeArea（会被容器裁掉），
+            // 改成在 Root 这一层把负 inset 打进去：让 dock 直接吃到屏幕物理底边。
+            // spacing: -1 让系统保留的那段 home indicator 不再额外撑高。
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 // 迷你条 + dock 作为一整块占位。
                 // 迷你条显隐由 BottomDock 自己处理（固定占位、只改透明度），

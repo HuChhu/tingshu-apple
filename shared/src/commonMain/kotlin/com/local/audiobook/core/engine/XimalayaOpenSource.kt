@@ -151,7 +151,12 @@ class XimalayaOpenSource(
 
         val eps = mutableListOf<Episode>()
         var pg = 1
-        val maxPages = if (loadFullPages) 60 else 1
+        // 【2026-11-25 P0 集数不对】以前写死 60 页上限，且**用书的 trackCount 当总集数**。
+        // 实测 albumSimple 根本不返回 trackCount（返回 None），于是 trackCount=0，
+        // 界面就退化成拿「已加载条数」当总数 —— 上一版显示 50、20 都是这么来的。
+        // 现在：先用第一页的 totalCount 定页数，翻完再把真实条数写回 book.trackCount。
+        val maxPages = if (loadFullPages) 200 else 1
+        var realTotal = 0L
         while (pg <= maxPages) {
             val tr = getJson(OpenRoutes.tracksMobile(albumId, pg), OpenRoutes.desktopHeaders())
             val list = tr["list"]?.asArr()
@@ -170,11 +175,17 @@ class XimalayaOpenSource(
                 if (t["trackId"]?.asLong() == null) continue
                 eps.add(TrackNormalizer.normalizeTrack(t, eps.size + 1, sourceId))
             }
+            val tc = tr["totalCount"]?.asLong() ?: 0L
+            if (tc > 0L) realTotal = tc
             val maxPageId = tr["maxPageId"]?.asLong() ?: 0L
             if (maxPageId in 1L..pg.toLong()) break
             pg++
         }
-        return BookDetail(book, eps)
+        // 把真实总集数回填：albumSimple 不给 trackCount，只有曲目接口给 totalCount。
+        // 不回填的话详情页「共 N 集」永远是 0 / 已加载数。
+        val finalBook = if (realTotal > 0L && book.trackCount != realTotal)
+            book.copy(trackCount = realTotal) else book
+        return BookDetail(finalBook, eps)
     }
 
     override fun audioExtractor(): com.local.audiobook.core.AudioExtractor =

@@ -153,8 +153,15 @@ class TingshuApp(
             "ximalaya-open" -> xmOpen.search(keywords, page)
             else -> engine.search(keywords, page)
         }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
     } catch (e: SourceErrors) {
         SearchResult(books = emptyList(), maxPage = 0, source = "error", page = page, hint = describe(e))
+    } catch (e: Throwable) {
+        // K/N 头文件写明 Other uncaught Kotlin exceptions are fatal：
+        // 这层不兜住，KuwoSource 里 resp as FetchOutcome.Failed 之类的硬转会直接 abort 进程。
+        SearchResult(books = emptyList(), maxPage = 0, source = "error", page = page,
+            hint = "搜索异常：" + (e.message ?: e::class.simpleName ?: "未知"))
     }
 
     /** 免登录源详情（不抛版本）。 */

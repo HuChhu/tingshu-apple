@@ -276,6 +276,9 @@ class SearchEngine(
     }
 
     // ---------- 发现：类目热榜（M1，匿名） ----------
+    // 只有 jvmMain 的 CLI 调（grep ios/ 0 命中），但 Main.kt 在 com.local.audiobook.core 包、
+    // 这个类在 ...core.engine 包 —— internal 跨模块编译不过，所以保持 public。
+    // Swift 侧要用请走 TingshuApp 的门面（那里统一包 Result），不要直接调这个方法。
     suspend fun discover(categoryId: Long = 3, pageNum: Int = 1, pageSize: Int = 12): SearchResult {
         val resp = throttle.run {
             fetcher.get(SearchRoutes.categoryAlbums(categoryId, pageNum, pageSize), headersOf(SearchRoutes.WEB_UA, SearchRoutes.WEB_BASE + "/"))

@@ -132,7 +132,11 @@ object VerificationRecovery {
         var currentLoginUrl: String? = null
 
         for (round in 0..maxRetries) {
-            val (status, body) = attempt()
+            // attempt 是调用方传进来的 lambda，签名是 suspend () -> Pair<Int,String>，
+            // 但它内部抛什么这里管不着。契约是「本函数返回 Result」，就必须证永不抛 ——
+            // 否则 lambda 里一个 Network 异常会穿过 Result 直接冒到 K/N 桥，进程 abort。
+            val res = try { attempt() } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Throwable) { return Result.failure(e) }
+            val (status, body) = res
 
             when (val f = classify(status, body)) {
                 is Failure.NeedsVerification -> {

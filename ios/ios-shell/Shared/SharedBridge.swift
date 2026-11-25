@@ -40,6 +40,10 @@ enum SharedBridge {
         /// 旧缓存里没有这个键，必须 decodeIfPresent 兜底成空串。
         var sourceId: String = ""
 
+        /// 上游给的**相关度序号**，用来在多路结果合并后保住原来的搜索排序。
+        /// 99 = 没有 rank（网页抓取/兜底），排在有 rank 的后面。
+        var rank: Int32 = 99
+
         /// 手写解码：intro 是后加的字段，旧缓存里没有，必须 decodeIfPresent
         init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -53,15 +57,17 @@ enum SharedBridge {
             isFinished = try c.decodeIfPresent(Bool.self, forKey: .isFinished)
             intro = try c.decodeIfPresent(String.self, forKey: .intro) ?? ""
             sourceId = try c.decodeIfPresent(String.self, forKey: .sourceId) ?? ""
+            rank = try c.decodeIfPresent(Int32.self, forKey: .rank) ?? 99
         }
 
         init(bookUrl: String, title: String, author: String, coverUrl: String,
              albumId: Int64, trackCount: Int64, playCount: Int64, isFinished: Bool?,
-             intro: String = "", sourceId: String = "") {
+             intro: String = "", sourceId: String = "", rank: Int32 = 99) {
             self.bookUrl = bookUrl; self.title = title; self.author = author
             self.coverUrl = coverUrl; self.albumId = albumId
             self.trackCount = trackCount; self.playCount = playCount
             self.isFinished = isFinished; self.intro = intro; self.sourceId = sourceId
+            self.rank = rank
         }
     }
 
@@ -85,7 +91,13 @@ enum SharedBridge {
     /// card(from:) 的带源版本：Known 来源优先用 Book 自带的，Book 没带就用参数。
     static func cards(from result: SearchResult?, defaultSource: String) -> [BookCard] {
         guard let result = result else { return [] }
-        return books(from: result).map { card(from: $0, defaultSource: defaultSource) }
+        // 保序：给每条打上它在本次搜索里的名次。
+        // 三路并发谁先回来不定，但**每一路内部**的顺序是上游算好的相关度，不能丢。
+        return books(from: result).enumerated().map { idx, b in
+            var c = card(from: b, defaultSource: defaultSource)
+            if c.rank == 99 { c.rank = Int32(idx) }
+            return c
+        }
     }
 
     static func card(from b: Book, defaultSource: String) -> BookCard {
@@ -276,6 +288,7 @@ enum SharedBridge {
         lastWebSearchError = nil
         do {
             let raw = try await WebSearchBridge.shared.search(keyword: keyword, page: page, timeout: timeout)
+            var rank: Int32 = 0
             return raw.compactMap { dict -> BookCard? in
                 guard let id = dict["albumId"] as? String, !id.isEmpty,
                       let title = dict["title"] as? String, !title.isEmpty else { return nil }
@@ -290,7 +303,8 @@ enum SharedBridge {
                     playCount: Int64((dict["playCount"] as? NSNumber)?.int64Value ?? 0),
                     isFinished: (dict["isFinished"] as? Bool) ?? false,
                     // 网页搜索抓的是喜马拉雅页面 → 来源是登录通道
-                    sourceId: "ximalaya"
+                    sourceId: "ximalaya",
+                    rank: { defer { rank += 1 }; return rank }()
                 )
             }
         } catch {
@@ -317,7 +331,7 @@ enum SharedBridge {
     // v1.4.7：BookCard 新增 sourceId。旧缓存里的搜索结果没有来源，
     // 反序列化后是空串 → sourceOf 回退成「猜 ximalaya」→ 非喜马拉雅的书又播不了。
     // 所以把 schema 升到 2，旧搜索结果直接失效重搜。
-    private static let searchCacheSchema = 2
+    private static let searchCacheSchema = 3
     private static let searchCacheNamespace = "search"
 
     private struct CachedSearch: Codable {
@@ -335,7 +349,14 @@ enum SharedBridge {
         private var _indexByKey: [String: Int] = [:]
 
         var cards: [BookCard] {
-            lock.lock(); defer { lock.unlock() }; return _cards
+            lock.lock(); defer { lock.unlock() }
+            // 按各源自带的相关度 rank 排序（同一路内保持原顺序）。
+            // 没有 rank 的（网页搜索抓来的）排在后面，但它们之间仍保持抓取顺序。
+            return _cards.enumerated().sorted { lhs, rhs in
+                let lr = lhs.element.rank, rr = rhs.element.rank
+                if lr != rr { return lr < rr }
+                return lhs.offset < rhs.offset
+            }.map { $0.element }
         }
 
         var reason: String? {
@@ -349,6 +370,12 @@ enum SharedBridge {
         /// 现在把两个喜马源归一成 "ximalaya" 作为身份，然后按「登录态适用性」择优保留：
         /// 登录了留登录通道的卡（能取会员集），未登录留免登录的卡（否则点进去要登录）。
         /// 并发三路到达顺序不定，所以不能「先到先赢」。
+        /// 每路结果的插入序号。并发三路谁先回来不确定，但界面上的顺序不能因此乱跳。
+        /// 2026-11-25：用户搜「在暴雪时分」，官方那条（1510 万播放、VIP 剧场）排在第 8 位
+        /// —— 因为它是 open 路第 8 条，而这次 engine 路先回来把前 7 个位置占了。
+        /// 换成 engine 先超时，那本书就会跑到最前面。顺序不稳定 = 用户找不到。
+        private var lastRank: Int32 = .max
+
         func add(_ items: [BookCard]) {
             lock.lock(); defer { lock.unlock() }
             let preferLogin = SharedBridge.loggedIn
@@ -625,6 +652,32 @@ enum SharedBridge {
         let kind: String
     }
 
+    // MARK: - 会员状态（接口优先，WebView 兜底）
+
+    /// 会员状态。**先问接口**（`/revision/main/getCurrentUser` + `/revision/user/basic`），
+    /// 只有接口全拿不到时才让调用方去开 WebView。
+    ///
+    /// 2026-11-25 修：以前「我的」页直接开 WKWebView 读 https://www.ximalaya.com/vip 的 innerText，
+    /// 而那个页面每个用户（含未登录）导航栏都有「开通会员」，旧的 parse 把「会员」二字当命中级联到
+    /// .standard —— 没开 VIP 的号也会显示绿勾「会员已开通」。接口这条路本来就写好了，只是没接上。
+    static func vipStatus() async -> (tier: String, expire: String, nickname: String, source: String) {
+        let r = await bridge { done in
+            app.vipStatusSafe(completionHandler: { res, e in done(res, e) })
+        }
+        guard let r = r else { return ("unknown", "", "", "bridge") }
+        return (vipTierName(r.tier), r.expireDate, r.nickname, r.source)
+    }
+
+    /// K/N 的 VipTier 是 enum，导出成 ObjC 类；这里用名称映射，避免依赖具体导出符号。
+    private static func vipTierName(_ t: VipTier) -> String {
+        let s = String(describing: t).lowercased()
+        if s.contains("notloggedin") { return "notLoggedIn" }
+        if s.contains("normal") { return "standard" }
+        if s.contains("none") { return "none" }
+        return "unknown"
+    }
+
+    /// 源清单（给 UI 列表用）
     /// 源清单（给 UI 列表用）
     static func allSources() -> [SourceItem] {
         registry.list().map { info in

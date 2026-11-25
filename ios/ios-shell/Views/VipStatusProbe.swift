@@ -140,30 +140,39 @@ final class VipStatusProbe: NSObject {
         let t = text.replacingOccurrences(of: "\u{00a0}", with: " ")
         if t.isEmpty { return VipStatus(tier: .unknown, evidence: "页面无文本") }
 
-        // ① 明确的等级词（带到期信息时优先级最高）
-        // 【不猜档位】qa-kotlin2 实测：桌面站 8 个 JS 包（2.8MB）全扫 vipLevel/memberLevel 零命中，
-        // 移动端会员页搜「白金 / 大师 / 儿童会员」全部 0 命中；接口里含 vip 的只有布尔 isVip。
-        // 所以这里**只判「是不是会员」**，不按词分档。写「白金会员」就是编的。
-        let tiers: [(String, VipTier)] = [
-            ("会员", .standard), ("VIP", .standard), ("续费", .standard),
-        ]
-        // ② 反向词：出现这些说明没开通
-        let notMembers: [String] = ["开通会员", "立即开通", "开通VIP", "开通 VIP", "续费", "立即续费", "开通超级会员", "未开通"]
+        // 【2026-11-25 修「没开 VIP 却显示已开通」】
+        // 旧逻辑先找「会员」二字，而**每一个**喜马页面（含未登录）的导航栏都有「开通会员」入口，
+        // 所以任何登录用户打开会员页都会被判成 .standard —— 绿的勾 +「会员已开通」。
+        // 对没开会员的人来说这是纯谎言，比显示「未知」还糟。
+        //
+        // 现在改成「先排除、后确认」：
+        //   ① 出现明确的**未开通**语义（登录/开通/立即开通/免费体验）→ .none，直接返回；
+        //   ② 出现「有效期至 / 到期时间 / 续费会员」→ 才是真的开通了；
+        //   ③ 剩下的「会员」「VIP」「续费」这类泛词**一律不认**，判 .unknown。
+        //      宁可说不知道，也不能替用户编一个会员身份。
 
-        let hasExpire = t.range(of: "有效期至") != nil || t.range(of: "到期") != nil
         let expireDate = findDate(in: t)
 
-        for (kw, tier) in tiers where t.contains(kw) {
-            // 命中「续费/开通」且没有到期信息 → 视为未开通（营销页）
-            let looksLikeMarketing = notMembers.contains { t.contains($0) } && !hasExpire
-            if looksLikeMarketing && tier == .standard { break }
-            return VipStatus(tier: tier, expireDate: expireDate,
-                             evidence: snippet(t, around: kw))
+        // ① 「没开通」的强信号。注意顺序：「未开通」要在「开通」之前判，否则会被 substring 吃掉。
+        let notMembers = ["未开通", "登录后", "立即开通", "开通会员", "开通VIP", "开通 VIP", "免费体验", "领取体验"]
+        if let hit = notMembers.first(where: { t.contains($0) }) {
+            // 例外：同时出现有效期文案 → 是会员，只是页面也带了续费入口
+            if findDate(in: t) == nil && !t.contains("有效期至") {
+                return VipStatus(tier: .none, evidence: snippet(t, around: hit))
+            }
         }
 
-        // ③ 只剩「开通」类文案 → 未开通
-        if let hit = notMembers.first(where: { t.contains($0) }) {
-            return VipStatus(tier: .none, evidence: snippet(t, around: hit))
+        // ② 「已开通」的强信号：到期时间 / 续费会员 / 会员有效期
+        let strongMembers = ["有效期至", "到期时间", "会员有效期", "续费会员", "我的会员"]
+        if let hit = strongMembers.first(where: { t.contains($0) }) {
+            return VipStatus(tier: .standard, expireDate: expireDate,
+                             evidence: snippet(t, around: hit))
+        }
+
+        // ③ 只看到泛词（会员 / VIP / 续费）→ 不知道。
+        // 旧代码在这里返回 .standard，就是为了凑一个好看的绿勾。
+        if t.contains("会员") || t.contains("VIP") || t.contains("续费") {
+            return VipStatus(tier: .unknown, evidence: snippet(t, around: "会员"))
         }
         return VipStatus(tier: .unknown, evidence: String(t.prefix(60)))
     }

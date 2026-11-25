@@ -159,7 +159,22 @@ struct MineView: View {
         if probingVip { return }
         probingVip = true
         Task {
-            let s = await VipStatusProbe.shared.probe()
+            // 【2026-11-25】先走接口。接口能明确回答「是 / 不是会员」时就不再开 WebView ——
+            // 会员页的 innerText 里人人都有「开通会员」，靠它判会员就是碰运气。
+            let api = await SharedBridge.vipStatus()
+            let s: VipStatus
+            switch api.tier {
+            case "standard":
+                s = VipStatus(tier: .standard, expireDate: parseExpire(api.expire),
+                              evidence: "api:" + api.source)
+            case "none":
+                s = VipStatus(tier: .none, evidence: "api:" + api.source)
+            case "notLoggedIn":
+                s = VipStatus(tier: .unknown, evidence: "api:未登录")
+            default:
+                // 接口没给出结论 → 才去看页面
+                s = await VipStatusProbe.shared.probe()
+            }
             await MainActor.run {
                 probingVip = false
                 // 探测出 unknown 时不覆盖已有缓存（可能是网络抖，旧值更可信）
@@ -174,6 +189,14 @@ struct MineView: View {
         }
     }
 
+    /// 接口给的到期日是 "2026-03-01" 这种；解析不出来就返回 nil（不编日期）
+    private func parseExpire(_ t: String) -> Date? {
+        guard !t.isEmpty else { return nil }
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f.date(from: String(t.prefix(10)))
+    }
     private func byteText(_ n: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
     }

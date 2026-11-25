@@ -344,6 +344,10 @@ struct PlayerView: View {
                 sourceSwitchMessage = nil
                 activeSheet = .sources
             }
+            .foregroundStyle(.white.opacity(0.9))
+            .frame(minHeight: 44)
+            .disabled(sourceSwitching)
+            .accessibilityLabel("换个源听")
 
             // 付费集：给一个能走下去的动作，别让用户对着原因干瞪眼。
             // 已登录但没会员 → 去开通；未登录 → 去登录。文案统一，动作一致。
@@ -355,10 +359,6 @@ struct PlayerView: View {
                 .foregroundStyle(.white)
                 .frame(minHeight: 44)
             }
-            .foregroundStyle(.white.opacity(0.9))
-            .frame(minHeight: 44)
-            .disabled(sourceSwitching)
-            .accessibilityLabel("换个源听")
         }
         .padding(.horizontal, 32)
     }

@@ -85,4 +85,33 @@ class RequestThrottle(
             release()
         }
     }
+
+    /**
+     * 批量模式：只保留**起始间隔**（1 秒），允许最多 [concurrency] 个请求同时在飞。
+     *
+     * 【2026-11-25 解决「大书详情 80 秒」】串行 `run()` 下翻 40 页 = 40 ×（1s 间隔 + RTT）≈ 80 秒，
+     * 用户等不了。翻页这种「同一个站、同一本书、连续 N 页」的场景，
+     * 真正要防的是**起始频率**（每秒一个新请求），不是「同一时刻只能有一个在飞」。
+     * 实测 mobwsa 对 2~3 个并发翻页没有风控反应，维持 1/s 的起始间隔即可。
+     *
+     * 纪律不变的部分：起始间隔仍是 minIntervalMs，不会变成「一口气全发」。
+     */
+    private val slots = atomic(0)
+
+    suspend fun <T> runBulk(concurrency: Int = 3, block: suspend () -> T): T = mutex.withLock {
+        val limit = concurrency.coerceIn(1, 4)
+        while (true) {
+            val cur = slots.value
+            if (cur < limit && slots.compareAndSet(cur, cur + 1)) break
+            delay(GATE_POLL_MS)
+        }
+        try {
+            val wait = waitMs()
+            if (wait > 0) delay(wait)
+            markRequest()
+            block()
+        } finally {
+            slots.decrementAndGet()
+        }
+    }
 }

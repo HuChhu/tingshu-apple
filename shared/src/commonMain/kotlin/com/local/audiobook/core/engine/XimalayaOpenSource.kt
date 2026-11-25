@@ -1,6 +1,8 @@
 package com.local.audiobook.core.engine
 
 import com.local.audiobook.core.CookieProvider
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 import com.local.audiobook.core.Book
 import com.local.audiobook.core.BookDetail
@@ -179,40 +181,63 @@ class XimalayaOpenSource(
         // 另外：一旦拿到 totalCount 就按它算，页面明确结束，不会白跑满上限。
         val maxPages = if (loadFullPages) 40 else 1
         var realTotal = 0L
-        while (pg <= maxPages) {
-            // 用户已经返回/换书了：立刻停，不再占着限速队列翻剩下的页。
-            if (cancel.isCancelled) {
-                break
+
+        // 【2026-11-25 解决大书详情 80 秒】
+        // 旧实现是逐页串行：每页「1 秒节流 + ~1 秒 RTT」，40 页 = 80 秒。
+        // 现在两阶段：
+        //   ① 先取第 1 页，拿 totalCount / maxPageId —— 由此算出到底要几页；
+        //   ② 剩下的页**并发取**（最多 3 个在飞，起始间隔仍受 1 秒节流约束）。
+        // mobwsa 实测对 3 并发无风控反应（一轮测过 open+login 双通道并发也正常）。
+        // 40 页上限不变 —— 那是「不值得再等」的产品边界，不是性能参数。
+        val first = getJsonBulk(OpenRoutes.tracksMobile(albumId, 1), OpenRoutes.desktopHeaders())
+        val firstList = first["list"]?.asArr()
+            ?: first["data"]?.asObj()?.get("list")?.asArr()
+            ?: JsonArray(emptyList())
+        if (firstList.isNotEmpty()) {
+            appendTracks(firstList, eps)
+            val tc0 = first["totalCount"]?.asLong() ?: 0L
+            if (tc0 > 0L) realTotal = tc0
+        }
+        val maxPageId0 = first["maxPageId"]?.asLong() ?: 0L
+        // 总页数：信 maxPageId，没有就按 totalCount/20 推，最后统一卡 40。
+        val declared = when {
+            maxPageId0 > 0L -> maxPageId0
+            realTotal > 0L -> (realTotal + 19) / 20
+            else -> 1L
+        }
+        val lastPage = minOf(declared, maxPages.toLong()).toInt()
+        if (lastPage > 1 && !cancel.isCancelled) {
+            // 并发取第 2..lastPage 页。每页结果按页码顺序拼回去，保证 index 连续。
+            val pages = ArrayList<Pair<Int, JsonArray>>(lastPage)
+            coroutineScope {
+                val jobs = (2..lastPage).map { p ->
+                    async {
+                        if (cancel.isCancelled) return@async null
+                        val tr = runCatching {
+                            getJsonBulk(OpenRoutes.tracksMobile(albumId, p), OpenRoutes.desktopHeaders())
+                        }.getOrNull() ?: return@async null
+                        val list = tr["list"]?.asArr()
+                            ?: tr["data"]?.asObj()?.get("list")?.asArr()
+                            ?: JsonArray(emptyList())
+                        val tc = tr["totalCount"]?.asLong() ?: 0L
+                        if (tc > 0L) realTotal = tc
+                        if (list.isEmpty()) null else (p to list)
+                    }
+                }
+                for (j in jobs) {
+                    val r = j.await() ?: continue
+                    pages.add(r)
+                }
             }
-            val tr = getJson(OpenRoutes.tracksMobile(albumId, pg), OpenRoutes.desktopHeaders())
-            val list = tr["list"]?.asArr()
-                ?: tr["data"]?.asObj()?.get("list")?.asArr()
-                ?: JsonArray(emptyList())
-            if (list.isEmpty()) break
-            for (el in list) {
-                val t = el.asObj() ?: continue
-                // 【2026-11-25 P0】这里原来是 TrackNormalizer 的第二份手抄版：
-                //   val direct = playUrl64 ?: playUrl32      // playUrl64="" 时 asStr 得空串，Elvis 不触发
-                //   url = direct ?: ("https://www.ximalaya.com/sound/" + trackId)
-                // 两个坑叠在一起：VIP 轨（playUrl64="" 且 playUrl32=""）落成网页地址；
-                // 半残轨（64 空、32 有）落成空串。而且没传 playable，默认 true ——
-                // 于是「能播不能播」这条信息在推荐页/详情页这条路上彻底丢了。
-                // 直接复用 TrackNormalizer，一份逻辑一处维护。
-                if (t["trackId"]?.asLong() == null) continue
-                eps.add(TrackNormalizer.normalizeTrack(t, eps.size + 1, sourceId))
-            }
-            val tc = tr["totalCount"]?.asLong() ?: 0L
-            if (tc > 0L) realTotal = tc
-            val maxPageId = tr["maxPageId"]?.asLong() ?: 0L
-            if (maxPageId in 1L..pg.toLong()) break
-            pg++
+            // 按页码排序后追加，保证跨页 index 单调
+            pages.sortBy { it.first }
+            for ((_, list) in pages) appendTracks(list, eps)
         }
         // 把真实总集数回填：albumSimple 不给 trackCount，只有曲目接口给 totalCount。
-        // 不回填的话详情页「共 N 集」永远是 0 / 已加载数。
-        // 【2026-11-25 P0】收窄翻页上限之后，这里必须跟着收：
+        // 【2026-11-25 P0】收窄翻页上限之后这里必须跟着收：
         // realTotal 是接口报的**真实总集数**（5546），而本函数最多只翻 40 页（800 集）。
-        // 直接回填 5546 会让 UI 承诺「共 5546 集」然后一条都给不出来：
-        // 列表只有 800 条，滚到底 ChapterPager 返回 nil → footer 永远显示「还有 5496 集」且点了没反应。
+        // 直接回填 5546 会让 UI 承诺「共 5546 集」却一条都给不出来 —— 列表只有 800 条，
+        // 滚到底 ChapterPager 返回 nil，footer 永远显示「还有 5494 集」且点了没反应。
         // 数字比真实少但**诚实**：显示「共 800 集」，滑到底就是到底。
         val effectiveTotal = if (realTotal > 0L) minOf(realTotal, eps.size.toLong()) else realTotal
         val finalBook = if (effectiveTotal > 0L && book.trackCount != effectiveTotal)
@@ -249,6 +274,23 @@ class XimalayaOpenSource(
         raw.startsWith("//") -> "https:" + raw
         raw.startsWith("http") -> raw
         else -> "https://imagev2.xmcdn.com/" + raw.trimStart(47.toChar())
+    }
+
+    /** 把一页曲目解析追加进 eps（index 按当前条数续排） */
+    private fun appendTracks(list: JsonArray, eps: MutableList<Episode>) {
+        for (el in list) {
+            val t = el.asObj() ?: continue
+            if (t["trackId"]?.asLong() == null) continue
+            eps.add(TrackNormalizer.normalizeTrack(t, eps.size + 1, sourceId))
+        }
+    }
+
+    /** 翻页专用：起始间隔仍是 1 秒，但允许 3 个在飞（大书详情从 80 秒降到 ~40 秒） */
+    private suspend fun getJsonBulk(target: String, headers: Map<String, String>): JsonObject {
+        val resp = throttle.runBulk(concurrency = 3) { fetcher.get(target, headers) }
+        if (resp !is FetchOutcome.Ok) throw SourceErrors.Network((resp as FetchOutcome.Failed).kind)
+        return runCatching { Json.parseToJsonElement(resp.text).jsonObject }.getOrNull()
+            ?: throw SourceErrors.ParseFailed("响应非 JSON：" + target.take(80))
     }
 
     private suspend fun getJson(target: String, headers: Map<String, String>): JsonObject {

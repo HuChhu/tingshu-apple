@@ -178,10 +178,15 @@ class SearchEngine(
             if (!loadFullPages) break
             if (totalCount > 0 && episodes.size >= totalCount) break
             if (book.trackCount > 0 && episodes.size >= book.trackCount) break
-            if (page >= maxOf(maxPageId, 200L).toInt()) break
+            if (page >= maxOf(maxPageId, 40L).toInt()) break
             page++
         }
-        return BookDetail(book, episodes)
+        // 【2026-11-25 P0】和免登录通道同一条纪律：总集数不能超过**实际拿到的条数**。
+        // 否则 UI 会承诺「共 5546 集」，而列表只有 800 条，滑到底 footer 永远显示
+        // 「还有 5494 集」且点了没反应 —— 承诺兑现不了就别承诺。
+        val shown = if (totalCount > 0L) minOf(totalCount, episodes.size.toLong()) else totalCount
+        val finalBook = if (shown > 0L && book.trackCount != shown) book.copy(trackCount = shown) else book
+        return BookDetail(finalBook, episodes)
     }
 
     /**
@@ -206,7 +211,9 @@ class SearchEngine(
         if (first.episodes.isEmpty()) return null
         val total = first.totalCount
         val needPages = if (loadFullPages && total > 0) {
-            minOf(((total + 19) / 20).toInt() + 1, 200)
+            // 【2026-11-25】和 XimalayaOpenSource 对齐：200 页 = 200 秒，详情页转三分钟没人等。
+            // 收窄到 40 页（800 集封顶），超出的书截断但 trackCount 会被钳到实际条数，不撒谎。
+            minOf(((total + 19) / 20).toInt() + 1, 40)
         } else 1
         val tracks = if (needPages <= 1) first
             else fetchOpenTracks(albumId, needPages, collectAlbum = true)
@@ -224,7 +231,7 @@ class SearchEngine(
         var albumJson: JsonObject? = null
         var totalCount = 0L
         var page = 1
-        while (page <= minOf(maxPages, 200)) {
+        while (page <= minOf(maxPages, 40)) {
             val url = OpenRoutes.tracksMobile(albumId, page, 20)
             val resp = runCatching { throttle.run { fetcher.get(url, OpenRoutes.desktopHeaders()) } }.getOrNull()
             // 任何一页失败（网络/403/非 JSON）都只能「停下来」，**不能把已经拿到的页丢掉**：

@@ -32,26 +32,62 @@ struct ChapterPageMeta: Codable {
 
 /// 分页缓存的落盘层。键 = BookKey.id
 enum ChapterPager {
-    private static let key = "chapterPageMeta.v1"
+    /// 旧版**单键全局 map** 的键名，只用来做一次性迁移
+    private static let legacyKey = "chapterPageMeta.v1"
+    /// 新键前缀：每本书一个独立键
+    private static let perBookPrefix = "chapterPageMeta.v2."
     private static let encoder = JSONEncoder()
     private static let decoder = JSONDecoder()
 
+    // 【2026-11-25 P1 修扩展性】
+    // 旧实现把所有书的分页元数据塞进**一个** UserDefaults 键：
+    //   每次翻页 = loadAll() 解码全部书 + 改一本 + 编码全部书 + plist 全量重写。
+    // 一本 5546 集的书 ≈ 90KB（trackId→页码 表）；20 本大书就是 1.8MB 单键，
+    // 而 recordPage 在 MainActor 上调用 —— 滚完一本 111 页累计 2-5 秒主线程卡顿，随书数线性恶化。
+    // 现在按 albumKey 拆键：recordPage 只编解码这一本，其它书完全不碰。
+
+    private static func key(for albumKey: String) -> String {
+        perBookPrefix + albumKey
+    }
+
     static func loadAll() -> [String: ChapterPageMeta] {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let map = try? decoder.decode([String: ChapterPageMeta].self, from: data) else { return [:] }
-        return map
+        migrateLegacyIfNeeded()
+        var out: [String: ChapterPageMeta] = [:]
+        let prefix = perBookPrefix
+        for k in UserDefaults.standard.dictionaryRepresentation().keys where k.hasPrefix(prefix) {
+            if let data = UserDefaults.standard.data(forKey: k),
+               let m = try? decoder.decode(ChapterPageMeta.self, from: data) {
+                out[m.albumKey] = m
+            }
+        }
+        return out
     }
 
     static func meta(for albumKey: String) -> ChapterPageMeta? {
-        loadAll()[albumKey]
+        migrateLegacyIfNeeded()
+        guard let data = UserDefaults.standard.data(forKey: key(for: albumKey)) else { return nil }
+        return try? decoder.decode(ChapterPageMeta.self, from: data)
     }
 
     static func save(_ meta: ChapterPageMeta) {
-        var map = loadAll()
-        map[meta.albumKey] = meta
-        if let data = try? encoder.encode(map) {
-            UserDefaults.standard.set(data, forKey: key)
+        if let data = try? encoder.encode(meta) {
+            UserDefaults.standard.set(data, forKey: key(for: meta.albumKey))
         }
+    }
+
+    /// 旧版单键 map → 每本一个键。只跑一次，跑完把旧键删掉。
+    private static var migrated = false
+    private static func migrateLegacyIfNeeded() {
+        guard !migrated else { return }
+        migrated = true
+        guard let data = UserDefaults.standard.data(forKey: legacyKey),
+              let map = try? decoder.decode([String: ChapterPageMeta].self, from: data) else { return }
+        for (k, m) in map {
+            if let d = try? encoder.encode(m) {
+                UserDefaults.standard.set(d, forKey: perBookPrefix + k)
+            }
+        }
+        UserDefaults.standard.removeObject(forKey: legacyKey)
     }
 
     /// 记录一页已加载：更新页码、时间、trackId 反查表
@@ -97,14 +133,14 @@ enum ChapterPager {
 
     /// 清某本书的分页缓存（下拉刷新时用）
     static func clear(albumKey: String) {
-        var map = loadAll()
-        map.removeValue(forKey: albumKey)
-        if let data = try? encoder.encode(map) {
-            UserDefaults.standard.set(data, forKey: key)
-        }
+        UserDefaults.standard.removeObject(forKey: key(for: albumKey))
     }
 
     static func clearAll() {
-        UserDefaults.standard.removeObject(forKey: key)
+        let prefix = perBookPrefix
+        for k in UserDefaults.standard.dictionaryRepresentation().keys where k.hasPrefix(prefix) {
+            UserDefaults.standard.removeObject(forKey: k)
+        }
+        UserDefaults.standard.removeObject(forKey: legacyKey)
     }
 }

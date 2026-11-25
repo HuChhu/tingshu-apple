@@ -204,8 +204,14 @@ class XimalayaOpenSource(
         }
         // 把真实总集数回填：albumSimple 不给 trackCount，只有曲目接口给 totalCount。
         // 不回填的话详情页「共 N 集」永远是 0 / 已加载数。
-        val finalBook = if (realTotal > 0L && book.trackCount != realTotal)
-            book.copy(trackCount = realTotal) else book
+        // 【2026-11-25 P0】收窄翻页上限之后，这里必须跟着收：
+        // realTotal 是接口报的**真实总集数**（5546），而本函数最多只翻 40 页（800 集）。
+        // 直接回填 5546 会让 UI 承诺「共 5546 集」然后一条都给不出来：
+        // 列表只有 800 条，滚到底 ChapterPager 返回 nil → footer 永远显示「还有 5496 集」且点了没反应。
+        // 数字比真实少但**诚实**：显示「共 800 集」，滑到底就是到底。
+        val effectiveTotal = if (realTotal > 0L) minOf(realTotal, eps.size.toLong()) else realTotal
+        val finalBook = if (effectiveTotal > 0L && book.trackCount != effectiveTotal)
+            book.copy(trackCount = effectiveTotal) else book
         return BookDetail(finalBook, eps)
     }
 

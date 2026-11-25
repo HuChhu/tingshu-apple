@@ -406,7 +406,12 @@ struct AlbumView: View {
                             // id 用 offset 不用 element.url：不可播章节的 url 是空串，
                             // 多集会同时得到 id == ""，SwiftUI 会报重复 id 并串行/丢行。
                             // 分页是 append 追加，已有行的 offset 恒定，够用。
-                            ForEach(Array(episodes.enumerated()), id: \.offset) { (idx: Int, ep: SharedBridge.EpisodeRow) in
+                            // 【2026-11-25】以前是 ForEach(Array(episodes.enumerated()), id: \.offset)。
+                            // 播放中 position 每秒刷新会驱动 body 重算，而 Array(enumerated()) 每次都要
+                            // 重新分配一整个 (offset, element) 元组数组 —— 800 集就是每秒 800 次分配。
+                            // 改成按 indices 遍历：List 本身惰性，只对可见行求值，不再整表构造。
+                            ForEach(episodes.indices, id: \.self) { idx in
+                                let ep = episodes[idx]
                                 Button {
                                     if !ep.playable {
                                         // 不调 Player、不动播放行标：只把原因说清楚

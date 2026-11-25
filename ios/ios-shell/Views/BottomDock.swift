@@ -93,9 +93,15 @@ struct BottomDock: View {
         // 代价（明确写出来）：迷你条偶尔会盖住列表最后一两行。
         // 这比「dock 位置漂移」和「永久留白」都轻 —— 而且用户可以上滑看全，
         // 内容在迷你条下方的可点性不受影响（dock 区域才是不可穿透的）。
+        // 【v1.5.1 修「导航栏下边一直有空隙」】
+        // 旧版给这块加 .padding(.bottom, 8)，于是 safeAreaInset 的高度里
+        // 永远含着 8pt 死白 —— 胶囊底下跟屏幕底边之间就有一道缝，怎么调都不严丝合缝。
+        // 而且那 8pt 是写死的，在带 Home 指示条的机型上还叠加了系统安全区，缝隙更明显。
+        // 现在：胶囊**贴到 safeAreaInset 的边界**，底部留白交给系统安全区统一处理 ——
+        // 有 Home 条就自动让出来，没有 Home 条（老机型 / 已被 safeAreaInset 吃掉）就紧贴屏幕底。
+        //
         dockCapsule()
             .padding(.horizontal, Layout.dockSideMargin)
-            .padding(.bottom, 8)
             .overlay(alignment: .bottom) {
                 MiniPlayerBar()
                     .frame(height: MiniPlayerBar.barHeight)
@@ -108,10 +114,10 @@ struct BottomDock: View {
                         RoundedRectangle(cornerRadius: Layout.radiusBar, style: .continuous)
                             .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
                     )
-                    // 向上抬：胶囊高 + 底部边距 8 + 间隙 = 56+8+6 = 70。
-                    // 不要再加 playKeyOverhang —— 它已经含在 dockCapsule 的布局高度里，
-                    // 加了就多抬 8pt，实测间隙变成 22pt（第四轮 UI 复检的数字）。
-                    .offset(y: -(Layout.dockHeight + 8 + Self.gapBetweenMiniBarAndDock))
+                    // 向上抬：胶囊高 + 间隙 = 56+6 = 62。
+                    // 不要再加 playKeyOverhang —— 含在 dockCapsule 的布局高度里。
+                    // 也不要加原来那 8pt 底部 padding：它已经删掉了，加了反而多抬。
+                    .offset(y: -(Layout.dockHeight + Self.gapBetweenMiniBarAndDock))
                     .opacity(hasMiniPlayer ? 1 : 0)
                     // 幽灵热区防线：透明度 0 的条不许吃触摸
                     .allowsHitTesting(hasMiniPlayer)

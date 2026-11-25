@@ -48,7 +48,7 @@ class SourceRegistry(
 
     // ---------- 原生源 ----------
 
-    val ximalayaOpen = XimalayaOpenSource(fetcher, throttleFor("ximalaya-open"))
+    val ximalayaOpen = XimalayaOpenSource(fetcher, throttleFor("ximalaya-open"), cookieProvider = cookieProvider)
     val kuwo = KuwoSource(fetcher, throttleFor("kuwo"))
     val bilibili = BilibiliSource(fetcher, throttleFor("bilibili"))
     val qingting = QingtingSource(fetcher, throttleFor("qingting"), clock)

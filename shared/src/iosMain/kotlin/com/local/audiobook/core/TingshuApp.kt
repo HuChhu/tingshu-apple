@@ -105,6 +105,7 @@ class TingshuApp(
     private val xmOpen: XimalayaOpenSource = XimalayaOpenSource(
         fetcher = IosJsonFetcher(client),
         throttle = RequestThrottle(minIntervalMs = 1_000L, clock = { PlatformClock.nowMs() }),
+        cookieProvider = cookies,
     )
 
     private val kuwo: KuwoSource = KuwoSource(

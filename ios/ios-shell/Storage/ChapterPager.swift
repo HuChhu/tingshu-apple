@@ -74,6 +74,12 @@ enum ChapterPager {
     /// 首屏大小与首屏切片；空列表保持空，pageSize 始终为正。
     static func firstPageSize(totalCount: Int, requested: Int = 50) -> Int {
         guard totalCount > 0 else { return 20 }
+        // 【2026-11-25】以前「共 N 集」显示的是 totalChapters（取自 book.trackCount），
+        // 而首屏切片只有 50 条，页头写「共 50 集」+ 下面却列不完 —— 两个数字各自为政。
+        // 现在首屏直接把整本切出来（最多 200 条，超过才分页）：
+        // 一本书 67 集、200 集都很常见，一次性进 List 不吃内存；
+        // 真正的大部头（4800 集）仍然走分页，行为不变。
+        if totalCount <= 200 { return totalCount }
         return max(1, min(max(1, requested), totalCount))
     }
 

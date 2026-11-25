@@ -138,16 +138,20 @@ struct BottomDock: View {
             //   · 外层用 safeAreaInset 给的常规布局（胶囊位置不动）
             //   · 里面套一层 background，背景材质向下延伸到物理屏幕底边
             // 这样胶囊下方那段不再是"透出页面底色"，而是与胶囊同材质的一片，视觉上严丝合缝。
+            // 胶囊自身下沉吃掉 home indicator 那一段：负 bottom padding 把布局高度
+            // 往外扩，胶囊跟着下移到屏幕物理底边；同时在胶囊内部留 12pt，避免圆角贴边难看。
+            .padding(.bottom, -Self.homeIndicatorSlot)
             .background(alignment: .bottom) {
-                // 高度取一个足够大的值即可：它会从 dock 底边往下铺，多出来的部分被屏幕裁掉。
-                // 不能写死 34 —— 不同机型/横竖屏的 home indicator 高度不同，铺满就不会露边。
+                // 光靠下沉还不够：safeAreaInset 容器会把内容裁回安全区。
+                // 所以再铺一层同材质，向下盖住那段被裁掉的区域。
+                // 高度给足，多出来的部分被屏幕自然裁掉，不写死 34（不同机型不一样）。
                 Rectangle()
                     .fill(.clear)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 120)
+                    .frame(height: 140)
                     .background(.ultraThinMaterial)
                     .allowsHitTesting(false)
-                    .padding(.bottom, -100)
+                    .padding(.bottom, -120)
             }
         // 封面下载挂在**稳定的最外层**，不在 vinylDisc 内部：
         // vinylDisc 的形态随状态（空/加载/播放/暂停/失败）变化，视图身份一变 task 就被取消重跑，
@@ -164,6 +168,8 @@ struct BottomDock: View {
     // 迷你条尺寸唯一来源 = MiniPlayerBar.barHeight。
     /// 迷你条底边到胶囊顶边的可见空隙（不含播放键凸出的那 8pt）。
     private static let gapBetweenMiniBarAndDock: CGFloat = 6
+    /// home indicator 预留段（iOS 全系都是 34pt；下沉这么多让胶囊贴到物理底边）
+    private static let homeIndicatorSlot: CGFloat = 34
 
     /// 唯一一层玻璃：胶囊本体。中间键画在它上面，凸出部分露在胶囊上沿之外。
     private func dockCapsule() -> some View {

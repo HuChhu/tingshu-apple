@@ -1,5 +1,7 @@
 package com.local.audiobook.core.engine
 
+import com.local.audiobook.core.CookieProvider
+
 import com.local.audiobook.core.Book
 import com.local.audiobook.core.BookDetail
 import com.local.audiobook.core.Capabilities
@@ -34,6 +36,11 @@ import kotlinx.serialization.json.jsonObject
 class XimalayaOpenSource(
     private val fetcher: JsonFetcher,
     private val throttle: RequestThrottle,
+    /** 有 Cookie 说明用户已登录：官方主推那张要交给登录通道，否则 VIP 集永远拿不到地址 */
+    private val cookieProvider: CookieProvider = object : CookieProvider {
+        override suspend fun cookie(): String? = null
+        override suspend fun refresh() {}
+    },
     override val sourceId: String = "ximalaya-open",
     override val name: String = "喜马拉雅（免登录）",
 ) : SourceActions {
@@ -80,6 +87,10 @@ class XimalayaOpenSource(
      * 官方主推那一张。失败一律返回 null —— 搜索不能因为补一条而整体失败。
      * 只取 albumResultList 第一条，它是官方运营挑过的，正好就是官方 App 里的第一名。
      */
+    /** 当前有没有登录 Cookie（决定 suggest 补的那条该交给哪个通道） */
+    private suspend fun hasLoginCookie(): Boolean =
+        !cookieProvider.cookie().isNullOrBlank()
+
     private suspend fun fetchOfficialPick(keywords: String): Book? = try {
         val r = throttle.run {
             fetcher.get(OpenRoutes.suggest(keywords), OpenRoutes.desktopHeaders())
@@ -93,7 +104,12 @@ class XimalayaOpenSource(
             val kw = first?.get("keyword")?.asStr() ?: ""
             if (id <= 0L || kw.isBlank()) null
             else Book(
-                sourceId = sourceId,
+                // 【2026-11-25 P0】suggest 补的这条以前硬编码成当前源（= ximalaya-open）。
+                // 官方主推的往往是 VIP 专辑，而 VIP 集的直链只有登录通道能换到；
+                // 免登录通道对 VIP 集永远返回空 playUrl。
+                // 于是登录用户点进来也全是锁 —— 不是会员没生效，是我们把他推到了错的那条路。
+                // 现在按登录态给源：有 Cookie 就给登录通道，没有才给免登录。
+                sourceId = if (hasLoginCookie()) "ximalaya" else sourceId,
                 bookUrl = "https://www.ximalaya.com/album/" + id,
                 title = kw,
                 author = "",

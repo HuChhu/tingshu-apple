@@ -43,6 +43,7 @@ class XimalayaOpenSource(
         override suspend fun cookie(): String? = null
         override suspend fun refresh() {}
     },
+    private val clock: () -> Long = { 0L },
     override val sourceId: String = "ximalaya-open",
     override val name: String = "喜马拉雅（免登录）",
 ) : SourceActions {
@@ -245,10 +246,21 @@ class XimalayaOpenSource(
         return BookDetail(finalBook, eps)
     }
 
+    /** 客户端通道提取器：直接复用登录版那套（同一端点、同一 UA、同一权限判定） */
+    private fun clientExtractor(): com.local.audiobook.core.AudioExtractor =
+        XimalayaAudioExtractor(fetcher, throttle, cookieProvider, clock)
+
     override fun audioExtractor(): com.local.audiobook.core.AudioExtractor =
         object : com.local.audiobook.core.AudioExtractor {
             override suspend fun extract(url: String, timeoutMs: Int): ExtractedAudio {
-                if (!url.startsWith("http")) throw SourceErrors.ParseFailed("不是直链：" + url)
+                // 【2026-11-25】纯数字输入 = trackId。VIP 集的 playUrl64 在 mobwsa 里是空串，
+                // 只有客户端通道 mobile/v1/track/baseInfo 能换到 redirect 链（免费集匿名也能拿到）。
+                // 所以这里不再直接判「不是直链」失败，而是先当 trackId 去问一次。
+                if (!url.startsWith("http")) {
+                    val id = url.trim().toLongOrNull()
+                        ?: throw SourceErrors.ParseFailed("不是直链：" + url)
+                    return clientExtractor().extract(id.toString(), timeoutMs)
+                }
                 // 【P0 2026-11-24】这里原来是把输入原样返回，于是
                 // https://www.ximalaya.com/sound/{trackId}（专辑详情阶段 TrackNormalizer 给出的**网页**地址）
                 // 被当成音频交给 AVPlayer，报 -12847（kAudioFormatUnsupportedDataFormatError）。

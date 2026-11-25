@@ -36,7 +36,7 @@ class SearchEngine(
     override val desc = "官方接口直连，风控不硬冲，搜索降级给提示"
     override val capabilities = Capabilities(searchable = true, discoverable = true, cacheable = true, needsWebView = false)
 
-    private val extractor = XimalayaAudioExtractor(fetcher, throttle, cookieProvider)
+    private val extractor = XimalayaAudioExtractor(fetcher, throttle, cookieProvider, nowMs)
     override fun audioExtractor(): AudioExtractor = extractor
 
     private fun parse(text: String): JsonObject? =

@@ -21,6 +21,12 @@ class XimalayaAudioExtractor(
     private val fetcher: JsonFetcher,
     private val throttle: RequestThrottle,
     private val cookieProvider: CookieProvider,
+    /**
+     * 时钟。baseInfo 的 URL 里带毫秒时间戳（服务端当缓存键用）。
+     * 恒传 0 会让同一次安装内**永远命中第一次的缓存**，而 redirect 形态的地址带 buy_key/sign，
+     * 是会过期的 —— 第二次播放就可能 403。所以每请求取一次真实时间。
+     */
+    private val nowMs: () -> Long = { 0L },
 ) : AudioExtractor {
 
     override suspend fun extract(url: String, timeoutMs: Int): ExtractedAudio {
@@ -73,7 +79,7 @@ class XimalayaAudioExtractor(
         val headers = OpenRoutes.clientHeaders() +
             (cookie?.let { mapOf("Cookie" to it) } ?: emptyMap())
 
-        val resp = throttle.run { fetcher.get(OpenRoutes.trackBaseInfo(trackId, 0L), headers) }
+        val resp = throttle.run { fetcher.get(OpenRoutes.trackBaseInfo(trackId, nowMs()), headers) }
         if (resp !is FetchOutcome.Ok) {
             val f = resp as FetchOutcome.Failed
             throw SourceErrors.Network(f.kind)
@@ -90,6 +96,7 @@ class XimalayaAudioExtractor(
             throw when (ret) {
                 "999" -> SourceErrors.Network("喜马拉雅限流（ret=999），等一会儿再试")
                 "1001" -> SourceErrors.Network("喜马拉雅风控校验（ret=1001），稍后重试")
+                "924" -> SourceErrors.NotFound("喜马拉雅说这一集已下架（ret=924）；若是会员内容，登录后重试")
                 else -> SourceErrors.ParseFailed("单集接口返回 ret=" + ret)
             }
         }
@@ -102,7 +109,11 @@ class XimalayaAudioExtractor(
             }
             return ""
         }
-        val picked = pick("playPathAacv164", "playUrl64", "playPathAacv224", "playUrl32")
+        val picked0 = pick("playPathAacv164", "playUrl64", "playPathAacv224", "playUrl32", "playPathHq")
+        // 上游偶尔给相对路径（/mobile/redirect/...）：补协议，否则 URL(string:) 会是 nil，死在 loader 之前。
+        val picked = if (picked0.startsWith("//")) "https:" + picked0
+            else if (picked0.startsWith("/")) "https://mobile.ximalaya.com" + picked0
+            else picked0
         if (picked.isBlank()) {
             // 有地址字段但全空 → 说明这一集需要权限（会员未开通 / 未登录 / 超出免费集）
             val authorized = strOf("isAuthorized") == "true"

@@ -701,6 +701,20 @@ enum SharedBridge {
 
     /// 按源取播放地址。失败返回 nil，同时把可读原因记进 lastAudioError。
     /// K/N  fatal 防护：Kotlin 侧现在返回 AudioResult，不再抛异常给 Swift。
+    /// 取地址**并**返回失败原因，一次调用内自洽。
+    ///
+    /// 2026-11-25 修竞态：以前失败原因写在静态 `lastAudioError` 里，
+    /// 而 `audio()` 入口会把它清空。用户连点两集时，B 的入口清空会擦掉 A 刚写入的原因，
+    /// A 的报错就退化成一句兜底废话。改成随返回值一起带出来，谁的原因谁负责。
+    static func audioEx(sourceId: String, url: String) async -> (audio: ExtractedAudio?, reason: String?) {
+        let r = await bridge { done in
+            registry.audio(sourceId: sourceId, url: url, completionHandler: { res, e in done(res, e) })
+        }
+        guard let r = r else { return (nil, "引擎无响应") }
+        if let reason = r.reason { return (nil, reason) }
+        return (r.audio, nil)
+    }
+
     static func audio(sourceId: String, url: String) async -> ExtractedAudio? {
         lastAudioError = nil
         let r = await bridge { done in

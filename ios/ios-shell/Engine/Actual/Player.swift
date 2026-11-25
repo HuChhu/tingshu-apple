@@ -907,7 +907,10 @@ final class Player: NSObject, ObservableObject {
             if SharedBridge.looksLikeWebPage(input), ep.trackId > 0 {
                 input = "https://www.ximalaya.com/sound/\(ep.trackId)"
             }
-            var audio = await SharedBridge.audio(sourceId: src, url: input)
+            // 用 audioEx：失败原因随返回值带出来，不再依赖会被别的调用清空的静态字段
+            let first = await SharedBridge.audioEx(sourceId: src, url: input)
+            var audio = first.audio
+            var addressReason = first.reason
 
             // 引擎拿不到：三种兜底依次试，任何一条成功就能播
             // ① 登录版引擎按 trackId 直取（Cookie 已注入时通常最快）
@@ -916,7 +919,9 @@ final class Player: NSObject, ObservableObject {
             }
             // ② 换免登录源再试一次（登录版被风控时这条常能过）
             if audio == nil, src != "ximalaya-open" {
-                audio = await SharedBridge.audio(sourceId: "ximalaya-open", url: input)
+                let second = await SharedBridge.audioEx(sourceId: "ximalaya-open", url: input)
+                audio = second.audio
+                if let r = second.reason { addressReason = r }
             }
             // ③ WebView 嗅探（前端渲染的站、直链藏在 JS 里的站）
             if audio == nil, input.hasPrefix("http") {
@@ -934,7 +939,7 @@ final class Player: NSObject, ObservableObject {
                 guard gen == self.requestGeneration else { return }
                 self.requestingEpisode = false
                 // P0-3：显示真实原因（登录失效/网络异常/触发限流），不再一律「取不到」
-                self.failAddress(SharedBridge.lastAudioError ?? Player.fallbackAddressReason(src))
+                self.failAddress(addressReason ?? SharedBridge.lastAudioError ?? Player.fallbackAddressReason(src))
                 return
             }
             guard gen == self.requestGeneration else { return }   // 用户已经点了别的集

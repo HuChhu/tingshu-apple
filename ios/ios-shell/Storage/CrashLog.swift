@@ -25,10 +25,32 @@ enum CrashLog {
         return base.appendingPathComponent(dirName, isDirectory: true)
     }
 
+    /// 日期格式器只建一次。以前 currentFile 每写一条日志 new 一个 DateFormatter，
+    /// 而文件里 :48 的注释还写着「日期格式器只建一次」—— 自己打自己的脸，
+    /// 每秒几十条 PROGRESS 的时候这就是纯浪费。
+    private static let dayDf: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
     static var currentFile: URL {
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        return dir.appendingPathComponent("app-\(df.string(from: Date())).log")
+        dir.appendingPathComponent("app-\(dayDf.string(from: Date())).log")
+    }
+
+    /// 只保留最近 7 天。用户装了好几个版本，日志一天一个文件永不清理，
+    /// merged() 又把**全部**文件读进内存拼字符串 —— 日志页打开要卡好几秒。
+    /// 清理只在写日志时顺手做一次（同一天只做一次），不在读路径上做。
+    private static var lastPruneDay: String = ""
+    private static func pruneIfNeeded() {
+        let today = dayDf.string(from: Date())
+        if lastPruneDay == today { return }
+        lastPruneDay = today
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 3600)
+        for f in allFiles() {
+            let m = (try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            if m < cutoff { try? FileManager.default.removeItem(at: f) }
+        }
     }
 
     /// 安装未捕获异常处理器。放在 App 启动最早处（AppDelegate/init 里）。
@@ -62,6 +84,7 @@ enum CrashLog {
         let line = "[\(df.string(from: Date()))][\(tag)] \(message)\n"
         guard let data = line.data(using: .utf8) else { return }
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        pruneIfNeeded()
         let file = currentFile
 
         // 跨天换文件：路径变了就重开句柄
@@ -123,7 +146,8 @@ enum CrashLog {
 
     /// 合并全部日志成一份文本（给用户复制/分享）
     static func merged() -> String {
-        allFiles().compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
+        // 最近 7 个文件就够排查了；以前是全部读进内存，装过几个版本之后会很慢。
+        allFiles().suffix(7).compactMap { try? String(contentsOf: $0, encoding: .utf8) }.joined(separator: "\n")
     }
 
     static func clear() {

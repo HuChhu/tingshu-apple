@@ -15,7 +15,7 @@ struct PlayerView: View {
     @State private var isFavorite = false
 
     private enum PlayerSheet: Identifiable {
-        case chapters, sleep, speed, volume, sources
+        case chapters, sleep, speed, volume, sources, login
         var id: Int {
             switch self {
             case .chapters: return 0
@@ -23,6 +23,7 @@ struct PlayerView: View {
             case .speed: return 2
             case .volume: return 3
             case .sources: return 4
+            case .login: return 5
             }
         }
     }
@@ -343,6 +344,17 @@ struct PlayerView: View {
                 sourceSwitchMessage = nil
                 activeSheet = .sources
             }
+
+            // 付费集：给一个能走下去的动作，别让用户对着原因干瞪眼。
+            // 已登录但没会员 → 去开通；未登录 → 去登录。文案统一，动作一致。
+            if player.errorText?.contains("付费内容") == true {
+                Button("去登录 / 开通会员") {
+                    sourceSwitchMessage = nil
+                    activeSheet = .login
+                }
+                .foregroundStyle(.white)
+                .frame(minHeight: 44)
+            }
             .foregroundStyle(.white.opacity(0.9))
             .frame(minHeight: 44)
             .disabled(sourceSwitching)
@@ -391,6 +403,17 @@ struct PlayerView: View {
             volumeSheet
         case .sources:
             sourceSwitcher
+        case .login:
+            WebViewContainer(
+                urls: LoginEndpoints.candidates,
+                onLoggedIn: {
+                    SharedBridge.invalidateSession()
+                    NotificationCenter.default.post(name: .loginStateChanged, object: nil)
+                    activeSheet = nil
+                },
+                onCancel: { activeSheet = nil }
+            )
+            .presentationBackground(Color(uiColor: .systemBackground))
         }
     }
 

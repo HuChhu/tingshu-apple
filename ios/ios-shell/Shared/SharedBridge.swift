@@ -669,7 +669,7 @@ enum SharedBridge {
     }
 
     /// K/N 的 VipTier 是 enum，导出成 ObjC 类；这里用名称映射，避免依赖具体导出符号。
-    private static func vipTierName(_ t: VipTier) -> String {
+    private static func vipTierName(_ t: shared.VipTier) -> String {
         let s = String(describing: t).lowercased()
         if s.contains("notloggedin") { return "notLoggedIn" }
         if s.contains("normal") { return "standard" }

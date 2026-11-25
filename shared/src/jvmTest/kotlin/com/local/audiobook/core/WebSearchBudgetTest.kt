@@ -59,10 +59,13 @@ class WebSearchBudgetTest {
         clock += 5_000
         b.canAttempt()
         assertEquals(2, b.attempts, "冷却未过不应清零")
-        // 冷却 已过 → 清零
+        // 冷却 已过 → canAttempt 本身仍然不改状态（纯查询），但应该放行
         clock += 30_000
-        b.canAttempt()
-        assertEquals(0, b.attempts, "超过冷却应重置")
+        assertTrue(b.canAttempt().first, "冷却过后应放行")
+        assertEquals(2, b.attempts, "canAttempt 是纯查询，不清零")
+        // 真正的清零发生在 record() 里
+        b.record(null, "", true)
+        assertEquals(0, b.attempts, "record 之后窗口滚动，计数归零")
     }
 
     @Test
@@ -84,5 +87,24 @@ class WebSearchBudgetTest {
         // 连调三次 canAttempt，不该改变计数
         repeat(3) { b.canAttempt() }
         assertEquals(2, b.attempts, "canAttempt 不能有副作用")
+    }
+
+    @Test
+    fun canAttemptHasNoSideEffectAcrossCooldown() {
+        val b = budget()
+        clock += 1_000; b.record(null, "", false)
+        clock += 1_000; b.record(null, "", false)
+        clock += 1_000; b.record(null, "", false)
+        // 连续 3 次失败 → 拉黑
+        assertTrue(b.blocked)
+        assertFalse(b.canAttempt().first)
+        val b2 = budget()
+        clock += 1_000; b2.record(null, "", false)
+        clock += 1_000; b2.record(null, "", false)
+        // 跨过冷却窗口后再问：不改状态，但应放行
+        clock += 40_000
+        assertTrue(b2.canAttempt().first, "跨窗口后应放行")
+        assertEquals(2, b2.attempts, "跨窗口查询不能改计数")
+        assertTrue(b2.paused, "跨窗口查询不能清 paused")
     }
 }

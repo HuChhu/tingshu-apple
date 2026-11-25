@@ -17,8 +17,10 @@ class WebSearchBudget(private val maxAttempts: Int = 3, private val cooldownMs: 
         // 它会在 record() 之后把 attempts 清零 → 失败不累计 → 连续风控永远触不到 3 次上限（拉黑失效）；
         // 同时它在一次请求内被调用两次 → 第二次就把计数清了。
         // 现在拆开：状态变更只在 record()，canAttempt() 是纯查询。
-        rollWindowIfDue()
-        if (attempts >= maxAttempts) return false to "已达到最多 " + maxAttempts + " 次上限"
+        // 纯查询：只读取，不写状态。窗口是否过期用「本刻是否已过冷却」判断，
+        // 真正的清零发生在 record()（见 windowExpired）。
+        val effAttempts = if (windowExpired()) 0 else attempts
+        if (effAttempts >= maxAttempts) return false to "已达到最多 " + maxAttempts + " 次上限"
         if (lastAt > 0) {
             val elapsed = now() - lastAt
             if (elapsed < cooldownMs) return false to "冷却中，还需等待 " + (cooldownMs - elapsed) / 1000 + " 秒"
@@ -26,7 +28,13 @@ class WebSearchBudget(private val maxAttempts: Int = 3, private val cooldownMs: 
         return true to ""
     }
 
-    /** 窗口滚动（只分析失败计数），由 record() 与 canAttempt() 共用，只清失败计数 */
+    /** 距上次失败是否已过冷却（纯函数，不看也不改状态） */
+    private fun windowExpired(): Boolean {
+        val lastFail = lastFailAt
+        return lastFail > 0L && now() - lastFail >= cooldownMs
+    }
+
+    /** 窗口滚动（只分析失败计数），只由 record() 调用，只清失败计数 */
     private fun rollWindowIfDue() {
         val lastFail = lastFailAt
         // 从未失败过就不涉及窗口；有失败且超过冷却 → 清零

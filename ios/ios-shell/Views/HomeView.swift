@@ -296,7 +296,11 @@ struct HomeView: View {
             errorText = nil
         }
 
-        let src = "ximalaya-open"
+        // 【2026-11-25 P0】这里原来写死 "ximalaya-open"，和 suggest 那处是同一个 bug：
+        // 已登录用户从首页推荐点进去，走的仍是免登录通道 ——
+        // 而 VIP 集的地址只有登录通道能换到，于是「首页推荐的书点了也播不了」。
+        // 同文件 :211 早就有正确写法（sourceOf），这里是漏改。
+        let src = SharedBridge.loggedIn ? "ximalaya" : "ximalaya-open"
         let specs = Self.specs
 
         let results: [(String, FeedState)] = await withTaskGroup(

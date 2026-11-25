@@ -100,6 +100,30 @@ object OpenRoutes {
         // 写错的话每页都返回第 1 页：1300 集的专辑只能拿到 20 集，而且这 20 集会被反复 addAll。
         TRACKS_MOBILE + "?albumId=" + albumId + "&pageId=" + page + "&pageSize=" + size
 
+    /**
+     * 单集播放信息（**客户端通道**，不需要 xm-sign）。
+     *
+     * 【2026-11-25 破局】`www.ximalaya.com/revision/play/v1/audio` 被 dws 风控接管，
+     * 要浏览器指纹算出的 xm-sign，命令行侧复刻不了，全部 404。
+     * 但官方客户端走的是这条 mobile 通道，只要登录 Cookie，不要指纹：
+     *   · 免费集：isAuthorized=true，playUrl64 = /mobile/redirect/free/play/{id}/1，302 到 audiopay CDN
+     *   · 会员集：带会员 Cookie 时 isAuthorized=true，同样给 redirect 链
+     *   · 无权限：isAuthorized=false、playUrl64=null（不是报错，是「你没权限」）
+     * UA 必须是**客户端 UA**，用浏览器 UA 会被限流成 ret:999。
+     */
+    const val TRACK_BASE_INFO = "https://mobile.ximalaya.com/mobile/v1/track/baseInfo"
+
+    /** 客户端 UA —— 用浏览器 UA 打这个接口会 ret:999 */
+    const val CLIENT_UA = "ting_9.2.62(Galaxy,Android15)"
+
+    fun trackBaseInfo(trackId: Long, nowMs: Long): String =
+        TRACK_BASE_INFO + "/" + nowMs + "?device=android&trackId=" + trackId
+
+    fun clientHeaders(): Map<String, String> = mapOf(
+        "User-Agent" to CLIENT_UA,
+        "Accept" to "application/json",
+    )
+
     fun tracksMobile2(albumId: Long, page: Int, size: Int = 10): String =
         TRACKS_MOBILE2 + "?albumId=" + albumId + "&pageId=" + page + "&pageSize=" + size + "&device=android"
 

@@ -248,12 +248,13 @@ class CorePureTest {
         val ep = com.local.audiobook.core.engine.TrackNormalizer.normalizeTrack(o, 1, "ximalaya-open")
         assertEquals("", ep.url, "VIP 轨不许填网页地址")
         assertFalse(ep.playable)
-        assertTrue(ep.hint.contains("付费"), "原因里必须说清是付费内容：" + ep.hint)
+        assertTrue(ep.hint.contains("会员"), "原因里必须说清要会员：" + ep.hint)
         // 2026-11-25 纠正：这批 VIP 专辑 priceTypeId=1（按集购买），会员不豁免。
         // 文案里不许再出现「已开通会员会自动走会员通道」这种误导。
         assertFalse(ep.hint.contains("自动走会员通道"), "不能暗示会员能解：" + ep.hint)
-        assertTrue(ep.hint.contains("会员不包含"), "必须说清会员不包含：" + ep.hint)
-        assertTrue(ep.hint.contains("0.20喜点/集"), "要带上价格：" + ep.hint)
+        assertTrue(ep.hint.contains("开通喜马拉雅会员"), "必须给出动作指引：" + ep.hint)
+        // 2026-11-25：这批 VIP 专辑是「前 20 集免费 + 会员解锁」，不是按集购买，
+        // 所以文案里不再出现价格，改为说清「需要会员 + 可试听时长」。
         assertTrue(ep.hint.contains("90"), "要带上试听时长：" + ep.hint)
         assertEquals(1800000L, ep.durationMs)
     }
@@ -456,7 +457,17 @@ class MigrationTest {
 
 
 class AuthPrecheckTest {
-    @Test fun extractWithoutCookieThrowsAuthAndSavesTheRequest() = runBlocking {
+    /**
+     * 【2026-11-25 语义变更】旧行为：无 Cookie 直接抛 Auth，一个请求都不发。
+     * 那时打的是 `revision/play/v1/audio`，匿名必 404，预检能省一次注定失败的请求。
+     *
+     * 现在打的是客户端通道 `mobile/v1/track/baseInfo` —— 它**匿名也能返回免费集的地址**
+     * （实测：免费集 isAuthorized=true，playUrl64 给 redirect 链，302 到 audiopay CDN）。
+     * 如果还保留「无 Cookie 直接抛」，未登录用户连前 20 集免费内容都听不了 —— 那是真 bug。
+     *
+     * 所以现在断言改成：无 Cookie **会发请求**，拿不到地址时按「需要登录」分类报错。
+     */
+    @Test fun extractWithoutCookieStillTriesClientChannel() = runBlocking {
         val fake = FakeFetcher()   // 不预置任何路由：若发了请求会得 Failed(NoRoute) 而非 Auth
         val x = com.local.audiobook.core.engine.XimalayaAudioExtractor(
             fetcher = fake,
@@ -467,8 +478,8 @@ class AuthPrecheckTest {
             },
         )
         val err = runCatching { x.extract("9004") }.exceptionOrNull()
-        assertTrue(err is SourceErrors.Auth, "实际: " + err)
-        assertEquals(0, fake.calls, "预检命中不得发请求（桥 has_login 同款语义）")
+        assertTrue(err != null, "没有路由时必须失败，不能假装成功")
+        assertTrue(fake.calls >= 1, "客户端通道匿名也要打，否则免费集听不了")
         Unit
     }
 

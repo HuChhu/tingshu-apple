@@ -57,59 +57,66 @@ class XimalayaAudioExtractor(
             ?: url.trim().takeIf { it.isNotEmpty() && it.all { ch -> ch.isDigit() } }?.toLongOrNull()
             ?: throw SourceErrors.ParseFailed("无法解析 trackId：" + url)
 
-        // 预检（对齐桥 get_audio_url 的 has_login 语义 + live 实证：匿名打播放端点=404 HTML 干扰分类）：
-        // 无 Cookie 直接 Auth，不发请求——错误类型更准（Auth 而非 ParseFailed），还省一次注定失败的请求。
-        // iOS 壳消费 SourceErrors.Auth → 「去登录」文案（SharedBridge 错误族映射）。
-        if (cookieProvider.cookie() == null) throw SourceErrors.Auth("本地无登录凭证，去登录")
-
-        // 级3：官方播放接口（需登录 Cookie）
-        val base = mapOf(
-            "User-Agent" to SearchRoutes.WEB_UA,
-            "Referer" to SearchRoutes.WEB_BASE + "/",
-            "Accept" to "application/json",
-        )
+        // ============ 级3：客户端通道 track/baseInfo（2026-11-25 破局） ============
+        //
+        // 旧实现在这里打 `www.ximalaya.com/revision/play/v1/audio` —— 那个端点已被 dws 风控
+        // 接管，要浏览器指纹算出的 xm-sign，命令行侧复刻不了，匿名/假 Cookie 全部 404。
+        // 官方客户端走的是 mobile 通道，只要登录 Cookie，不要指纹。实测：
+        //   免费集 → isAuthorized=true，playUrl64 = /mobile/redirect/free/play/{id}/1
+        //            → 302 → audiopay.cos.tx.xmcdn.com/...m4a?buy_key=...&sign=...（200 audio/x-m4a）
+        //   会员集 → 带会员 Cookie 时 isAuthorized=true，同样给 redirect 链
+        //   无权限 → isAuthorized=false、playUrl64=null（这是「没权限」，不是「接口坏了」）
+        //
+        // **这个接口不需要 Cookie 也能问**（免费集会直接给地址），所以不再「无 Cookie 直接抛」——
+        // 那样会让未登录用户连前 20 集免费内容都听不了。
         val cookie = cookieProvider.cookie()
-        val headers = if (cookie != null) base + mapOf("Cookie" to cookie) else base
+        val headers = OpenRoutes.clientHeaders() +
+            (cookie?.let { mapOf("Cookie" to it) } ?: emptyMap())
 
-        val resp = throttle.run { fetcher.get(DetailRoutes.playAudio(trackId), headers) }
+        val resp = throttle.run { fetcher.get(OpenRoutes.trackBaseInfo(trackId, 0L), headers) }
         if (resp !is FetchOutcome.Ok) {
             val f = resp as FetchOutcome.Failed
-            // 【2026-11-25】以前一律抛 Network，界面显示「网络异常：HTTP」——
-            // 而真实情况是这个端点返回 404（带账号才通，匿名 404）。
-            // 让“网络不好”和“接口不认你”在文案上分开，否则永远查不到真因。
-            if (f.kind.contains("404") || f.kind.contains("status=404")) {
-                throw SourceErrors.ParseFailed("播放接口返回 404：需要登录，或该接口已改版")
-            }
             throw SourceErrors.Network(f.kind)
         }
-
-        val json = parse(resp.text) ?: throw SourceErrors.ParseFailed("播放接口响应非JSON")
-        val (status, err) = ErrorClassifier.classifyJson(resp.httpStatus, json)
-        if (status == "need_login") {
-            cookieProvider.refresh()   // 一次，不重试请求本身
-            throw err ?: SourceErrors.Auth("需要登录")
+        val info = parse(resp.text) ?: throw SourceErrors.ParseFailed("单集接口响应非JSON")
+        fun strOf(k: String): String {
+            val v = info[k] as? kotlinx.serialization.json.JsonPrimitive ?: return ""
+            if (v is kotlinx.serialization.json.JsonNull) return ""
+            return v.content
         }
-        if (status != "ok") {
-            // 区分「要会员」和「其它异常」：上游常见文案/字段
-            val raw = json.toString()
-            if (raw.contains("vip", true) || raw.contains("付费", true) || raw.contains("会员", true)) {
-                throw err ?: SourceErrors.Vip("这一章需要喜马拉雅会员")
+        if (strOf("ret") != "0") {
+            throw SourceErrors.ParseFailed("单集接口返回 ret=" + strOf("ret"))
+        }
+
+        // 优先 HQ（aacv1 64k），其次 64k，再次 32k。空串/null 都跳过。
+        fun pick(vararg keys: String): String {
+            for (k in keys) {
+                val v = strOf(k)
+                if (v.isNotBlank()) return v
             }
-            throw err ?: SourceErrors.ParseFailed("播放接口分类异常：" + status)
+            return ""
         }
-
-        val inner = json["data"] as? JsonObject
-        val audioUrl = AlbumNormalizer.str(inner, "src", "url", "playUrl")
-        if (audioUrl.isEmpty()) throw SourceErrors.ParseFailed("上游未返回可播放地址")
-        guardPlayable(audioUrl, "play/v1/audio")
-
-        // 出口校验：上游 data.src/url/playUrl 有可能是网页地址（实测 /sound/{id} 就是 200 text/html），
-        // 直接交给播放器只会得到 -12847。这里拦成 ParseFailed，让壳侧能显示可读原因。
-        AudioUrlHeaders.requirePlayable(audioUrl, "喜马拉雅播放接口")
-
-        // 头部纪律：audio host 精确匹配才注入；错配=空 map
-        return ExtractedAudio(audioUrl, AudioUrlHeaders.headersFor(audioUrl), 3_600L)
+        val picked = pick("playPathAacv164", "playUrl64", "playPathAacv224", "playUrl32")
+        if (picked.isBlank()) {
+            // 有地址字段但全空 → 说明这一集需要权限（会员未开通 / 未登录 / 超出免费集）
+            val authorized = strOf("isAuthorized") == "true"
+            val free = strOf("isFree") == "true"
+            val msg = when {
+                !authorized && cookie == null -> "这一集需要登录喜马拉雅账号"
+                !authorized && !free -> "这一集需要会员权限（前 20 集免费，之后需开通会员）"
+                !authorized -> "没有权限播放这一集"
+                else -> "上游未返回可播放地址"
+            }
+            throw SourceErrors.Vip(msg)
+        }
+        // redirect 链有几秒时效，expiresInSeconds 给保守值；播放器会自己跟 302（loader 已支持）。
+        return ExtractedAudio(picked, emptyMap(), 3_600L)
     }
+
+    // ---- 旧的 revision/play/v1/audio 实现保留在 git 历史里，别再修它 ----
+    @Suppress("unused")
+    private suspend fun legacyPlayV1Audio(): Nothing =
+        throw SourceErrors.ParseFailed("revision/play/v1/audio 需要 xm-sign 指纹签名，已弃用")
 
     /**
      * 出口闸（2026-11-24 P0）。

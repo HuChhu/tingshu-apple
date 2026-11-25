@@ -118,7 +118,9 @@ class CorePureTest {
         val err = runCatching { engine.bookDetail("4242", loadEpisodes = true, loadFullPages = false) }
             .exceptionOrNull()
         assertTrue(err is SourceErrors.Auth, "实际: " + err)
-        assertEquals(1, fake.calls, "need_login 后不得重试")
+        // v1.4.9：现在先试一次免登录 mobwsa（拿不到就回退），
+        // 所以 请求数 = 1（mobwsa）+ 1（登录版详情）。关键是登录版**只调一次**。
+        assertEquals(2, fake.calls, "need_login 后不得重试登录版接口")
         Unit
     }
 

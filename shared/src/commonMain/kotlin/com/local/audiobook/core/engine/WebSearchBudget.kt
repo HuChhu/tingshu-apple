@@ -10,9 +10,6 @@ class WebSearchBudget(private val maxAttempts: Int = 3, private val cooldownMs: 
     var pauseReason = ""; private set
     var lastRiskLevel: Int? = null; private set
 
-    /** @deprecated 只为兼容旧测试保留；真正的窗口起点是 lastFailAt */
-    private var windowStart = 0L
-
     fun canAttempt(): Pair<Boolean, String> {
         if (blocked) return false to "网页搜索端点已拉黑（IP 级），需人工解除"
         // 窗口滚动：距**上次失败**超过 cooldown 就清零重来。

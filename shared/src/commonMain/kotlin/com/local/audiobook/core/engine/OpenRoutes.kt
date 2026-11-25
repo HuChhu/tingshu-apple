@@ -74,7 +74,9 @@ object OpenRoutes {
         TRACKS_PC + "?albumId=" + albumId + "&pageNum=" + page + "&pageSize=" + size
 
     fun tracksMobile(albumId: Long, page: Int, size: Int = 20): String =
-        TRACKS_MOBILE + "?albumId=" + albumId + "&pageNum=" + page + "&pageSize=" + size
+        // 【P0 v1.4.9】mobwsa 的分页参数是 pageId，不是 pageNum。
+        // 写错的话每页都返回第 1 页：1300 集的专辑只能拿到 20 集，而且这 20 集会被反复 addAll。
+        TRACKS_MOBILE + "?albumId=" + albumId + "&pageId=" + page + "&pageSize=" + size
 
     fun tracksMobile2(albumId: Long, page: Int, size: Int = 10): String =
         TRACKS_MOBILE2 + "?albumId=" + albumId + "&pageId=" + page + "&pageSize=" + size + "&device=android"

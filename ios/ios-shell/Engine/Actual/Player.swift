@@ -215,8 +215,11 @@ private final class ResourceLoaderDelegate: NSObject, AVAssetResourceLoaderDeleg
             info.contentType = Self.uti(forMime: http.mimeType)
             // 只有服务器真接受 Range（206 或声明了 Accept-Ranges）才敢说支持，
             // 否则 AVPlayer 会发起中段请求，而服务器只回 200 全量，等于白拉整集
-            info.isByteRangeAccessSupported = (http.statusCode == 206)
-                || (http.value(forHTTPHeaderField: "Accept-Ranges")?.lowercased() != "none")
+            // 【v1.4.9】只有 206，或 Accept-Ranges 明确含 "bytes" 时才算支持。
+            // 旧写法是「!= none」，nil（没这个头）也会被当成支持 —— 服务器根本没实现 Range，
+            // AVPlayer 却会一直发中段请求，拿到 200 全量后卡住。
+            let acceptRanges = (http.value(forHTTPHeaderField: "Accept-Ranges") ?? "").lowercased()
+            info.isByteRangeAccessSupported = (http.statusCode == 206) || acceptRanges.contains("bytes")
         }
         // 服务器忽略 Range 回了 200，但 AVFoundation 要的是中段：立刻判死，
         // 别让用户对着"正在连接"等到 20 秒。
@@ -1019,7 +1022,10 @@ final class Player: NSObject, ObservableObject {
 
         Task.detached(priority: .utility) {
             var req = URLRequest(url: url)
-            req.httpMethod = "HEAD"
+            // 不是所有 CDN 都支持 HEAD（实测 B 站 mcdn HEAD 404、GET Range 206 正常），
+            // 直接用带 Range 的 GET 探 1 字节：既有状态码也有 Content-Type，还不下载整集。
+            req.httpMethod = "GET"
+            req.setValue("bytes=0-0", forHTTPHeaderField: "Range")
             req.timeoutInterval = 10
             for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
             let probe = try? await URLSession.shared.data(for: req)
@@ -1030,18 +1036,8 @@ final class Player: NSObject, ObservableObject {
                 CrashLog.write("PLAY", "probe track=\(trackId) code=\(http.statusCode) ctype=\(ctype) ok=\(ok && isAudio)")
                 return
             }
-            // HEAD 被拒（405/403）：退一步用 Range 探 1 字节，同样只读一个包，不下载整集
-            var r2 = URLRequest(url: url)
-            r2.timeoutInterval = 10
-            r2.setValue("bytes=0-0", forHTTPHeaderField: "Range")
-            for (k, v) in headers { r2.setValue(v, forHTTPHeaderField: k) }
-            guard let (d, resp) = try? await URLSession.shared.data(for: r2),
-                  let http = resp as? HTTPURLResponse else {
-                CrashLog.write("PLAY", "probe track=\(trackId) failed both HEAD and Range")
-                return
-            }
-            let ctype = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
-            CrashLog.write("PLAY", "probe track=\(trackId) range code=\(http.statusCode) bytes=\(d.count) ctype=\(ctype)")
+            // 上面那条 Range GET 已经覆盖了「HEAD 不支持」的情况，这里只记失败
+            CrashLog.write("PLAY", "probe track=" + String(trackId) + " failed (no response)")
         }
     }
 

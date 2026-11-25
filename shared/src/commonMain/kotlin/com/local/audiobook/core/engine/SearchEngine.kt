@@ -7,6 +7,8 @@ import com.local.audiobook.data.ximalaya.ErrorClassifier
 import com.local.audiobook.data.ximalaya.RequestThrottle
 import com.local.audiobook.data.ximalaya.XimalayaLinkParser
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 
 // 三动作编排。行为基线 = bridge api.py：
@@ -116,30 +118,39 @@ class SearchEngine(
 
         val headers = withCookie(headersOf(SearchRoutes.MOBILE_UA, "https://m.ximalaya.com/"))
 
-        // 详情页（page=1&pageSize=1，bridge 同款）
-        val detailResp = throttle.run { fetcher.get(DetailRoutes.albumPage(albumId, 1, 1, nowMs()), headers) }
-        if (detailResp !is FetchOutcome.Ok) throw SourceErrors.Network((detailResp as FetchOutcome.Failed).kind)
-        val djson = parse(detailResp.text) ?: throw SourceErrors.ParseFailed("详情响应非JSON")
-        val (dstatus, derr) = ErrorClassifier.classifyJson((detailResp as FetchOutcome.Ok).httpStatus, djson)
-        if (dstatus == "need_login") {
-            cookieProvider.refresh()   // 一次；不重试（不硬冲）
-            throw derr ?: SourceErrors.Auth("需要登录")
-        }
-        if (dstatus != "ok") throw derr ?: SourceErrors.ParseFailed("详情分类异常：" + dstatus)
+        // 【免登录直链优先】mobwsa 曲目接口直接返回 playUrl64/playUrl32，
+        // Episode.url 就是能播的 mp3，而且它**不需要登录态**。
+        //
+        // v1.4.9 审计 P0：旧实现先拉登录版详情、再拉 mobwsa 曲目。
+        // 于是登录版详情一挂（风控/500/会员专辑）就**直接 throw**，
+        // 免登录那条根本没机会跑 —— 这就是「搜到了却听不了」的一条路径。
+        // 现在正序反过来：mobwsa 先试，它成功就不再依赖登录版；失败才回退。
+        val open = fetchOpenAlbum(albumId, loadFullPages)
+        val book: Book
+        val openEpisodes: List<Episode>?
+        if (open != null) {
+            book = open.book
+            openEpisodes = open.episodes
+        } else {
+            // 回退：登录版详情（page=1&pageSize=1，bridge 同款）
+            val detailResp = throttle.run { fetcher.get(DetailRoutes.albumPage(albumId, 1, 1, nowMs()), headers) }
+            if (detailResp !is FetchOutcome.Ok) throw SourceErrors.Network((detailResp as FetchOutcome.Failed).kind)
+            val djson = parse(detailResp.text) ?: throw SourceErrors.ParseFailed("详情响应非JSON")
+            val (dstatus, derr) = ErrorClassifier.classifyJson((detailResp as FetchOutcome.Ok).httpStatus, djson)
+            if (dstatus == "need_login") {
+                cookieProvider.refresh()   // 一次；不重试（不硬冲）
+                throw derr ?: SourceErrors.Auth("需要登录")
+            }
+            if (dstatus != "ok") throw derr ?: SourceErrors.ParseFailed("详情分类异常：" + dstatus)
 
-        val albumRaw = (djson["data"] as? JsonObject)?.get("album") as? JsonObject
-            ?: throw SourceErrors.NotFound(bookUrl)   // 对齐 bridge「专辑不存在或已下架」
-        val book = AlbumNormalizer.normalizeAlbum(albumRaw, sourceId)
+            val albumRaw = (djson["data"] as? JsonObject)?.get("album") as? JsonObject
+                ?: throw SourceErrors.NotFound(bookUrl)   // 对齐 bridge「专辑不存在或已下架」
+            book = AlbumNormalizer.normalizeAlbum(albumRaw, sourceId)
+            openEpisodes = null
+        }
 
         if (!loadEpisodes) return BookDetail(book, emptyList())
-
-        // 【优先免登录直链】免登录的 mobwsa 曲目接口直接返回 playUrl64/playUrl32，
-        // Episode.url 就是能播的 mp3，不用再走登录版 + 网页地址那一套。
-        // 真机 2026-11-24：登录版只给 trackId，脱障后 Episode.url = /sound/{id} 网页 → AVPlayer -12847。
-        run {
-            val direct = fetchOpenTracks(albumId, if (loadFullPages) maxOf(book.trackCount, 40L).toInt() else 1)
-            if (direct.isNotEmpty()) return BookDetail(book, direct)
-        }
+        if (openEpisodes != null) return BookDetail(book, openEpisodes)
 
         // 曲目（惰性：loadEpisodes=true 才拉；loadFullPages=true 翻完）
         // 翻页收口三重闸：totalCount（信封实录）→ book.trackCount → maxPageId/硬上限 200
@@ -179,25 +190,89 @@ class SearchEngine(
      *
      * 不占用登录版的 WebSearchBudget（那是搜索预算，这里是详情）。
      */
-    private suspend fun fetchOpenTracks(albumId: Long, maxPages: Int): List<Episode> {
-        if (maxPages <= 0) return emptyList()
+    /** 免登录拿到的整本：专辑信息 + 带直链的曲目（曲目里的 album 字段就能拼出 Book） */
+    private data class OpenAlbum(val book: Book, val episodes: List<Episode>)
+
+    /**
+     * 免登录拿专辑 + 曲目。
+     * mobwsa 的响应里每条曲目都带 albumId/albumTitle/albumCover/albumUserNickName，
+     * 所以不用另外再拉一次登录版详情 —— 登录版详情挂了也不影响能播。
+     */
+    private suspend fun fetchOpenAlbum(albumId: Long, loadFullPages: Boolean): OpenAlbum? {
+        // 【v1.4.9】以前这里传的是「40 页」常数 —— 1327 集的专辑只拿前 800 集，
+        // 剩下的永远缺。又没有去重，分页参数写错时同一页会被 addAll 40 次。
+        // 现在：先探 1 页拿 totalCount，再算需要几页。
+        val first = fetchOpenTracks(albumId, 1, collectAlbum = true)
+        if (first.episodes.isEmpty()) return null
+        val total = first.totalCount
+        val needPages = if (loadFullPages && total > 0) {
+            minOf(((total + 19) / 20).toInt() + 1, 200)
+        } else 1
+        val tracks = if (needPages <= 1) first
+            else fetchOpenTracks(albumId, needPages, collectAlbum = true)
+        if (tracks.episodes.isEmpty()) return null
+        val albumObj = tracks.albumJson
+            ?: JsonObject(mapOf("albumId" to kotlinx.serialization.json.JsonPrimitive(albumId)))
+        return OpenAlbum(AlbumNormalizer.normalizeAlbum(albumObj, sourceId), tracks.episodes)
+    }
+
+    private class OpenTracks(val episodes: List<Episode>, val albumJson: JsonObject?, val totalCount: Long = 0L)
+
+    private suspend fun fetchOpenTracks(albumId: Long, maxPages: Int, collectAlbum: Boolean = true): OpenTracks {
+        if (maxPages <= 0) return OpenTracks(emptyList(), null)
         val out = ArrayList<Episode>()
+        var albumJson: JsonObject? = null
+        var totalCount = 0L
         var page = 1
         while (page <= minOf(maxPages, 200)) {
             val url = OpenRoutes.tracksMobile(albumId, page, 20)
-            val resp = throttle.run { fetcher.get(url, OpenRoutes.desktopHeaders()) }
-            if (resp !is FetchOutcome.Ok) break
-            val json = parse(resp.text) ?: break
+            val resp = runCatching { throttle.run { fetcher.get(url, OpenRoutes.desktopHeaders()) } }.getOrNull()
+            // 任何一页失败（网络/403/非 JSON）都只能「停下来」，**不能把已经拿到的页丢掉**：
+            // 旧实现用 break（保留），但第一页返回「没有直链」时 return emptyList() 是对的（确实不适用）。
+            // 这里把两种情况分开：拿到过就保留，一页没拿到才说「不适用」。
+            val ok = resp as? FetchOutcome.Ok ?: break
+            val json = parse(ok.text) ?: break
             val tp = TrackExtractor.fromOpenList(json, page, 20, sourceId)
             if (tp.episodes.isEmpty()) break
-            // 一条直链都没有 → 这个接口对该专辑不适用，整体放弃（避免拼出半成品）
-            if (out.isEmpty() && tp.episodes.none { AudioUrlHeaders.isPlayableAudio(it.url) }) return emptyList()
-            out.addAll(tp.episodes)
+            // 第一页就一条直链都没有 → 这个接口对该专辑不适用（登录版专辑常见）
+            if (out.isEmpty() && tp.episodes.none { AudioUrlHeaders.isPlayableAudio(it.url) }) {
+                return OpenTracks(emptyList(), null)
+            }
+            if (albumJson == null && collectAlbum) {
+                albumJson = firstAlbumObject(json)
+            }
+            // 按 trackId 去重：分页参数一旦被服务端忽略，同一页会被反复返回，
+            // 不判重的话 out 会膨胀成「同一集 × N 次」。
+            val seen = out.mapTo(HashSet()) { it.trackId }
+            for (e in tp.episodes) if (seen.add(e.trackId)) out.add(e)
+            totalCount = tp.totalCount
             if (tp.episodes.size < 20) break
             if (tp.totalCount > 0 && out.size >= tp.totalCount) break
             page++
         }
-        return out
+        return OpenTracks(out, albumJson, totalCount)
+    }
+
+    /** mobwsa 响应里的首条 album 子对象（拿来当 Book 的源） */
+    private fun firstAlbumObject(root: JsonObject): JsonObject? {
+        val list = (root["list"] as? JsonArray) ?: return null
+        val first = list.firstOrNull() as? JsonObject ?: return null
+        // 先看有没有直接的 album 对象；没有就用曲目里拼
+        (first["album"] as? JsonObject)?.let { return it }
+        val built = mutableMapOf<String, kotlinx.serialization.json.JsonElement>()
+        listOf(
+            "albumId" to listOf("albumId"),
+            "title" to listOf("albumTitle", "albumName"),
+            "cover" to listOf("albumCover", "coverLarge", "coverMiddle", "coverSmall"),
+            "nickname" to listOf("albumUserNickName", "nickname"),
+            "intro" to listOf("albumIntro"),
+        ).forEach { (target, sources) ->
+            for (s in sources) {
+                val v = first[s]
+                if (v != null && v !is kotlinx.serialization.json.JsonNull) { built[target] = v; break }
+            }
+        }
+        return if (built.isEmpty()) null else JsonObject(built)
     }
 
     // ---------- 发现：类目热榜（M1，匿名） ----------

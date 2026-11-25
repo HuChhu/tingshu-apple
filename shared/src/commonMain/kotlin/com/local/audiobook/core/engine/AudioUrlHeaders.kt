@@ -56,8 +56,17 @@ object AudioUrlHeaders {
      *   /program/get-source/N  vbus 中转，302 到 files.*.mp3
      *   /meting/               netease 中转，302 到 music.126.net 的 mp3
      *   /get-source/           同类中转型音频口
+     *   /audiostream/redirect/ 蜻蜓 FM（实测：200 audio/mpeg → 302 到 vohwod-client-sign.qtfm.cn/....m4a）
+     *
+     * v1.4.9 审计：蜻蜓的地址路径没有扩展名，不列这里会被威威实实地全部拦掉 ——
+     * 该源会「永远播不了」而且报错文案还是「只给了网页地址」。
      */
-    private val RELAY_PATH = listOf("/program/get-source/", "/meting/", "/get-source/")
+    private val RELAY_PATH = listOf(
+        "/program/get-source/",   // vbus：302 到 files.vbus.cc/xxx.mp3
+        "/meting/",               // netease：音乐代理，302 到 126.net
+        "/get-source/",           // 同类中转口
+        "/audiostream/redirect/", // 蜻蜓 FM：audio.qtfm.cn/audiostream/redirect/...，302 到 *.m4a
+    )
 
     /**
      * 出口闸的宽松版：在 isPlayableAudio 之外，额外放行三类**已知会被播放器跟 302/直读**的地址：
@@ -94,7 +103,9 @@ object AudioUrlHeaders {
     private val PAGE_HOSTS = listOf(
         "ximalaya.com", "ximalaya.cn", "ximalaya.net",
         // kuwo 必须写全名：kw-bj.kuwo.cn 是它自己的音频 CDN，按父域一票否决会把 kuwo 整个源杀掉
-        "www.kuwo.cn", "m.kuwo.cn", "bilibili.com", "b23.tv", "qingting.fm", "qtfm.cn",
+        "www.kuwo.cn", "m.kuwo.cn", "bilibili.com", "b23.tv", "qingting.fm",
+        // 蜻蜓同理：audio.qtfm.cn 是它自己的音频 CDN，按父域写会把整个蜻蜓源杀掉
+        "www.qtfm.cn", "m.qtfm.cn",
         // 163.com 全域会误杀 music.126.net？不会，不同域；但 m.163.com 的页面地址要拦，音频在 126.net
         "music.163.com", "m.163.com", "y.qq.com",
     )

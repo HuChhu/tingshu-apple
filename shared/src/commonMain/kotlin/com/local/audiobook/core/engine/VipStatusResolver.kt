@@ -156,9 +156,27 @@ object VipStatusResolver {
         val raw = strOf(o, *keys)
         if (raw.isEmpty()) return ""
         if (raw.length >= 10 && raw[4] == '-' && raw[7] == '-') return raw.substring(0, 10)
-        val ms = raw.toLongOrNull() ?: return ""
+        val ms = raw.toLongOrNull()
+        if (ms == null) {
+            // 有些账号给的是 "2026-03-01 12:00:00" / "2026/03/01" 这类非纯数字文本。
+            // 以前直接 return ""，界面就退化成「会员已开通」不给日期 —— 比给个假日期好，
+            // 但用户还是看不到到底哪天到期。这里把前 10 位里的分隔符归一后再试一次。
+            val digits = raw.replace('/', '-').replace('.', '-')
+            if (digits.length >= 10) {
+                val d = digits.substring(0, 10)
+                if (d.length == 10 && d[4] == '-' && d[7] == '-' &&
+                    d.filter { it.isDigit() }.length == 8
+                ) return d
+            }
+            return ""
+        }
         val sec = if (ms > 10_000_000_000L) ms / 1000 else ms
         if (sec <= 0) return ""
+        // 【2026-11-25 P0 修「有效期至 1970-01-01」】
+        // 后端给 0（或毫秒级 0）当“没有到期时间”是常见写法，但旧代码把 sec<=0 放行到
+        // 下面的 epoch 换算，于是 0 秒 = 1970-01-01 —— 用户看到自己白金会员到期于 1970 年。
+        // 现在 sec<=0 一律视为「没有日期」，返回空串，界面退回「会员已开通」不带日期。
+        if (sec < 1_000_000_000L) return ""   // 2001-09 之前的时间不可能是真实到期日
         // 纯 Kotlin 日期换算（commonMain 没有 java.time）
         return epochSecondsToDate(sec)
     }

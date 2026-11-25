@@ -189,13 +189,18 @@ struct MineView: View {
         }
     }
 
-    /// 接口给的到期日是 "2026-03-01" 这种；解析不出来就返回 nil（不编日期）
+    /// 接口给的到期日是 "2026-03-01" 这种；解析不出来就返回 nil（不编日期）。
+    /// 2026-11-25：1900 年以前的值一律丢弃 —— 后端用 0 表示“没有到期时间”，
+    /// 换算成 epoch 就是 1970-01-01，界面上会写成「有效期至 1970-01-01」，等于胡说。
     private func parseExpire(_ t: String) -> Date? {
-        guard !t.isEmpty else { return nil }
+        let s = String(t.prefix(10))
+        guard s.count == 10 else { return nil }
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM-dd"
         f.locale = Locale(identifier: "en_US_POSIX")
-        return f.date(from: String(t.prefix(10)))
+        guard let d = f.date(from: s) else { return nil }
+        guard d.timeIntervalSince1970 > 1_000_000_000 else { return nil }   // 2001 年前不可能是真到期日
+        return d
     }
     private func byteText(_ n: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: n, countStyle: .file)

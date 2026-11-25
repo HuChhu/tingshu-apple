@@ -440,9 +440,11 @@ struct AlbumView: View {
                         HStack {
                             Text("节目列表")
                             Spacer()
-                            // 分页后 episodes.count 只是「已加载」数，总数要用 trackCount
+                            // 分页后 episodes.count 只是「已加载」数，总数要用 trackCount。
+                            // 2026-11-25：只写「已加载 20 / 共 67 集」还是容易被一眼读成「只有 20 集」，
+                            // 改成先把总数摆在前面，让「67」成为第一眼信息。
                             if totalChapters > episodes.count {
-                                Text("已加载 \(episodes.count) / 共 \(totalChapters) 集")
+                                Text("共 \(totalChapters) 集 · 已显示 \(episodes.count)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)

@@ -124,6 +124,15 @@ struct BottomDock: View {
                     .accessibilityHidden(!hasMiniPlayer)
                     .animation(.easeInOut(duration: 0.2), value: hasMiniPlayer)
             }
+            // 【v1.5.3 再修缝隙】
+            // 只删掉 .padding(.bottom, 8) 还不够 —— 截图里胶囊下面仍然露出一条底色。
+            // 原因：safeAreaInset 的内容默认**按安全区排版**，系统会在内容底部再让出
+            // Home 指示条那一段；而这块透明区域仍然属于「我们这一块」，于是胶囊底边
+            // 和屏幕底边之间就留出一段谁也没画的空白。
+            // 现在让这块自己延伸到屏幕物理底边（ignoresSafeArea(edges: .bottom)），
+            // 胶囊是最后一行所以会贴到底；指示条那层留白由系统叠在**上面**，
+            // 不再撑开我们的布局高度。
+            .ignoresSafeArea(edges: .bottom)
         // 封面下载挂在**稳定的最外层**，不在 vinylDisc 内部：
         // vinylDisc 的形态随状态（空/加载/播放/暂停/失败）变化，视图身份一变 task 就被取消重跑，
         // 表现为盘面每换一次状态就重新下一遍图 —— 这也是「盘面闪变」的一条来源。

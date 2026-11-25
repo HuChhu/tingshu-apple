@@ -31,6 +31,26 @@ class CorePureTest {
         assertEquals(0L, TrackNormalizer.maxPage(100, 0))
     }
 
+    // ---- 2026-11-25 P0：后端用 0 表示「没有到期时间」，不能换算成 1970-01-01 ----
+    @Test fun zeroEpochIsNotADate() {
+        val o = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"isVip":true,"vipExpireTime":0}"""
+        ) as kotlinx.serialization.json.JsonObject
+        assertEquals("", com.local.audiobook.core.engine.VipStatusResolver.dateOf(o, "vipExpireTime"))
+        val o2 = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"isVip":true,"vipExpireTime":"0"}"""
+        ) as kotlinx.serialization.json.JsonObject
+        assertEquals("", com.local.audiobook.core.engine.VipStatusResolver.dateOf(o2, "vipExpireTime"))
+        val o3 = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"isVip":true,"vipExpireTime":"2026-03-01"}"""
+        ) as kotlinx.serialization.json.JsonObject
+        assertEquals("2026-03-01", com.local.audiobook.core.engine.VipStatusResolver.dateOf(o3, "vipExpireTime"))
+        val o4 = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"isVip":true,"vipExpireTime":1772323200000}"""
+        ) as kotlinx.serialization.json.JsonObject
+        assertEquals("2026-03-01", com.local.audiobook.core.engine.VipStatusResolver.dateOf(o4, "vipExpireTime"))
+    }
+
     // ---- 2026-11-25：suggest 返回体结构（官方主推那一张） ----
     @Test fun suggestEnvelopeShape() {
         val j = kotlinx.serialization.json.Json.parseToJsonElement(

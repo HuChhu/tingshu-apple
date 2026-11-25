@@ -35,6 +35,20 @@ class GateMatrixTest {
         )
     }
 
+    /**
+     * vod 源的限制要写成测试，而不是靠静默失败。
+     * 实测：VodSource 会产出 .m3u8 / .mp4 / .php 三类地址；
+     * 出口闸的 AUDIO_EXT 白名单只有 m3u8，mp4 和 php 会被 BLOCK ——
+     * 这由 VodSource.extract 自己用 isDirectAudio 拦下，闸门只是兜底。
+     * 把它断言出来，以后谁放宽白名单会立刻看到。
+     */
+    @Test
+    fun vodSourceKnownLimitsAreExplicit() {
+        assertTrue(AudioUrlHeaders.isPlayableAudioOrRelay("https://x.com/a/index.m3u8"), "m3u8 应放行")
+        assertFalse(AudioUrlHeaders.isPlayableAudioOrRelay("https://x.com/a/b.mp4"), "mp4 目前不放行（vod 已知限制）")
+        assertFalse(AudioUrlHeaders.isPlayableAudioOrRelay("https://x.com/a/b.php?id=1"), "无扩展名 php 不放行（vod 已知限制）")
+    }
+
     @Test
     fun webPagesStillBlocked() {
         assertFalse(AudioUrlHeaders.isPlayableAudioOrRelay("https://www.ximalaya.com/sound/1011694179"))

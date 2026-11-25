@@ -727,7 +727,24 @@ enum SharedBridge {
 
     static func bookDetail(sourceId: String, bookUrl: String) async -> BookDetail? {
         lastDetailError = nil
-        if let d = await rawBookDetail(sourceId: sourceId, bookUrl: bookUrl) { return d }
+        if let d = await rawBookDetail(sourceId: sourceId, bookUrl: bookUrl) {
+            // 【2026-11-25 修语义】上一版这里直接 return，于是「详情取到了但一条都播不了」
+            // 的免登录结果被当成成功返回，1b 那段永远跑不到（它的触发条件是「取详情失败」）。
+            // 现在：免登录通道成功但**全不可播**且用户已登录时，换登录通道再取一次；
+            // 登录通道拿到的可播集更多才采用，否则还回原来那份（至少还有书名/封面/章节列表）。
+            if sourceId == "ximalaya-open", bookUrl.contains("/album/"), loggedIn {
+                let rows = (d.episodes as? [Episode]) ?? []
+                let anyPlayable = rows.contains(where: { $0.playable })
+                if !anyPlayable, let login = await rawBookDetail(sourceId: "ximalaya", bookUrl: bookUrl) {
+                    let loginRows = (login.episodes as? [Episode]) ?? []
+                    if loginRows.contains(where: { $0.playable }) {
+                        lastDetailError = nil
+                        return login
+                    }
+                }
+            }
+            return d
+        }
         let firstReason = lastDetailError
 
         // 兜底 1：喜马拉雅登录版失败（Cookie 过期/风控）→ 换免登录版同一专辑
@@ -735,18 +752,6 @@ enum SharedBridge {
             if let d = await rawBookDetail(sourceId: "ximalaya-open", bookUrl: bookUrl) {
                 lastDetailError = nil
                 return d
-            }
-        }
-        // 兜底 1b：反过来 —— 免登录通道拿到的专辑「一条都播不了」而用户已登录时，
-        // 换登录通道再取一次。VIP/付费专辑的曲目只有登录通道能换到试听/直链，
-        // 免登录通道对它们永远是空 playUrl。没有这一步，登录用户点进去还是满屏锁。
-        if sourceId == "ximalaya-open", bookUrl.contains("/album/"), loggedIn {
-            if let d = await rawBookDetail(sourceId: "ximalaya", bookUrl: bookUrl) {
-                let rows = (d.episodes as? [Episode]) ?? []
-                if rows.contains(where: { $0.playable }) {
-                    lastDetailError = nil
-                    return d
-                }
             }
         }
         // 兜底 2：书是酷我/B站等别的源搜出来的，专辑地址却是网页地址 → 试一次模板/原生解析

@@ -291,6 +291,11 @@ class TemplateTingSite(
     }
 
     override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean): BookDetail {
+        // 【2026-11-25 说明】loadFullPages 在这里**只影响 ChapterMode.HtmlPages**：
+        //   · Html（30 站）：只有 bookDetail 开头那 1 次请求，章节靠纯正则抽，翻页参数无意义；
+        //   · Playlist（1 站）：分页由清单本身决定；
+        //   · HtmlPages（vbus / yuetingba）：这是唯一会多次翻页的模式，受本参数控制。
+        // 之前这个形参收下但函数体一次没引用，传 false 也不生效 —— 静默失效比报错更难查。
         val html = getText(bookUrl, base) ?: throw SourceErrors.NotFound(bookUrl)
         var book = Book(
             sourceId = sourceId,

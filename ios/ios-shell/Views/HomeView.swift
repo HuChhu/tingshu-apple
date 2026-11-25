@@ -100,7 +100,10 @@ struct HomeView: View {
                     Text(r.episodeTitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     // 进度：有记录就显示百分比，没有就不占位（不堆四个次要信息）
                     if let p = LocalStore.progress(for: r.bookUrl), p.durationMs > 0 {
-                        ProgressView(value: p.fraction).tint(.accentColor)
+                        // 默认 track 在浅色卡片上几乎不可见，显式给一条底
+                        ProgressView(value: p.fraction)
+                            .tint(.accentColor)
+                            .background(Capsule().fill(Color.secondary.opacity(0.18)).frame(height: 3))
                             .padding(.top, 2)
                         Text("已听 \(Int(p.fraction * 100))%")
                             .font(.caption2).foregroundStyle(.tertiary)

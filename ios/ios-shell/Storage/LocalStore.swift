@@ -16,10 +16,12 @@ struct BookKey: Hashable, Codable {
         self.bookUrl = bookUrl
     }
 
-    /// 存储用字符串键
+    /// 存储用字符串键。
+    /// 必须 sourceId + bookUrl + albumId 三者都参与：
+    /// 只取 albumId 会让「不同站恰好同 albumId」的两本书共用进度/倍速/收藏；
+    /// 不给 albumId 又会让「同一本书不同 URL 形态」分裂成两条记录。
     var id: String {
-        let body = albumId > 0 ? String(albumId) : bookUrl
-        return sourceId + ":" + body
+        sourceId + ":" + String(albumId) + ":" + bookUrl
     }
 }
 
@@ -114,19 +116,10 @@ enum LocalStore {
     static func progress(for key: BookKey) -> Progress? {
         let all = loadProgress()
         if let p = all[key.id] { return p }
-        // 旧数据只有 bookUrl 键：读到后迁移到新键并删旧键（只迁一次）
-        if let legacy = all[key.bookUrl] {
-            var moved = legacy
-            moved.sourceId = key.sourceId
-            moved.albumId = key.albumId
-            var migrated = all
-            migrated.removeValue(forKey: key.bookUrl)
-            migrated[key.id] = moved
-            if let data = try? Self.encoder.encode(migrated) {
-                UserDefaults.standard.set(data, forKey: progressKey)
-            }
-            return moved
-        }
+        // 【v1.4.9】不再按「旧 bookUrl 键」迁移。
+        // 旧键不带 albumId 与 sourceId，无法判断属于哪本书 —— 按它迁移会把
+        // 「不同源同 albumId」的书串到一起（播错书比丢一次续播点更糟）。
+        // 旧数据留着不动，用户下次播放会写新键。
         return nil
     }
 
@@ -244,7 +237,8 @@ enum LocalStore {
     // MARK: - 最近播放
 
     struct Recent: Codable, Identifiable {
-        var id: String { bookUrl + "#" + String(trackId) }
+        // 带 sourceId：不同源同 bookUrl 同 trackId 的书不能互相覆盖历史
+        var id: String { sourceId + ":" + bookUrl + "#" + String(trackId) }
         let bookUrl: String
         let bookTitle: String
         let trackId: Int64

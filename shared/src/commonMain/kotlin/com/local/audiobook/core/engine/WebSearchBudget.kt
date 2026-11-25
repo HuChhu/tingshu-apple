@@ -10,19 +10,17 @@ class WebSearchBudget(private val maxAttempts: Int = 3, private val cooldownMs: 
     var pauseReason = ""; private set
     var lastRiskLevel: Int? = null; private set
 
-    /** 窗口起点：超过 cooldownMs 没请求过就重置计数（限流应该是「窗口内」的，不是永久的） */
+    /** @deprecated 只为兼容旧测试保留；真正的窗口起点是 lastFailAt */
     private var windowStart = 0L
 
     fun canAttempt(): Pair<Boolean, String> {
         if (blocked) return false to "网页搜索端点已拉黑（IP 级），需人工解除"
-        // 窗口滚动：距上次请求超过 cooldown 就清零重来。
-        // 之前 attempts 只增不减，3 次成功搜索后第 4 次起永久返回「已达上限」直到重启 App。
-        if (windowStart > 0 && now() - windowStart >= cooldownMs) {
-            attempts = 0
-            windowStart = now()
-            paused = false
-            pauseReason = ""
-        }
+        // 窗口滚动：距**上次失败**超过 cooldown 就清零重来。
+        // 旧实现用 lastAt（任何请求）做窗口起点，且拴在 canAttempt 里修改状态：
+        // 它会在 record() 之后把 attempts 清零 → 失败不累计 → 连续风控永远触不到 3 次上限（拉黑失效）；
+        // 同时它在一次请求内被调用两次 → 第二次就把计数清了。
+        // 现在拆开：状态变更只在 record()，canAttempt() 是纯查询。
+        rollWindowIfDue()
         if (attempts >= maxAttempts) return false to "已达到最多 " + maxAttempts + " 次上限"
         if (lastAt > 0) {
             val elapsed = now() - lastAt
@@ -31,13 +29,27 @@ class WebSearchBudget(private val maxAttempts: Int = 3, private val cooldownMs: 
         return true to ""
     }
 
+    /** 窗口滚动（只分析失败计数），由 record() 与 canAttempt() 共用，只清失败计数 */
+    private fun rollWindowIfDue() {
+        val lastFail = lastFailAt
+        // 从未失败过就不涉及窗口；有失败且超过冷却 → 清零
+        if (lastFail > 0L && now() - lastFail >= cooldownMs && attempts > 0) {
+            attempts = 0
+            paused = false
+            pauseReason = ""
+        }
+    }
+
+    /** 上次失败时刻（窗口起点）；0 = 从未失败 */
+    var lastFailAt = 0L; private set
+
     fun record(riskLevel: Int?, reason: String, ok: Boolean) {
         lastAt = now()
-        if (windowStart == 0L) windowStart = now()
+        rollWindowIfDue()
         // 只有失败才计入上限：成功请求不应该消耗预算。
         // 原来「成功也 attempts++」导致正常用户搜 3 次就被锁死。
-        if (!ok) attempts++
-        else { attempts = 0; windowStart = now(); paused = false }
+        if (!ok) { attempts++; lastFailAt = now() }
+        else { attempts = 0; lastFailAt = 0L; paused = false }
         lastRiskLevel = riskLevel
         if (!ok) { paused = true; pauseReason = reason.ifEmpty { "风控信号" } }
         if (!ok && attempts >= maxAttempts) {

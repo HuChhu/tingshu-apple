@@ -19,6 +19,10 @@ import SwiftUI
 struct MiniPlayerBar: View {
     @ObservedObject private var player = Player.shared
 
+    /// 唯一高度常量：封面 40 + 上下各 8 + 圆角描边余量 4。
+    /// BottomDock.miniSlotHeight 必须 == 这个值（两边同源，见 BottomDock 注释）。
+    static let barHeight: CGFloat = 60
+
     var body: some View {
         if shouldShow {
             HStack(spacing: 10) {
@@ -48,14 +52,17 @@ struct MiniPlayerBar: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!player.canSeek)
+                // 禁用态要看得出来：disabled 不会自动变灰，用户会以为坏了
+                .opacity(player.canSeek ? 1 : 0.35)
                 .accessibilityLabel("快进 \(skipSeconds) 秒")
             }
             // 高度由内容内在尺寸决定（封面 40 + 上下 8 = 56），
             // 不再用 frame(height:) 写死：写死之后外层再加 padding 就比 56 高，
             // dock 那边按 56 预留 → 两段叠在一起（用户截图蓝圈）。
-            .fixedSize(horizontal: false, vertical: true)
+            // 高度锁死 60：dock 里 MiniPlayerBar().frame(height: 60) 与这里必须一致，
+            // 否则「条底 + 间隙 == 胶囊顶」不成立（组件内外各算一次高度就会重叠）。
+            .frame(height: Self.barHeight)
             .padding(.horizontal, 10)
-            .padding(.vertical, 8)
             .contentShape(Rectangle())
             .onTapGesture { player.showFullScreen = true }
             .accessibilityElement(children: .contain)

@@ -420,6 +420,8 @@ struct AlbumView: View {
                                 Text("已加载 \(episodes.count) / 共 \(totalChapters) 集")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
                             } else if !episodes.isEmpty {
                                 Text("共 \(episodes.count) 集")
                                     .font(.caption)

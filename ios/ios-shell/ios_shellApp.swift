@@ -166,27 +166,43 @@ struct RootTabView: View {
         TabView(selection: $tab) {
             // 每个 Tab 的内容根各挂一次：TabView 只读当前 Tab 的偏好，
             // 只挂一个的话切走再回来就失效。
+            // 只在需要隐藏时挂 —— 显式写 .automatic 会把子页面自己的
+            // 「隐藏 tabBar」请求一并顶掉（本项目暂无这种页面，但不留隐患）。
             HomeView()
-                .toolbar(hidesSystemTabBar ? .hidden : .automatic, for: .tabBar)
+                .modifier(MaybeHideTabBar(hidden: hidesSystemTabBar))
                 .tabItem { Label("首页", systemImage: "house.fill") }
                 .tag(0)
 
             CategoryView()
-                .toolbar(hidesSystemTabBar ? .hidden : .automatic, for: .tabBar)
+                .modifier(MaybeHideTabBar(hidden: hidesSystemTabBar))
                 .tabItem { Label("分类", systemImage: "square.grid.2x2.fill") }
                 .tag(1)
 
             ShelfView()
-                .toolbar(hidesSystemTabBar ? .hidden : .automatic, for: .tabBar)
+                .modifier(MaybeHideTabBar(hidden: hidesSystemTabBar))
                 // 书架是「我的内容」，不是「喜欢」
                 .tabItem { Label("书架", systemImage: "books.vertical.fill") }
                 .tag(2)
 
             MineView()
-                .toolbar(hidesSystemTabBar ? .hidden : .automatic, for: .tabBar)
+                .modifier(MaybeHideTabBar(hidden: hidesSystemTabBar))
                 .tabItem { Label("我的", systemImage: "person.fill") }
                 .tag(3)
         }
     }
 }
 
+/// 按需隐藏系统 TabBar：挂在**每个 Tab 的内容根**上（唯一起作用的位置）。
+/// hidden=false 时原样返回，不留任何 toolbar 偏好，避免顶掉子页面自己的设置。
+private struct MaybeHideTabBar: ViewModifier {
+    let hidden: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if hidden {
+            content.toolbar(.hidden, for: .tabBar)
+        } else {
+            content
+        }
+    }
+}

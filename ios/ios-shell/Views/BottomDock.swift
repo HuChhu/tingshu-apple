@@ -82,6 +82,9 @@ struct BottomDock: View {
         // 整块胶囊和页面内容跟着上跳 66pt，观感很脏。
         // 现在高度恒定 = 迷你条(60) + gap(6) + 胶囊区(64) + 底(8)，显隐只改透明度。
         ZStack(alignment: .top) {
+            // 迷你条：**固定占位**，显隐只改透明度。
+            // 槽位高度必须与 MiniPlayerBar 的真实高度相等（60），否则
+            // 底部 safeAreaInset 会在迷你条出现时整体长高 66pt，内容区跳一下。
             MiniPlayerBar()
                 .frame(height: Self.miniSlotHeight)
                 // 关键：接受 ZStack 给的高度、只在其中顶部对齐。
@@ -98,6 +101,8 @@ struct BottomDock: View {
                         .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
                 )
                 .opacity(hasMiniPlayer ? 1 : 0)
+                // 幽灵热区防线：透明度 0 的条不许吃触摸（否则迷你条隐藏时，
+                // dock 上方 60pt 是一片「看不见但能点」的区域）。
                 .allowsHitTesting(hasMiniPlayer)
                 .accessibilityHidden(!hasMiniPlayer)
                 .animation(.easeInOut(duration: 0.2), value: hasMiniPlayer)
@@ -127,8 +132,10 @@ struct BottomDock: View {
 
     /// 中间键轻微凸出条面的高度（58 直径 + 12 热区 = 70，条面 56，露 8）。
     private static let playKeyOverhang: CGFloat = 8
-    /// 迷你条的固定占位高度（封面 40 + 自身上下 8 = 56，再加圆角描边余量）。
-    private static let miniSlotHeight: CGFloat = 60
+    /// 迷你条的固定占位高度。
+    /// **必须等于 MiniPlayerBar.barHeight** —— 两处若各算各的，
+    /// 底部 safeAreaInset 高度会在迷你条出现时变化，页面整体跳 66pt。
+    private static let miniSlotHeight: CGFloat = MiniPlayerBar.barHeight
     /// 迷你条底边到胶囊顶边的可见空隙（不含播放键凸出的那 8pt）。
     private static let gapBetweenMiniBarAndDock: CGFloat = 6
 

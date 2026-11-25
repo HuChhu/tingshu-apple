@@ -39,8 +39,11 @@ struct PlayerView: View {
                 .accessibilityHidden(true)
 
             GeometryReader { geo in
+                    // 375pt 宽：contentWidth = 335，transport 5 键合计 44*4+72 = 248 + 32 = 280 有余；
+                    // posterSize = 303，叠上标题/进度/按钮 ≈ 620pt，一屏放得下（iPhone SE 667pt）。
+                    // 560/528 上限是给 iPad 的，避免大屏海报拉满。
                     let contentWidth = min(max(0, geo.size.width - 40), 560)
-                    let posterSize = min(max(0, geo.size.width - 72), 528)
+                    let posterSize = min(max(0, min(geo.size.width - 72, geo.size.height * 0.42)), 528)
 
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(spacing: 0) {
@@ -88,6 +91,9 @@ struct PlayerView: View {
             .zIndex(1)
         }
         .background(Color.black.ignoresSafeArea(.all, edges: .all))
+            // 强制深色：本页所有前景色都是 .white / .white.opacity(...)，
+            // 浅色模式下 presentationDetents 的 sheet 与状态栏对比会反过来，所以锁死深色。
+            .preferredColorScheme(.dark)
             .toolbar(.hidden, for: .navigationBar)
             .onAppear {
                 refreshFavorite()
@@ -99,6 +105,9 @@ struct PlayerView: View {
                     .presentationDetents(sheet == .chapters ? [.medium, .large] : [.medium])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(24)
+                    // 显式给不透明底：播放页背景是 ignoresSafeArea 的虚化图，
+                    // sheet 若取默认半透明材质，会透出后面的海报色，看起来「sheet 变透明」。
+                    .presentationBackground(Color(uiColor: .systemBackground))
             }
     }
 
@@ -131,6 +140,8 @@ struct PlayerView: View {
             .accessibilityLabel("当前专辑封面")
     }
 
+    /// 播放页固定深色：所有文字/控件都按白字设计，
+    /// 不跟随系统浅色模式，否则浅色模式下标题是黑字、压在深色虚化图上几乎看不见。
     private var titleBlock: some View {
         VStack(spacing: 8) {
             Text(player.currentBookTitle.isEmpty ? "未选择书籍" : player.currentBookTitle)

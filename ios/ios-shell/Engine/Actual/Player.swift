@@ -1097,9 +1097,11 @@ final class Player: NSObject, ObservableObject {
             // 不在这里补，本地播放失败要回退远程时用的是上一集的陈旧 URL ——
             // 轻则播错书，重则取不到地址。
             currentOriginalURL = url
-            currentHeaders = headers
             let litem = AVPlayerItem(url: cached)
             beginPlayback(litem, ep: ep, via: "local", headers: [:], sourceURL: cached)
+            // 必须在 beginPlayback **之后**写回：它内部会 `currentHeaders = headers`，
+            // local 分支传的是 [:] —— 先存后写等于白存，回退远程时 UA 丢了又 403。
+            currentHeaders = headers
             return
         }
 
@@ -1158,7 +1160,8 @@ final class Player: NSObject, ObservableObject {
     private func beginPlayback(_ item: AVPlayerItem, ep: SharedBridge.EpisodeRow,
                                via: String, headers: [String: String], sourceURL: URL,
                                loader: ResourceLoaderDelegate? = nil) {
-        if via == "remote", AudioCache.loadSettings().autoCacheNext {
+        // 主路径是 remote-loader（带 header）；只判 "remote" 等于对 99% 的播放不做探测
+        if via.hasPrefix("remote"), AudioCache.loadSettings().autoCacheNext {
             // 边播边缓存：起播后异步取标头（见 cacheHeaders 注释里为何不再整段下载）
             cacheInBackground(url: sourceURL, headers: headers)
         }
@@ -1705,6 +1708,9 @@ final class Player: NSObject, ObservableObject {
         queue.play()
         apply(.playing)
         updateNowPlayingInfo()
+        // 暂停时 progressWatchdog 已经 return 结束，恢复播放不会重新经过 readyToPlay，
+        // 不补这一步的话，暂停过再播的集之后真卡死 30 秒也没人报，界面永远停在「播放中」。
+        armProgressWatchdog(gen: requestGeneration)
     }
 
     func stop() {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// 设置页：登录状态 / 登录 / 登出 / 缓存清理。
 /// 引擎限速与预算状态也在这里展示，方便判断当前是否被风控降级。
@@ -151,6 +152,9 @@ struct SettingsView: View {
                     },
                     onCancel: { showLogin = false }
                 )
+                // 登录页是 WKWebView，透明背景会让网页白底以外的区域透出「我的」列表，
+                // 视觉上像半加载状态。显式给不透明底。
+                .presentationBackground(Color(uiColor: .systemBackground))
             }
             .onAppear { refresh() }
             .onReceive(NotificationCenter.default.publisher(for: .loginStateChanged)) { _ in

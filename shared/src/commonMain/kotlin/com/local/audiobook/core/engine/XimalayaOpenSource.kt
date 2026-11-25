@@ -171,7 +171,12 @@ class XimalayaOpenSource(
         // 实测 albumSimple 根本不返回 trackCount（返回 None），于是 trackCount=0，
         // 界面就退化成拿「已加载条数」当总数 —— 上一版显示 50、20 都是这么来的。
         // 现在：先用第一页的 totalCount 定页数，翻完再把真实条数写回 book.trackCount。
-        val maxPages = if (loadFullPages) 200 else 1
+        // 【2026-11-25 实测收窄】以前是 200 页硬上限。实测「大凯故事会」5546 集，
+        // 翻到 4000 集要 **5 分钟** —— 详情页转 5 分钟等于不可用，用户早就返回了。
+        // 现在按 totalCount 算页数，并且总页数封顶 40（= 800 集），再多的书先给前 800 集，
+        // 用户滚到底会触发 loadNextPage（客户端分页），体验上比干等 5 分钟好得多。
+        // 另外：一旦拿到 totalCount 就按它算，页面明确结束，不会白跑满上限。
+        val maxPages = if (loadFullPages) 40 else 1
         var realTotal = 0L
         while (pg <= maxPages) {
             val tr = getJson(OpenRoutes.tracksMobile(albumId, pg), OpenRoutes.desktopHeaders())

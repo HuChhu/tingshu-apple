@@ -281,8 +281,12 @@ struct PlayerView: View {
                 volumeDraft = player.currentVolumeGainDb
                 activeSheet = .volume
             }
+            // 没有当前书时 toggleFavorite() 会直接 return —— 按钮却仍可点，
+            // 表现为「点了没反应」。这里直接把按钮禁用并降透明度。
             utilityButton(icon: isFavorite ? "heart.fill" : "heart",
-                          title: "收藏", label: isFavorite ? "取消收藏" : "收藏") {
+                          title: "收藏",
+                          label: isFavorite ? "取消收藏" : "收藏",
+                          enabled: canFavorite) {
                 toggleFavorite()
             }
         }
@@ -290,6 +294,7 @@ struct PlayerView: View {
     }
 
     private func utilityButton(icon: String, title: String, label: String,
+                               enabled: Bool = true,
                                action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 5) {
@@ -300,12 +305,19 @@ struct PlayerView: View {
                     .font(.system(size: 10))
                     .lineLimit(1)
             }
-            .foregroundStyle(.white.opacity(0.85))
+            // 禁用态必须看得出来：disabled 不会自动改色
+            .foregroundStyle(.white.opacity(enabled ? 0.85 : 0.3))
             .frame(maxWidth: .infinity)
             .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
+        .disabled(!enabled)
         .accessibilityLabel(label)
+    }
+
+    /// 能收藏的前提：有当前书（toggleFavorite 内部也判一次，这里是给 UI 用的镜像）
+    private var canFavorite: Bool {
+        !player.currentBookUrl.isEmpty
     }
 
     private func errorBlock(_ message: String) -> some View {

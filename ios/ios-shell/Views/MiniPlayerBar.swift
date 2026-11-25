@@ -20,7 +20,7 @@ struct MiniPlayerBar: View {
     @ObservedObject private var player = Player.shared
 
     /// 唯一高度常量：封面 40 + 上下各 8 + 圆角描边余量 4。
-    /// BottomDock.miniSlotHeight 必须 == 这个值（两边同源，见 BottomDock 注释）。
+    /// 尺寸唯一来源：BottomDock 用 overlay 挂迷你条时，高度读的就是这个常量。
     static let barHeight: CGFloat = 60
 
     var body: some View {

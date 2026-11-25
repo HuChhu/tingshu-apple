@@ -643,6 +643,8 @@ final class Player: NSObject, ObservableObject {
     private var currentAssetURL: URL?
     /// 未包装的原始 http(s) URL（loader 场景下 currentAssetURL 可能被 scheme 替换前的副本）
     private var currentOriginalURL: URL?
+    /// 待执行的续播/跳片头位置（毫秒）。ready 之后由 applyPendingStartSeek() 校验后执行。
+    private var pendingStartSeekMs: Int64?
     /// 本次起播的墙钟时刻。① 判断 stalled 是不是「起播阶段」 ② 计时播完的自动续章
     private var startedAt: Date = .distantPast
     /// AVAsset 只弱引用 resourceLoader 的 delegate，必须由我们强持有一份，
@@ -1173,6 +1175,8 @@ final class Player: NSObject, ObservableObject {
         // 老 loader 释放前先关掉它的 session，避免残留连接把源站并发占满
         loaderRetainer?.tearDown()
         loaderRetainer = loader
+        // 注意：pendingStartSeekMs 在这之前刚被赋值（本集的目标位置），
+        // detachItem 不能清它 —— 清空只发生在 stop()/retry() 这类「不要续播」的路径。
         detachItem()
         queue.pause()
         queue.removeAllItems()
@@ -1191,23 +1195,24 @@ final class Player: NSObject, ObservableObject {
         queue.rate = Float(sp.isFinite && sp > 0 ? min(3.0, max(0.5, sp)) : 1.0)
         apply(.playing)
 
-        // 续播：上次听到哪就从哪开始（超过 95% 视为听完，从头放）
+        // 续播：**不当场 seek**，只算出目标时间挂起来，等 status == .readyToPlay 再执行。
+        // 原因：item 还没 ready 时 duration 是 NaN/0，此时 seek 到 1 分钟以外的位置，
+        // 对 1 分钟的短音频 + 片头 30 秒的组合会直接越界（seek 到末尾 → 立即播完 → 自动跳下一集，
+        // 用户看到的是「点进去就切走了」）。校验必须拿 ready 之后的真实 duration。
+        pendingStartSeekMs = nil
         if let b = currentBook,
            let saved = LocalStore.progress(for: BookKey(sourceId: currentSourceId, albumId: b.albumId, bookUrl: b.bookUrl)),
            saved.trackId == (current?.trackId ?? -1), saved.positionMs > 3000,
            saved.durationMs > 0, Double(saved.positionMs) / Double(saved.durationMs) < 0.95 {
             // 恢复播放时按偏好后退几秒，防听漏（安卓设置页第 7 项）
             let rewind = Int64(LocalStore.loadPlayPrefs().resumeRewindSeconds) * 1000
-            let targetMs = max(0, saved.positionMs - rewind)
-            let t = CMTime(value: targetMs, timescale: 1000)
-            queue.seek(to: t)
-            position = min(1.0, Double(targetMs) / Double(max(saved.durationMs, 1)))
-            elapsedText = fmt(targetMs)
+            pendingStartSeekMs = max(0, saved.positionMs - rewind)
+            position = min(1.0, Double(saved.positionMs) / Double(max(saved.durationMs, 1)))
+            elapsedText = fmt(max(0, saved.positionMs - rewind))
         } else if effectivePlayback.skipIntroSec > 0 {
-            // 跳过片头（每集开头常有一段片头/广告）
-            let skip = CMTime(value: CMTimeValue(effectivePlayback.skipIntroSec), timescale: 1)
-            queue.seek(to: skip)
-            elapsedText = fmt(Int64(effectivePlayback.skipIntroSec) * 1000)
+            // 跳过片头（每集开头常有一段片头/广告），同样等 ready
+            pendingStartSeekMs = Int64(effectivePlayback.skipIntroSec) * 1000
+            elapsedText = fmt(pendingStartSeekMs ?? 0)
         }
 
         startedAt = Date()
@@ -1376,6 +1381,38 @@ final class Player: NSObject, ObservableObject {
         observedItem = nil
     }
 
+    /// 执行 beginPlayback 挂起的续播/跳片头。
+    ///
+    /// 为什么必须等 ready：item 未 ready 时 duration 是 NaN/0，seek 到越界位置会被 AVPlayer
+    /// 钳到末尾 -> 立刻触发 end -> 自动跳下一集，用户看到的就是「点进去自己切走了」。
+    /// 这里用 ready 之后的真实 duration 做三道校验：
+    ///   1 目标 >= duration - 1000ms（差不到 1 秒就播完）-> 放弃续播，从头放；
+    ///   2 目标 <= 1000ms -> 等于从头，直接跳过，省一次 seek；
+    ///   3 其余情况 seek，并把真实 duration 回填给 UI，进度条立刻正确。
+    private func applyPendingStartSeek(_ item: AVPlayerItem) {
+        guard let targetMs = pendingStartSeekMs else { return }
+        pendingStartSeekMs = nil
+        let durSec = item.duration.seconds
+        guard durSec.isFinite, durSec > 0 else {
+            CrashLog.write("PLAY", "pending seek dropped: duration unknown")
+            return
+        }
+        let durMs = Int64(durSec * 1000)
+        if targetMs >= durMs - 1000 {
+            CrashLog.write("PLAY", "pending seek dropped: target=\(targetMs) dur=\(durMs)")
+            position = 0
+            elapsedText = fmt(0)
+            return
+        }
+        if targetMs <= 1000 { return }
+        queue.seek(to: CMTime(value: CMTimeValue(targetMs), timescale: 1000),
+                   toleranceBefore: .zero, toleranceAfter: .zero)
+        position = min(1.0, Double(targetMs) / Double(durMs))
+        elapsedText = fmt(targetMs)
+        durationText = fmt(durMs)
+        CrashLog.write("PLAY", "pending seek applied ms=\(targetMs) dur=\(durMs)")
+    }
+
     /// status 三态。.unknown 是 KVO 的 .initial 首次回调（每个新 item 必来一次），
     /// 此时 asset 还在加载，什么都不该做 —— 更不能当失败。
     /// .failed 要分两种：用户自己换台导致的 -999 与真失败，见 isSelfInflictedCancel。
@@ -1384,6 +1421,7 @@ final class Player: NSObject, ObservableObject {
         switch item.status {
         case .readyToPlay:
             cancelStartWatchdog(reachedReady: true)
+            applyPendingStartSeek(item)
             armProgressWatchdog(gen: requestGeneration)     // ready 之后由它盯「播不动」
             if state == .loading || state == .playing { stageHint = .decoding }
             if state == .loading || state == .playing {
@@ -1685,6 +1723,10 @@ final class Player: NSObject, ObservableObject {
 
     func pause() {
         queue.pause()
+        // 暂停 = 用户不再等着听，30 秒无推进不该算卡死。
+        // 旧版不取消：暂停着听到锁屏超时，回来就是一条「播不动」错误页。
+        progressWatchdog?.cancel()
+        progressWatchdog = nil
         saveProgress(force: true)
         // playing→paused；loading（正在取地址/缓冲）→paused 也合法；
         // error 态收到远程 pause（比如拔耳机时本来就失败）不动状态，免得把错误界面顶掉
@@ -1711,6 +1753,8 @@ final class Player: NSObject, ObservableObject {
 
     func stop() {
         saveProgress(force: true)
+        // 停止后不再续播：挂起的起播位置必须作废，否则下次 playEpisode 会沿用上一次的目标
+        pendingStartSeekMs = nil
         requestGeneration &+= 1            // 让在途的取地址响应作废
         requestingEpisode = false
         cancelStartWatchdog(reachedReady: nil)

@@ -398,7 +398,10 @@ struct AlbumView: View {
                                     lastPlayedRow = idx
                                     lastPlayedTrackId = ep.trackId
                                     CrashLog.write("UI", "album select track=\(ep.trackId) src=\(sourceId) row=\(idx)")
-                                    Player.shared.playEpisode(ep, book: shown, sourceId: sourceId, episodes: episodes)
+                                    // 必须传全书，不能传当前分页：分页只加载到 firstPageSize 条，
+                                    // 传 episodes 时自动连播走到第一页末尾就停，「下一章」也没数据。
+                                    // allEpisodes 是 load() 时一次性拿到的全书列表（4800 集也只是数组，不渲染）。
+                                    Player.shared.playEpisode(ep, book: shown, sourceId: sourceId, episodes: allEpisodes)
                                 } label: {
                                     episodeRow(ep, row: idx)
                                 }

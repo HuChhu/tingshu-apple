@@ -77,65 +77,58 @@ struct BottomDock: View {
     ]
 
     var body: some View {
-        // 【v1.4.6 固定占位】迷你条用 ZStack 淡入淡出，**永远占位**：
-        // 之前用 if 包着，迷你条一出现 safeAreaInset 就从 72 长到 138，
-        // 整块胶囊和页面内容跟着上跳 66pt，观感很脏。
-        // 现在高度恒定 = 迷你条(60) + gap(6) + 胶囊区(64) + 底(8)，显隐只改透明度。
-        ZStack(alignment: .top) {
-            // 迷你条：**固定占位**，显隐只改透明度。
-            // 槽位高度必须与 MiniPlayerBar 的真实高度相等（60），否则
-            // 底部 safeAreaInset 会在迷你条出现时整体长高 66pt，内容区跳一下。
-            MiniPlayerBar()
-                .frame(height: Self.miniSlotHeight)
-                // 关键：接受 ZStack 给的高度、只在其中顶部对齐。
-                // 不加这行，ZStack 高度 = max(迷你条 60, dock 区 72) = 72 才没被顶下去 ——
-                // 是「72 恰好比 60 大」的数值巧合。加了之后任何调参都免疫。
-                .frame(maxHeight: .infinity, alignment: .top)
-                .padding(.horizontal, Layout.miniBarSideMargin)
-                .background(
-                    RoundedRectangle(cornerRadius: Layout.radiusBar, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: Layout.radiusBar, style: .continuous)
-                        .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
-                )
-                .opacity(hasMiniPlayer ? 1 : 0)
-                // 幽灵热区防线：透明度 0 的条不许吃触摸（否则迷你条隐藏时，
-                // dock 上方 60pt 是一片「看不见但能点」的区域）。
-                .allowsHitTesting(hasMiniPlayer)
-                .accessibilityHidden(!hasMiniPlayer)
-                .animation(.easeInOut(duration: 0.2), value: hasMiniPlayer)
-
-            VStack(spacing: 0) {
-                // 迷你条槽位：有内容时占 60+6，没内容时收成 0 —— dock 贴着底部不动，
-                // 页面内容只在迷你条出现/消失时让出/收回这 66pt（带 0.2s 动画，不是瞬跳）。
-                // 上一版为了「不跳」把它固定成永久 66，结果「我的」这种长列表底部永远空一条，
-                // 用户会以为界面漏了一块。
-                Color.clear
-                    .frame(height: hasMiniPlayer
-                           ? Self.miniSlotHeight + Self.gapBetweenMiniBarAndDock
-                           : 0)
-                dockCapsule()
-                    .padding(.horizontal, Layout.dockSideMargin)
-                    .padding(.bottom, 8)
+        // 【v1.4.9-B 收口：dock 绝对不动，迷你条 overlay 在其上方】
+        //
+        // 前两版都错在同一件事上：把「迷你条占多少高度」塞进了底部 safeAreaInset，
+        // 于是 dock 自身位置随迷你条显隐移动（一版会跳、一版永久留白），
+        // 而 dock 是导航锚点，它动一下整个 App 都在抖。
+        //
+        // 现在拆成两层：
+        //   · 布局层（参与 safeAreaInset 高度）：只有 dockCapsule 本身。
+        //     迷你条**完全不占布局**，所以 dock 的垂直位置恒定，页面内容也不因迷你条显隐而跳动。
+        //   · 装饰层（overlay，不参与布局）：迷你条画在 dock 上方
+        //     —— .overlay(alignment: .bottom) { 偏移 miniBarOffsetUp }，向上溢出绘制区。
+        //     溢出部分不占位、不吃 safeArea，只是"画"上去。
+        //
+        // 代价（明确写出来）：迷你条偶尔会盖住列表最后一两行。
+        // 这比「dock 位置漂移」和「永久留白」都轻 —— 而且用户可以上滑看全，
+        // 内容在迷你条下方的可点性不受影响（dock 区域才是不可穿透的）。
+        dockCapsule()
+            .padding(.horizontal, Layout.dockSideMargin)
+            .padding(.bottom, 8)
+            .overlay(alignment: .bottom) {
+                MiniPlayerBar()
+                    .frame(height: MiniPlayerBar.barHeight)
+                    .padding(.horizontal, Layout.miniBarSideMargin)
+                    .background(
+                        RoundedRectangle(cornerRadius: Layout.radiusBar, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Layout.radiusBar, style: .continuous)
+                            .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
+                    )
+                    // 向上抬：胶囊高 + 播放键凸出 + 底部边距 8 + 间隙
+                    .offset(y: -(Layout.dockHeight + Self.playKeyOverhang + 8 + Self.gapBetweenMiniBarAndDock))
+                    .opacity(hasMiniPlayer ? 1 : 0)
+                    // 幽灵热区防线：透明度 0 的条不许吃触摸
+                    .allowsHitTesting(hasMiniPlayer)
+                    .accessibilityHidden(!hasMiniPlayer)
+                    .animation(.easeInOut(duration: 0.2), value: hasMiniPlayer)
             }
-        }
         // 封面下载挂在**稳定的最外层**，不在 vinylDisc 内部：
         // vinylDisc 的形态随状态（空/加载/播放/暂停/失败）变化，视图身份一变 task 就被取消重跑，
         // 表现为盘面每换一次状态就重新下一遍图 —— 这也是「盘面闪变」的一条来源。
         .task(id: player.currentCoverUrl) { await loadCover() }
-        .animation(.easeInOut(duration: 0.2), value: hasMiniPlayer)
         .accessibilityElement(children: .contain)
         .onAppear { CrashLog.write("UI", "dock appear") }
     }
 
+
     /// 中间键轻微凸出条面的高度（58 直径 + 12 热区 = 70，条面 56，露 8）。
     private static let playKeyOverhang: CGFloat = 8
-    /// 迷你条的固定占位高度。
-    /// **必须等于 MiniPlayerBar.barHeight** —— 两处若各算各的，
-    /// 底部 safeAreaInset 高度会在迷你条出现时变化，页面整体跳 66pt。
-    private static let miniSlotHeight: CGFloat = MiniPlayerBar.barHeight
+    // 迷你条不再参与布局（v1.4.9-B 改成 overlay），旧槽位常量已删除。
+    // 迷你条尺寸唯一来源 = MiniPlayerBar.barHeight。
     /// 迷你条底边到胶囊顶边的可见空隙（不含播放键凸出的那 8pt）。
     private static let gapBetweenMiniBarAndDock: CGFloat = 6
 

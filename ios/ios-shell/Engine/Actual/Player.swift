@@ -630,6 +630,10 @@ final class Player: NSObject, ObservableObject {
     private var lastSavedMs: Int64 = 0
     /// 播放地址请求代际：每点一集 +1，晚到的旧响应丢弃
     private var requestGeneration: Int = 0
+    /// 当前这次起播是不是「自动连播触发的」。用于把会员限制降级成暂停提示，而不是错误页。
+    private var autoAdvancing = false
+    /// 下一次 playEpisode 是连播发起的（advanceAfterEnding 置 true，playEpisode 消费后清零）
+    private var isAutoAdvancePending = false
     /// 正在后台挂着等地址的那一集（不落进度，避免把续播点写到错误位置）
     private var requestingEpisode = false
     /// 起播超时看门狗：URL 已拿到但 item 迟迟不 readyToPlay → 给可读文案 + 自动降级无 header 重试一次
@@ -880,6 +884,9 @@ final class Player: NSObject, ObservableObject {
         sourceId: String,
         episodes: [SharedBridge.EpisodeRow]? = nil
     ) {
+        // 现在开始的是新一次播放：是不是连播由调用方（advanceAfterEnding）标记，默认不是。
+        autoAdvancing = isAutoAdvancePending
+        isAutoAdvancePending = false
         currentSourceId = sourceId
         // 关键：把整本集列表存进 currentEpisodes，否则自动连播/倒序永远拿不到"下一集"
         // nil 也要清空：否则首页续播（不传 episodes）会沿用上一本书的列表，
@@ -950,7 +957,19 @@ final class Player: NSObject, ObservableObject {
                 guard gen == self.requestGeneration else { return }
                 self.requestingEpisode = false
                 // P0-3：显示真实原因（登录失效/网络异常/触发限流），不再一律「取不到」
-                self.failAddress(addressReason ?? SharedBridge.lastAudioError ?? Player.fallbackAddressReason(src))
+                let reason = addressReason ?? SharedBridge.lastAudioError ?? Player.fallbackAddressReason(src)
+                // 【2026-11-26】自动连播走到「需要会员」的集时，这是**正常的产品边界**，不是故障：
+                // 该停下来说清楚，而不是把整个播放页打成错误态（那档次低一档，用户以为坏了）。
+                if self.autoAdvancing, reason.contains("会员") || reason.contains("登录") {
+                    self.autoAdvancing = false
+                    self.pause()
+                    self.setNowPlayingTitle("第\(ep.index)集：\(ep.title)")
+                    self.stageHint = .idle
+                    self.errorText = "连播到此为止：\(reason)"
+                    self.updateNowPlayingInfo()
+                    return
+                }
+                self.failAddress(reason)
                 return
             }
             guard gen == self.requestGeneration else { return }   // 用户已经点了别的集
@@ -1342,6 +1361,7 @@ final class Player: NSObject, ObservableObject {
             advanceAfterEnding(from: next, skipped: skipped + 1, firstSkipped: first)
             return
         }
+        isAutoAdvancePending = true
         playEpisode(next, book: currentBook, sourceId: currentSourceId, episodes: currentEpisodes)
     }
     

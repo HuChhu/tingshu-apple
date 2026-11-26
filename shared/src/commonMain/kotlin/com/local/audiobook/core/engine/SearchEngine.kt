@@ -275,7 +275,14 @@ class SearchEngine(
             // 按 trackId 去重：分页参数一旦被服务端忽略，同一页会被反复返回，
             // 不判重的话 out 会膨胀成「同一集 × N 次」。
             val seen = out.mapTo(HashSet()) { it.trackId }
-            for (e in tp.episodes) if (seen.add(e.trackId)) out.add(e)
+            // 【2026-11-26 P1】这里原来是裸 add —— 混合专辑（前 20 集免费 + 会员集）走 mobwsa 时，
+            // 会员集的 playable=false 会原样进 UI，被 Player 的 guard 拒播，客户端通道永远走不到。
+            // 和 XimalayaOpenSource.appendTracks、下面 fromDetail 那两处必须同一条纪律：
+            // 带 trackId 就放行，权限交给 extractor 的 isAuthorized 判。
+            for (e0 in tp.episodes) {
+                if (!seen.add(e0.trackId)) continue
+                out.add(if (e0.playable) e0 else e0.copy(playable = true, url = ""))
+            }
             totalCount = tp.totalCount
             if (tp.episodes.size < 20) break
             if (tp.totalCount > 0 && out.size >= tp.totalCount) break

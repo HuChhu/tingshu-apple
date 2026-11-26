@@ -51,6 +51,32 @@ class CorePureTest {
         assertEquals("2026-03-01", com.local.audiobook.core.engine.VipStatusResolver.dateOf(o4, "vipExpireTime"))
     }
 
+    // ---- 2026-11-26：放行规则的唯一实现（防止再出现「三处各写一遍、修一处漏两处」） ----
+    @Test fun allowRetryKeepsTrackIdPlayable() {
+        val locked = com.local.audiobook.core.Episode(
+            title = "第21集", url = "", trackId = 666248221, index = 21,
+            durationMs = 897000, coverUrl = "", playable = false, hint = "本集需要会员"
+        )
+        val r = com.local.audiobook.core.engine.TrackNormalizer.allowRetry(locked)
+        assertTrue(r.playable, "带 trackId 的集必须放行，否则客户端通道永远走不到")
+        assertEquals("", r.url, "url 可能残留网页地址，放行时必须清空")
+        assertEquals(666248221L, r.trackId, "trackId 不能丢，extractor 靠它换地址")
+        assertEquals("本集需要会员", r.hint, "hint 要保留，用于给用户解释")
+
+        // 没有 trackId 的集：换不了地址，url 非空就原样保留（别把数据清掉）
+        val noIdButUrl = locked.copy(trackId = 0L, url = "http://x/a.mp4")
+        val kept = com.local.audiobook.core.engine.TrackNormalizer.allowRetry(noIdButUrl)
+        assertEquals("http://x/a.mp4", kept.url, "没有 trackId 时 url 不能被清空")
+        assertFalse(kept.playable, "没 trackId 也没法换地址，保持不可播")
+        // 既没 trackId 又没 url：真的没救
+        val dead = locked.copy(trackId = 0L, url = "")
+        assertFalse(com.local.audiobook.core.engine.TrackNormalizer.allowRetry(dead).playable)
+
+        // 本来就可播的不动
+        val ok = locked.copy(url = "http://x/a.m4a", playable = true, hint = "")
+        assertEquals(ok, com.local.audiobook.core.engine.TrackNormalizer.allowRetry(ok))
+    }
+
     // ---- 2026-11-25：suggest 返回体结构（官方主推那一张） ----
     @Test fun suggestEnvelopeShape() {
         val j = kotlinx.serialization.json.Json.parseToJsonElement(

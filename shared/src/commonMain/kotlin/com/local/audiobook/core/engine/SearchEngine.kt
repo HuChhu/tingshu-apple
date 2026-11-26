@@ -191,7 +191,7 @@ class SearchEngine(
                 // 而 Player 的 `guard ep.playable` 会直接拒播 —— 会员集的地址只有客户端通道能给，
                 // 上层把 playable 判死等于把那条通道彻底堵住。
                 // 所以这里统一放行：带 trackId 就允许尝试，权限由 extractor 的 isAuthorized 判。
-                val e = if (e0.playable) e0 else e0.copy(playable = true, url = "")
+                val e = TrackNormalizer.allowRetry(e0)
                 episodes.add(e)
             }
             totalCount = tp.totalCount
@@ -281,7 +281,7 @@ class SearchEngine(
             // 带 trackId 就放行，权限交给 extractor 的 isAuthorized 判。
             for (e0 in tp.episodes) {
                 if (!seen.add(e0.trackId)) continue
-                out.add(if (e0.playable) e0 else e0.copy(playable = true, url = ""))
+                out.add(TrackNormalizer.allowRetry(e0))
             }
             totalCount = tp.totalCount
             if (tp.episodes.size < 20) break

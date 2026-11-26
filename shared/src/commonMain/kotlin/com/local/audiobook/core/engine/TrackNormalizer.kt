@@ -31,6 +31,29 @@ object TrackNormalizer {
      * 现在优先取上游自带的直链（免登录移动端接口就会返回 playUrl64/playUrl32）；
      * 没有直链才退回 /sound/{id} 让 audio() 去换 —— 但播放器层的出口闸会拦住它，不会再把网页当音频。
      */
+    /**
+     * 放行规则（**唯一一处定义**，别在别处再写一遍）。
+     *
+     * TrackNormalizer 对「没有直链」的轨道给 playable=false，但那只说明「mobwsa 没给地址」，
+     * **不等于**「这一集播不了」—— 会员集的地址只有客户端通道 `track/baseInfo` 能给。
+     * 如果上游把 playable 判死，Player 的 `guard ep.playable` 会直接拒播，那条通道就永远走不到。
+     *
+     * 所以：带 trackId 就放行（清空可能是网页的 url），权限由 extractor 的 isAuthorized 判。
+     *
+     * 【2026-11-26】这条规则之前散在三个地方各写一遍，修一处漏两处，连续三轮没修全。
+     * 现在收敛成这一个函数，三个调用点都必须用它。
+     */
+    fun allowRetry(e: Episode): Episode {
+        if (e.playable) return e
+        // 有 trackId → 放行，让它去客户端通道换地址。
+        // url 清空是**必须的**：TrackNormalizer 对没直链的轨道会把 url 留成空串，
+        // 而历史版本可能残留 /sound/{id} 网页地址；不清空 Player 会把它当音频喂给 AVPlayer（-12847）。
+        if (e.trackId > 0L) return e.copy(playable = true, url = "")
+        // 没 trackId：换不了地址，只能靠 url。url 非空就保留它（别把数据清掉），
+        // 空就维持不可播 —— 这时候确实没有任何办法。
+        return e
+    }
+
     fun normalizeTrack(t: JsonObject, index: Int, sourceId: String): Episode {
         val trackId = AlbumNormalizer.lng(t, "trackId", "id")
         val direct = firstPlayableUrl(

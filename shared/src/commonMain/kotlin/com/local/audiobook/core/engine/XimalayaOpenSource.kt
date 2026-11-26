@@ -305,7 +305,7 @@ class XimalayaOpenSource(
             if (t["trackId"]?.asLong() == null) continue
             val ep = TrackNormalizer.normalizeTrack(t, eps.size + 1, sourceId)
             // 有 trackId 就走客户端通道试一次；没权限时由 extractor 给出「需要会员」文案。
-            eps.add(if (ep.playable) ep else ep.copy(playable = true, url = ""))
+            eps.add(TrackNormalizer.allowRetry(ep))
         }
     }
 

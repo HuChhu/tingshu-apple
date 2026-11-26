@@ -9,6 +9,7 @@ import com.local.audiobook.data.ximalaya.engine.Crypto
 import com.local.audiobook.core.net.FetchOutcome
 import com.local.audiobook.core.net.JsonFetcher
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import java.nio.file.Files
 import java.nio.file.Path
@@ -51,6 +52,25 @@ class CorePureTest {
         assertEquals("2026-03-01", com.local.audiobook.core.engine.VipStatusResolver.dateOf(o4, "vipExpireTime"))
     }
 
+    // ---- 2026-11-26 P0：runBulk 必须真并发（上一版 mutex 把 block 也锁住了） ----
+    @Test fun runBulkAllowsConcurrentBlocks() = kotlinx.coroutines.runBlocking {
+        val t = com.local.audiobook.data.ximalaya.RequestThrottle(0L) { 0L }
+        val running = java.util.concurrent.atomic.AtomicInteger(0)
+        val peak = java.util.concurrent.atomic.AtomicInteger(0)
+        kotlinx.coroutines.coroutineScope {
+            for (i in 1..6) {
+                launch(kotlinx.coroutines.Dispatchers.Default) {
+                    t.runBulk(concurrency = 3) {
+                        val now = running.incrementAndGet()
+                        peak.updateAndGet { p -> maxOf(p, now) }
+                        Thread.sleep(120)
+                        running.decrementAndGet()
+                    }
+                }
+            }
+        }
+        assertTrue(peak.get() >= 2, "runBulk 必须能同时跑多个 block，实测峰值并发=" + peak.get())
+    }
     // ---- 2026-11-26：放行规则的唯一实现（防止再出现「三处各写一遍、修一处漏两处」） ----
     @Test fun allowRetryKeepsTrackIdPlayable() {
         val locked = com.local.audiobook.core.Episode(

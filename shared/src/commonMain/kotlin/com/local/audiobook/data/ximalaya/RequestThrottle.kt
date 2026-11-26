@@ -98,7 +98,14 @@ class RequestThrottle(
      */
     private val slots = atomic(0)
 
-    suspend fun <T> runBulk(concurrency: Int = 3, block: suspend () -> T): T = mutex.withLock {
+    suspend fun <T> runBulk(concurrency: Int = 3, block: suspend () -> T): T {
+        // 【2026-11-26 P0 自摆乌龙】上一版写的是 `= mutex.withLock { ... block() }` ——
+        // mutex 把**整个函数体**（含 block）锁住了，第二个协程要等第一个 block() 返回才进得去，
+        // 并发窗口恒为 1，和串行 run() 完全一样。之前测出的「变快」测的是分桶（不同源各自的锁），
+        // 不是这里的并发。
+        //
+        // 现在把 mutex 只用来保护「取号 + 算等待时间 + 标记」这一小段，
+        // 真正的 block() 在锁外执行 —— 这才是「允许 N 个在飞」。
         val limit = concurrency.coerceIn(1, 4)
         while (true) {
             val cur = slots.value
@@ -106,10 +113,13 @@ class RequestThrottle(
             delay(GATE_POLL_MS)
         }
         try {
-            val wait = waitMs()
-            if (wait > 0) delay(wait)
-            markRequest()
-            block()
+            mutex.withLock {
+                val wait = waitMs()
+                if (wait > 0) delay(wait)
+                markRequest()
+            }
+            // 锁外执行：这一段才是真正并发的部分
+            return block()
         } finally {
             slots.decrementAndGet()
         }

@@ -183,9 +183,15 @@ class SearchEngine(
             val tp = TrackExtractor.fromDetail(tjson["data"] as? JsonObject ?: JsonObject(emptyMap()), page, pageSize, sourceId)
             if (tp.episodes.isEmpty()) break
             val before = episodes.size
-            for (e in tp.episodes) {
+            for (e0 in tp.episodes) {
                 // trackId>0 才有意义；重复的（登录版分页失效时会整页重复）直接丢
-                if (e.trackId > 0L && !seen.add(e.trackId)) continue
+                if (e0.trackId > 0L && !seen.add(e0.trackId)) continue
+                // 【2026-11-26 P0】和 XimalayaOpenSource.appendTracks 同一条纪律：
+                // TrackNormalizer 对「no direct playUrl」的轨道给 playable=false，
+                // 而 Player 的 `guard ep.playable` 会直接拒播 —— 会员集的地址只有客户端通道能给，
+                // 上层把 playable 判死等于把那条通道彻底堵住。
+                // 所以这里统一放行：带 trackId 就允许尝试，权限由 extractor 的 isAuthorized 判。
+                val e = if (e0.playable) e0 else e0.copy(playable = true, url = "")
                 episodes.add(e)
             }
             totalCount = tp.totalCount

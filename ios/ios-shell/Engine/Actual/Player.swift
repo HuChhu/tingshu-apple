@@ -1313,6 +1313,17 @@ final class Player: NSObject, ObservableObject {
             updateNowPlayingInfo()
             return
         }
+        // 【2026-11-26】playable 现在对「带 trackId 但没有直链」的集也放行（要让 extractor 有机会换地址），
+        // 所以不能再只靠 playable 判断「这一集是不是要会员」。带 hint 的集就是有明确原因的 ——
+        // 自动连播到这种集时不要硬试（会白等一次网络往返再弹错），直接停下说清楚。
+        if !next.hint.isEmpty && next.url.isEmpty {
+            CrashLog.write("PLAY", "auto stop at locked track=\(next.trackId)")
+            setNowPlayingTitle("第\(next.index)集：\(next.title)")
+            pause()
+            failAddress("本专辑第 \(next.index) 集起需要会员。\(next.hint)")
+            updateNowPlayingInfo()
+            return
+        }
         guard next.playable else {
             let first = firstSkipped ?? next
             CrashLog.write("PLAY", "auto skip unplayable track=\(next.trackId) skipped=\(skipped + 1)")

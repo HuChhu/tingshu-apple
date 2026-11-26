@@ -195,8 +195,11 @@ class CorePureTest {
         // 2026-11-25 改：没直链的轨道 url 必须是**空串**，不允许再填 /sound/{id} 网页地址。
         // 旧断言锁的是 bug 本身 —— 正是它让 VIP 轨把网页喂给 AVPlayer，报「播不了」。
         assertEquals("", d.episodes[0].url)
-        assertFalse(d.episodes[0].playable, "没直链的轨道必须标 playable=false")
-        assertTrue(d.episodes[0].hint.isNotEmpty(), "不可播必须带原因")
+        // 【2026-11-26 语义变更】bookDetail 现在会把「有 trackId 但没直链」的集统一放行（playable=true），
+        // 因为会员集的地址只有 extractor 的客户端通道能给 —— 上层判死等于把那条路堵死。
+        // 所以这里断言改成：hint 必须有（说明要会员），playable 已被放行。
+        assertTrue(d.episodes[0].playable, "带 trackId 的轨道要放行给 extractor 去换地址")
+        assertTrue(d.episodes[0].hint.isNotEmpty(), "必须带「要会员」的原因")
         Unit
     }
 

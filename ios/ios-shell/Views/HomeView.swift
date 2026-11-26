@@ -86,7 +86,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: Layout.titleGap) {
             Text("继续收听").font(.headline).padding(.horizontal, Layout.hPadding)
             HStack(spacing: 12) {
-                AsyncImage(url: URL(string: r.coverUrl)) { img in
+                AsyncImage(url: Layout.coverURL(r.coverUrl)) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     RoundedRectangle(cornerRadius: Layout.radiusImage).fill(Layout.cardFill)
@@ -181,7 +181,7 @@ struct HomeView: View {
     @ViewBuilder
     private func bookCard(_ c: SharedBridge.BookCard) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            AsyncImage(url: URL(string: c.coverUrl)) { img in
+            AsyncImage(url: Layout.coverURL(c.coverUrl)) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
                 RoundedRectangle(cornerRadius: Layout.radiusImage)

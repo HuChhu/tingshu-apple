@@ -174,37 +174,45 @@ struct BottomDock: View {
     /// 唯一一层玻璃：胶囊本体。中间键画在它上面，凸出部分露在胶囊上沿之外。
     private func dockCapsule() -> some View {
         ZStack(alignment: .top) {
-            // 胶囊高度就是条面高度，用 padding(.top, 8) 把它下推 8pt 给播放键让位。
-            // 之前写成 .offset(y: 8)：offset 只移动绘制、不改布局，胶囊底边会溢出
-            // ZStack 底边 8pt，把外层留的空白画满 —— 就是用户截图里「dock 下面还露一条玻璃」。
+            // 【2026-11-26 用户要求】去掉中间播放键轮盘 —— 跟悬浮窗里的轮盘重复，看着乱。
+            // 现在只有「液态玻璃胶囊 + 4 个导航键」，胶囊不再需要给凸出的播放键让位，
+            // 所以 height 就是 dockHeight，playKeyOverhang 归零（不再有 8pt 上边距）。
             Capsule(style: .continuous)
                 .fill(.ultraThinMaterial)
                 .overlay(
                     Capsule(style: .continuous)
-                        .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
+                        .fill(
+                            // 液态玻璃的「高光」：顶部一层极淡的白色渐变，让胶囊有厚度感
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.28), Color.white.opacity(0.02), Color.clear],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                        .blendMode(.plusLighter)
+                        .allowsHitTesting(false)
                 )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(
+                            // 描边也做渐变：上亮下暗，玻璃边缘才有折射感
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.45), Color.white.opacity(0.06), Color.black.opacity(0.08)],
+                                startPoint: .top, endPoint: .bottom
+                            ),
+                            lineWidth: 0.6
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.18), radius: 14, y: 6)
+                .shadow(color: Color.black.opacity(0.08), radius: 2, y: 1)
                 .frame(height: Layout.dockHeight)
-                .padding(.top, Self.playKeyOverhang)
 
             HStack(spacing: 0) {
-                ForEach(Self.leftTabs, id: \.id) { tabButton($0) }
-                playKey(size: Layout.dockPlayKey)
-                ForEach(Self.rightTabs, id: \.id) { tabButton($0) }
+                ForEach(Self.leftTabs + Self.rightTabs, id: \.id) { tabButton($0) }
             }
-            // 导航键与胶囊一起下移 8pt，保持与条面垂直居中
-            .padding(.top, Self.playKeyOverhang)
             .frame(height: Layout.dockHeight)
 
-            if showEmptyHint {
-                Text("先去选一本")
-                    .font(.caption)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Capsule().fill(.regularMaterial))
-                    .transition(.opacity)
-            }
         }
-        .frame(height: Layout.dockHeight + Self.playKeyOverhang)
+        .frame(height: Layout.dockHeight)
     }
 
     // MARK: 导航键
@@ -237,72 +245,11 @@ struct BottomDock: View {
         .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
     }
 
-    // MARK: 中间播放键
-
-    @ViewBuilder
-    private func playKey(size: CGFloat) -> some View {
-        // 【v1.4.6】用 Button 代替手搓的 onLongPressGesture：
-        // 之前手指按住后横滑超过 14pt，SwiftUI 判定手势失败也会回调 pressing(false)，
-        // 代码把它当「抬起」执行动作 —— 从中间键滑向旁边 Tab 的常见轨迹必然误触。
-        // Button 的取消语义由系统保证：滑出范围松手不触发 action。
-        Button {
-            handlePlayTap()
-        } label: {
-            keyVisual(size: size)
-        }
-        .buttonStyle(PlayKeyButtonStyle())
-        .accessibilityLabel(hasContent ? "打开播放页" : "播放")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint(hasContent ? "进入正在播放的专辑" : "先去选一本")
-    }
-
-    /// 视觉本身与手势解耦：ButtonStyle 用 isPressed 驱动缩放。
-    @ViewBuilder
-    private func keyVisual(size: CGFloat) -> some View {
-        ZStack {
-            switch state {
-            case .empty:
-                playCircle(size: size, fill: Color.secondary.opacity(0.18),
-                           foreground: Color.secondary) {
-                    Image(systemName: "music.note").font(.system(size: 20, weight: .semibold))
-                }
-            case .loading:
-                vinylDisc(size: size, spinning: false)
-                    .overlay(
-                        ProgressView()
-                            .progressViewStyle(.circular)
-                            .tint(.white)
-                            .scaleEffect(1.1)
-                    )
-            case .playing, .paused:
-                vinylDisc(size: size, spinning: state == .playing)
-            case .failed:
-                vinylDisc(size: size, spinning: false, dimmed: true)
-                Circle()
-                    .fill(Color.red)
-                    .frame(width: 10, height: 10)
-                    .overlay(Circle().stroke(Color(UIColor.systemBackground), lineWidth: 2))
-                    .offset(x: size / 2 - 4, y: -size / 2 + 4)
-                    .allowsHitTesting(false)
-            }
-        }
-        // 中间键热区比视觉大一圈，但不外扩到相邻 Tab（width = size + 4）
-        .frame(width: size + 4, height: Layout.dockHeight + Self.playKeyOverhang)
-        .contentShape(Rectangle())
-    }
-
-    /// 按下缩放。整组一起缩（盘面 + 描边 + 进度环），避免只缩盘面时出现双环错觉。
-    private struct PlayKeyButtonStyle: ButtonStyle {
-        func makeBody(configuration: Configuration) -> some View {
-            configuration.label
-                .scaleEffect(configuration.isPressed ? 0.94 : 1.0)
-                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-        }
-    }
-
-    /// 唱片式海报键：圆形封面 + 3pt 白边 + 外圈进度环。
-    /// 旋转由 TimelineView(.animation) + CoverRotationClock 驱动（见文件末尾）：
-    /// 每帧读角度，**不写 @State**，所以不会触发整棵 dock 重建。
+    // MARK: 中间播放键（v2026-11-26 已移除）
+    //
+    // 用户反馈：底部 dock 的轮盘和悬浮窗（迷你条）里的轮盘重复，看着乱。
+    // 现在 dock 只保留 4 个导航键 —— 播放/暂停/进播放页仍然可以从上方迷你条点。
+    // 这里留注释而不是彻底删干净，是为了以后想加回来时知道曾经为什么去掉。
     private func vinylDisc(size: CGFloat, spinning: Bool, dimmed: Bool = false) -> some View {
         let coverSide = max(0, size - 6)      // 3pt 白边左右各一
         return ZStack {
@@ -454,6 +401,8 @@ struct BottomDock: View {
         return p.isFinite ? min(1, max(0, p)) : 0
     }
 
+    // 中间键已移除，保留此函数仅为将来可能的「长按进播放页」入口
+    @available(*, deprecated, message: "dock 中间键已移除")
     private func handlePlayTap() {
         guard hasContent else {
             withAnimation(.easeOut(duration: 0.18)) { showEmptyHint = true }

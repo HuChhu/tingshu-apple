@@ -35,9 +35,19 @@ class XimalayaAudioExtractor(
             return ExtractedAudio(url, AudioUrlHeaders.headersFor(url), 0L)
         }
 
+        // 【2026-11-26 P0】喜马门户网页（/sound/{id}、/album/{id}）直接跳级 2，改走客户端通道。
+        //
+        // 真机报错「源站只给了网页地址，没给音频直链」就是这条路上出来的：
+        // Player 把空 url 改写成 https://www.ximalaya.com/sound/{trackId}，
+        // 级 2 去解析那个页面，抓到的东西被出口闸拦下，**新的 baseInfo 通道根本没走到**。
+        //
+        // 这类页面本来就不该爬：音源不在页面里，在客户端接口里。
+        val trackIdFromPage = if (url.contains("ximalaya.com")) XimalayaLinkParser.parse(url).trackId else null
+
         // 级2/4：多级提取器给出的 HTML / JSON / 自定义命中（有就省掉官方接口一次请求）
         // 注意：这里只对「输入本身像页面 URL」的情况尝试，纯数字 trackId 直接走官方接口
-        val looksLikePage = url.startsWith("http") && !url.all { ch -> ch.isDigit() }
+        val looksLikePage = url.startsWith("http") && !url.all { ch -> ch.isDigit() } &&
+            trackIdFromPage == null   // 喜马自己的页面不进级 2：音源不在 HTML 里
         if (looksLikePage) {
             try {
                 val hit = MultistepAudioExtractor.extract(
@@ -59,7 +69,7 @@ class XimalayaAudioExtractor(
         }
         // trackId 解析统一走 XimalayaLinkParser（/sound/{id}、?trackId=）；
         // 纯数字输入按本 API 的约定解释为 trackId（extract 是 track 作用域，LinkParser 的纯数字=albumId 语义不变）
-        val trackId = XimalayaLinkParser.parse(url).trackId
+        val trackId = trackIdFromPage
             ?: url.trim().takeIf { it.isNotEmpty() && it.all { ch -> ch.isDigit() } }?.toLongOrNull()
             ?: throw SourceErrors.ParseFailed("无法解析 trackId：" + url)
 

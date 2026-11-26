@@ -728,6 +728,49 @@ final class Player: NSObject, ObservableObject {
     }
 
     /// 重启 App 后按上次设置重新定时（prefs.sleepAutoEnable）
+    /// 冷启动恢复「上次在听的那一集」。
+    ///
+    /// 【2026-11-26 修「清后台重开，悬浮条不出现」】
+    /// Player 是单例，但进程重启后它的 state 是初始的 .stopped、nowPlaying 是空串，
+    /// 而迷你条的显示条件是 `state != .stopped && !nowPlaying.isEmpty` —— 于是永远不显示。
+    /// 以前也没有任何地方从历史记录里读回来，等于「重开 App 就忘了你在听什么」。
+    ///
+    /// 这里只恢复**展示状态**：标题、曲目、书的身份、封面。
+    /// 不自动起播（用户没按播放键），也不预取音频地址（地址有时效，等用户点了再取）。
+    func restoreLastPlaybackIfNeeded() {
+        guard state == .stopped, current == nil else { return }
+        guard let last = LocalStore.loadRecent().first else { return }
+        let ep = SharedBridge.EpisodeRow(
+            title: last.episodeTitle,
+            trackId: last.trackId,
+            index: 0,
+            durationMs: 0,
+            coverUrl: last.coverUrl,
+            url: last.episodeUrl
+        )
+        current = ep
+        currentSourceId = last.sourceId
+        nowPlaying = last.episodeTitle
+        currentBookTitleForRestore = last.bookTitle
+        currentBookUrlForRestore = last.bookUrl
+        // 恢复成 paused 而不是 playing：界面显示「有一条在听」，但不会自己出声。
+        apply(.paused)
+        let saved = LocalStore.progress(for: last.bookUrl)
+        if let saved, saved.trackId == last.trackId, saved.durationMs > 0 {
+            position = min(1, max(0, Double(saved.positionMs) / Double(saved.durationMs)))
+            elapsedText = fmt(saved.positionMs)
+            durationText = fmt(saved.durationMs)
+        } else {
+            position = 0
+            elapsedText = "0:00"
+        }
+        CrashLog.write("PLAY", "restore last ep=\(last.episodeTitle) src=\(last.sourceId)")
+    }
+
+    /// 恢复时暂存书的标题/地址（没有完整 BookCard，迷你条只需要标题）
+    private var currentBookTitleForRestore: String = ""
+    private var currentBookUrlForRestore: String = ""
+
     func restoreSleepTimerIfNeeded() {
         // 用户手动取消过 → 本次会话不再自动恢复（否则自动连播会把它"复活"）
         guard !sleepCancelledByUser else { return }

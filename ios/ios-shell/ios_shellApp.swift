@@ -8,6 +8,16 @@ struct TingshuRootApp: App {
         CrashLog.write("BOOT", "app start v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
         // 进后台/退出时把缓冲日志刷盘（平时不做 fsync 省开销）
         CrashLog.installFlushObservers()
+        // 【2026-11-26 修「海报要 3-4 秒才出来」】
+        // URLSession.shared 的默认 URLCache 内存只有 512KB、磁盘 10MB，
+        // 一张封面 200-400KB，翻两屏就被挤掉 —— 每次重建列表都重新下载。
+        // 这里换成 64MB 内存 + 512MB 磁盘；配合 Layout.coverURL 的尺寸收敛，
+        // 同一张图只会真正下载一次。
+        URLCache.shared = URLCache(
+            memoryCapacity: 64 * 1024 * 1024,
+            diskCapacity: 512 * 1024 * 1024,
+            diskPath: "tingshu-cover-cache"
+        )
     }
 
     var body: some Scene {
@@ -67,6 +77,9 @@ struct RootTabView: View {
         }
         .onAppear {
             CrashLog.write("UI", "root appear tab=\(tab) fullscreen=\(player.showFullScreen) dock=\(useCustomDock)")
+            // 冷启动恢复「上次在听」的展示状态：否则 Player 的 state 是 .stopped、
+            // nowPlaying 是空串，悬浮条永远不出现（用户反馈的「清后台重开就不见了」）。
+            player.restoreLastPlaybackIfNeeded()
         }
         .onDisappear { CrashLog.write("UI", "root disappear tab=\(tab)") }
     }

@@ -235,7 +235,7 @@ struct FavoritesPage: View {
                                   sourceId: f.sourceId)
                     } label: {
                         HStack(spacing: 12) {
-                            AsyncImage(url: URL(string: f.coverUrl)) { img in
+                            AsyncImage(url: Layout.coverURL(f.coverUrl)) { img in
                                 img.resizable().aspectRatio(contentMode: .fill)
                             } placeholder: {
                                 RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.15))

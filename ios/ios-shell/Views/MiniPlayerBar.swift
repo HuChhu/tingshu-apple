@@ -73,7 +73,7 @@ struct MiniPlayerBar: View {
     }
 
     private var cover: some View {
-        AsyncImage(url: URL(string: player.currentBookCard?.coverUrl ?? "")) { img in
+        AsyncImage(url: Layout.coverURL(player.currentBookCard?.coverUrl ?? "")) { img in
             img.resizable().aspectRatio(contentMode: .fill)
         } placeholder: {
             RoundedRectangle(cornerRadius: Layout.radiusThumb)

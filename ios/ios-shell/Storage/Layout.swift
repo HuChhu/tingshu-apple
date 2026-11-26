@@ -89,6 +89,20 @@ enum Layout {
     static let dockSideMargin: CGFloat = 10
     static let dockPlayKey: CGFloat = 58
 
+    /// 封面 URL 归一化：喜马拉雅封面带 `!op_type=3&columns=140&rows=140` 这类参数，
+    /// 去掉之后拿原图会慢；但更重要的是 **同一张图不同尺寸会重复下载**。
+    /// 这里统一收敛到 240px，配合下面的 URLCache 才能真正命中缓存。
+    static func coverURL(_ raw: String, side: Int = 240) -> URL? {
+        guard !raw.isEmpty else { return nil }
+        // 去掉已有的图片处理参数（以 ! 开头的部分）
+        let base = raw.components(separatedBy: "!").first ?? raw
+        guard var c = URLComponents(string: base) else { return nil }
+        c.queryItems = [URLQueryItem(name: "op_type", value: "3"),
+                        URLQueryItem(name: "columns", value: String(side)),
+                        URLQueryItem(name: "rows", value: String(side))]
+        return c.url
+    }
+
     /// 固定底部栏的底线留白（自绘 dock / 迷你条二选一，不会同时出现）
     static let dockBaseline: CGFloat = 16
 

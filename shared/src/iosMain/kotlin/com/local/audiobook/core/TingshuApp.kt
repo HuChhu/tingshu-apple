@@ -44,6 +44,13 @@ class TingshuApp(
             connectTimeoutMillis = 12_000
             socketTimeoutMillis = 45_000
         }
+        // 【2026-11-27】引擎走的是 JSON 接口和几十 KB 的 HTML，不需要 URLSession 缓存；
+        // 而 Shell 为了封面把 URLCache.shared 调到了 64MB/512MB ——
+        // 引擎的响应如果也走那个 cache，翻几十页详情会往里灌一堆 JSON。
+        // 这里显式关掉本客户端的缓存（Darwin 引擎支持这个开关）。
+        engine {
+            configureRequest { setAllowsCaching(false) }
+        }
     }
 
     private val engine: SearchEngine = SearchEngine(

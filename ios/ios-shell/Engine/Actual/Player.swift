@@ -750,9 +750,23 @@ final class Player: NSObject, ObservableObject {
         )
         current = ep
         currentSourceId = last.sourceId
+        // 【2026-11-27 修审计发现】光恢复 current 不够：用户按播放键走 resume() → retry()
+        // → playEpisode(ep, book: currentBook) —— currentBook 是 nil 时 beginRequest 会把书身份清掉，
+        // 于是「进度存到哪本书」丢失，下一次恢复会读错。
+        // 用 Recent 里已有的字段拼一个最小 BookCard（只要 bookUrl 用于 BookKey/进度即可）。
+        currentBook = SharedBridge.BookCard(
+            bookUrl: last.bookUrl,
+            title: last.bookTitle,
+            author: "",
+            coverUrl: last.coverUrl,
+            albumId: 0,
+            trackCount: 0,
+            playCount: 0,
+            isFinished: nil,
+            intro: "",
+            sourceId: last.sourceId
+        )
         nowPlaying = last.episodeTitle
-        currentBookTitleForRestore = last.bookTitle
-        currentBookUrlForRestore = last.bookUrl
         // 恢复成 paused 而不是 playing：界面显示「有一条在听」，但不会自己出声。
         apply(.paused)
         let saved = LocalStore.progress(for: last.bookUrl)
@@ -766,10 +780,6 @@ final class Player: NSObject, ObservableObject {
         }
         CrashLog.write("PLAY", "restore last ep=\(last.episodeTitle) src=\(last.sourceId)")
     }
-
-    /// 恢复时暂存书的标题/地址（没有完整 BookCard，迷你条只需要标题）
-    private var currentBookTitleForRestore: String = ""
-    private var currentBookUrlForRestore: String = ""
 
     func restoreSleepTimerIfNeeded() {
         // 用户手动取消过 → 本次会话不再自动恢复（否则自动连播会把它"复活"）

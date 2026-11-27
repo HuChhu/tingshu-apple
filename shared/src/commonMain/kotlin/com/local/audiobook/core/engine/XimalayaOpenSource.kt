@@ -112,7 +112,7 @@ class XimalayaOpenSource(
                 // 免登录通道对 VIP 集永远返回空 playUrl。
                 // 于是登录用户点进来也全是锁 —— 不是会员没生效，是我们把他推到了错的那条路。
                 // 现在按登录态给源：有 Cookie 就给登录通道，没有才给免登录。
-                sourceId = if (hasLoginCookie()) "ximalaya" else sourceId,
+                sourceId = "ximalaya",
                 bookUrl = "https://www.ximalaya.com/album/" + id,
                 title = kw,
                 author = "",
@@ -134,7 +134,7 @@ class XimalayaOpenSource(
         val id = o["id"]?.asStr()?.toLongOrNull() ?: return null
         val title = o["title"]?.asStr()?.takeIf { it.isNotBlank() } ?: return null
         return Book(
-            sourceId = sourceId,
+            sourceId = "ximalaya",
             bookUrl = "https://www.ximalaya.com/album/" + id,
             title = title,
             author = o["nickname"]?.asStr() ?: o["anchorName"]?.asStr() ?: "",
@@ -155,7 +155,7 @@ class XimalayaOpenSource(
         val main = data["albumPageMainInfo"]?.asObj() ?: data
 
         val book = Book(
-            sourceId = sourceId,
+            sourceId = "ximalaya",
             bookUrl = "https://www.ximalaya.com/album/" + albumId,
             title = main["albumTitle"]?.asStr() ?: main["title"]?.asStr() ?: ("专辑 " + albumId),
             author = main["anchorName"]?.asStr() ?: "",

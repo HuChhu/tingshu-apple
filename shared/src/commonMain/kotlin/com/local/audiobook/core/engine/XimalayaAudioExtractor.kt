@@ -119,6 +119,20 @@ class XimalayaAudioExtractor(
             }
             return ""
         }
+        // 【2026-11-27 诊断】真机上「登录了会员却提示上游未返回地址」，需要看清这一集
+        // 上游到底给了什么。把关键字段压成一行塞进错误文案 —— 用户截图就能定位，
+        // 不用再导日志（日志里也不该出现 Cookie 值）。
+        fun len(k: String) = strOf(k).length
+        val diag = "isFree=" + strOf("isFree") +
+            " isAuth=" + strOf("isAuthorized") +
+            " pa164=" + len("playPathAacv164") +
+            " p64=" + len("playUrl64") +
+            " pa224=" + len("playPathAacv224") +
+            " p32=" + len("playUrl32") +
+            " hq=" + len("playPathHq") +
+            " dl=" + len("downloadUrl") +
+            " cookieLen=" + (cookie?.length ?: 0)
+
         val picked0 = pick("playPathAacv164", "playUrl64", "playPathAacv224", "playUrl32", "playPathHq")
         // 上游偶尔给相对路径（/mobile/redirect/...）：补协议，否则 URL(string:) 会是 nil，死在 loader 之前。
         val picked = if (picked0.startsWith("//")) "https:" + picked0
@@ -129,10 +143,10 @@ class XimalayaAudioExtractor(
             val authorized = strOf("isAuthorized") == "true"
             val free = strOf("isFree") == "true"
             val msg = when {
-                !authorized && cookie == null -> "这一集需要登录喜马拉雅账号"
-                !authorized && !free -> "这一集需要会员权限（前 20 集免费，之后需开通会员）"
-                !authorized -> "没有权限播放这一集"
-                else -> "上游未返回可播放地址"
+                !authorized && cookie == null -> "这一集需要登录喜马拉雅账号（" + diag + "）"
+                !authorized && !free -> "这一集需要会员权限，前 20 集免费（" + diag + "）"
+                !authorized -> "没有权限播放这一集（" + diag + "）"
+                else -> "上游没给这一集的地址（" + diag + "）"
             }
             throw SourceErrors.Vip(msg)
         }

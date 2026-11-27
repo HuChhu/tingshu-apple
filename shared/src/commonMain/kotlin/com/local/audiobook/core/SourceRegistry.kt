@@ -116,12 +116,18 @@ class SourceRegistry(
     /** 全部源 */
     fun list(): List<SourceInfo> {
         val out = mutableListOf<SourceInfo>()
-        out.add(SourceInfo("ximalaya-open", "喜马拉雅（免登录）", "官方公开接口，不需要登录取", "native"))
+        // 【2026-11-27 用户要求】喜马拉雅**只保留一个源**。
+        // 以前拆成「免登录」和「登录版」两个，用户看到两条同名条目，搜索结果里同一本书出现两次，
+        // 还会因为走错通道导致「登录了会员却播不了」。
+        //
+        // 现在：只显示这一个，内部自动按登录态选通道（有 Cookie 走登录通道、无 Cookie 走公开接口）。
+        // 旧数据里的 `ximalaya-open` id 仍然受理（见 search/bookDetail/audio 的 when 分支），
+        // 这样历史记录、收藏、缓存的搜索结果都不会因为改名而失效。
+        out.add(SourceInfo("ximalaya", "喜马拉雅", "登录后可听会员内容；未登录只能听免费集", "login"))
         out.add(SourceInfo("kuwo", "酷我听书", "免登录，返回多码率", "native"))
         out.add(SourceInfo("bilibili", "哔哩哔哩", "B站有声书，buvid3 可伪造", "native"))
         out.add(SourceInfo("qingting", "蜻蜓FM", "HMAC-MD5 签名已逆出", "native"))
         out.add(SourceInfo("netease", "网易云音乐", "走 Meting 代理", "native"))
-        out.add(SourceInfo("ximalaya", "喜马拉雅（登录版）", "需登录，可听会员内容", "login"))
         // 模板站 id 必须和 NATIVE_IDS 不撞：撞了 list() 会出现两个同名条目，search() 也会静默走原生源
         for (cfg in TemplateSites.all) {
             if (cfg.key in NATIVE_IDS) continue

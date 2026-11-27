@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import WebKit
 
 /// 触点 1/5：WebView 嗅探级提取器（五级提取器第 5 级，契约 Sniffer）。
@@ -34,6 +35,7 @@ final class WebViewSniffer: NSObject {
             candidates = []
             let view = makeWebView()
             webView = view                       // 强引用保命：嗅探期间不得释放
+            attachToWindow(view)                 // 挂进视图层，否则 JS 定时器被节流
             timeoutTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
                 guard let self, self.pending != nil else { return }
@@ -48,6 +50,22 @@ final class WebViewSniffer: NSObject {
     }
 
     // MARK: - 会话装配与收尾
+
+    /// 【2026-11-28】把 WKWebView 挂进 key window 的屏幕外角落。
+    ///
+    /// 原因：脱离视图层的 WKWebView 里 setTimeout / 网络回调会被系统节流，
+    /// 而喜马会员集的地址必须靠**页面自己的 JS**去请求 play/v1/audio（签名在它那边算）。
+    /// 挂上去 + alpha 0.01 既能正常跑 JS，也不影响用户看到的东西。
+    private func attachToWindow(_ view: WKWebView) {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let win = scenes.flatMap { $0.windows }.first(where: { $0.isKeyWindow })
+            ?? scenes.flatMap { $0.windows }.first
+        guard let win else { return }
+        view.frame = CGRect(x: -420, y: -420, width: 390, height: 700)
+        view.alpha = 0.01
+        view.isUserInteractionEnabled = false
+        win.addSubview(view)
+    }
 
     private func makeWebView() -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -75,6 +93,7 @@ final class WebViewSniffer: NSObject {
     }
 
     private func teardown() {
+        webView?.removeFromSuperview()
         webView?.stopLoading()
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "tingshuSniffer")
         webView?.navigationDelegate = nil
@@ -101,6 +120,15 @@ final class WebViewSniffer: NSObject {
 extension WebViewSniffer: WKScriptMessageHandler {
     func userContentController(_ c: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "tingshuSniffer", let body = message.body as? String else { return }
+        // 【2026-11-28】direct| = 播放接口响应体里直接挖出来的音频地址（喜马 VIP 走这条）
+        // 不做扩展名校验：xmcdn 的 redirect 链末尾可能是 /1、/0 这种数字
+        if body.hasPrefix("direct|") {
+            let u = String(body.dropFirst("direct|".count))
+            guard u.hasPrefix("http://") || u.hasPrefix("https://") else { return }
+            if !candidates.contains(u) { candidates.append(u) }
+            finish(.success(u))
+            return
+        }
         if body.hasPrefix("confirm|") {          // fetch content-type 确认的音视频流
             let u = String(body.dropFirst("confirm|".count))
             // 安全：必须 http(s)，且必须是已知媒体扩展名，防止恶意页面塞 javascript: 或任意 URL
@@ -166,6 +194,33 @@ extension WebViewSniffer {
       // 4) XHR open
       var open = XMLHttpRequest.prototype.open;
       XMLHttpRequest.prototype.open = function(m, u){ post(String(u)); return open.apply(this, arguments); };
+      // 4b) 【2026-11-28】抓「播放接口的响应体」——喜马 VIP 的地址只在这里出现。
+      //     网页播放器自己算 xm-sign（浏览器指纹），我们复刻不了，但可以把它算完的结果截下来。
+      //     命中后走 direct| 通道，优先级高于普通候选。
+      var send = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.send = function(){
+        var xhr = this;
+        try {
+          xhr.addEventListener("load", function(){
+            try {
+              var ru = (xhr.responseURL || "");
+              var txt = "";
+              try { txt = xhr.responseText || ""; } catch(e){ return; }
+              if (!txt || txt.length > 200000) return;
+              // 只看播放类响应，避免误捡普通接口里的封面/头像地址
+              if (ru.indexOf("/play/") < 0 && txt.indexOf("playUrl") < 0 && txt.indexOf("playPath") < 0) return;
+              var re = /"(src|playUrl64|playPathAacv164|playPathAacv224|playUrl32)"\s*:\s*"([^"]{8,})"/;
+              var m = re.exec(txt);
+              if (m && m[2]) {
+                var u2 = m[2].replace(/\\\//g, "/");
+                if (u2.indexOf("//") === 0) u2 = "https:" + u2;
+                if (u2.indexOf("http") === 0) post("direct|" + u2);
+              }
+            } catch(e){}
+          });
+        } catch(e){}
+        return send.apply(this, arguments);
+      };
       // 5) fetch：URL 立报 + content-type 为 audio/video 时补发 confirm| 通道
       var of = window.fetch;
       if (of) window.fetch = function(input){
@@ -179,6 +234,25 @@ extension WebViewSniffer {
           return res;
         });
       };
+      // 6) 页面不会自己起播时，替它点一下播放键 —— 点了才会去请求 play/v1/audio
+      var tries = 0;
+      var poke = function(){
+        tries++;
+        try {
+          var sels = [".play-btn", ".player-btn", "[class*=playBtn]", "[class*=play-btn]",
+                      "[class*=player] [class*=play]", ".audio-player", "button[aria-label*=播放]"];
+          for (var i = 0; i < sels.length; i++) {
+            var el = document.querySelector(sels[i]);
+            if (el && el.click) { el.click(); return; }
+          }
+          var au = document.querySelector("audio");
+          if (au && au.play) { au.play().catch(function(){}); return; }
+        } catch(e){}
+      };
+      document.addEventListener("DOMContentLoaded", function(){
+        setTimeout(poke, 1200);
+        setTimeout(poke, 3000);
+      });
     })();
     """
 }

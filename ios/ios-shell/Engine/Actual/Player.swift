@@ -1000,6 +1000,23 @@ final class Player: NSObject, ObservableObject {
                     audio = SharedBridge.makeAudio(url: sniffed)
                 }
             }
+            // ④ 【2026-11-28】喜马会员集：让网页播放器自己去换地址。
+            //
+            // 事实链：baseInfo 对会员集返回 isAuthorized=true 但所有 playUrl 字段为空；
+            // play/v1/audio 被 dws 风控要求浏览器指纹算出的 xm-sign，命令行/引擎侧复刻不了。
+            // 但网页播放器**自己会算**——它带着用户的 Cookie 跑在 WKWebView 里，
+            // 我们只需要把它请求 play/v1/audio 拿到的地址截下来（WebViewSniffer 的 direct| 通道）。
+            if audio == nil, ep.trackId > 0, src.hasPrefix("ximalaya") {
+                let page = "https://www.ximalaya.com/sound/\(ep.trackId)"
+                CrashLog.write("PLAY", "webview fallback for vip track=\(ep.trackId)")
+                if let sniffed = await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: 30_000) {
+                    audio = SharedBridge.makeAudio(url: sniffed)
+                    if audio != nil { addressReason = nil }
+                    CrashLog.write("PLAY", "webview got url=\(sniffed.prefix(90))")
+                } else {
+                    CrashLog.write("PLAY", "webview found nothing track=\(ep.trackId)")
+                }
+            }
             // 兜底 UA：模板站/嗅探出来的直链常常「裸请求 403、带 UA 就过」
             // （实测 xmcdn 系：不带 UA 直接 deny by rule engine）。
             if let a = audio {

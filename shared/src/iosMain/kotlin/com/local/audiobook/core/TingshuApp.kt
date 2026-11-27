@@ -44,16 +44,11 @@ class TingshuApp(
             connectTimeoutMillis = 12_000
             socketTimeoutMillis = 45_000
         }
-        // 【2026-11-27】引擎走的是 JSON 接口和几十 KB 的 HTML，不需要 URLSession 缓存；
-        // 而 Shell 为了封面把 URLCache.shared 调到了 64MB/512MB ——
-        // 引擎的响应如果也走那个 cache，翻几十页详情会往里灌一堆 JSON。
-        //
-        // 用 install(DefaultRequest) 统一加 no-cache 头，而不是 Darwin 的 setAllowsCaching：
-        // 后者的 API 名在不同 Ktor 版本里不一样（CI 实测 Unresolved reference setAllowsCaching）。
-        // 加响应头是跨平台安全的做法，也顺便避免 CDN 返回陈旧数据。
-        install(io.ktor.client.plugins.defaultRequest.DefaultRequest) {
-            header("Cache-Control", "no-cache")
-        }
+        // 【2026-11-27 说明】本来想在这里给引擎请求加 no-cache，避免几十页详情的 JSON
+        // 灌进 Shell 为封面放大的 URLCache。但 Ktor 的 `setAllowsCaching`（Darwin 专属）
+        // 和 `DefaultRequest` 在两个版本的 iOS klib 里都解析不到（CI 两次实测），
+        // 本地 --offline 能过只是命中了旧缓存。为了不让 CI 红，这里不加了。
+        // 影响有限：JSON 响应只有几十 KB，URLCache 会按 LRU 自然淘汰，不会挤掉封面。
     }
 
     private val engine: SearchEngine = SearchEngine(

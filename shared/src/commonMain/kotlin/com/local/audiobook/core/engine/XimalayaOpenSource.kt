@@ -61,7 +61,7 @@ class XimalayaOpenSource(
     )
 
     override suspend fun search(keywords: String, page: Int): SearchResult {
-        val root = getJson(OpenRoutes.search(keywords, page), OpenRoutes.desktopHeaders())
+        val root = getJson(OpenRoutes.search(keywords, page), headersWithCookie())
         val docs = root["response"]?.asObj()?.get("docs")?.asArr() ?: JsonArray(emptyList())
         val books = docs.mapNotNull { d -> d.asObj()?.let { docToBook(it) } }.toMutableList()
 
@@ -96,7 +96,7 @@ class XimalayaOpenSource(
 
     private suspend fun fetchOfficialPick(keywords: String): Book? = try {
         val r = throttle.run {
-            fetcher.get(OpenRoutes.suggest(keywords), OpenRoutes.desktopHeaders())
+            fetcher.get(OpenRoutes.suggest(keywords), headersWithCookie())
         }
         val ok = (r as? FetchOutcome.Ok)?.text
         if (ok.isNullOrBlank()) null
@@ -150,7 +150,7 @@ class XimalayaOpenSource(
     override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean,
                                 cancel: com.local.audiobook.core.CancelToken): BookDetail {
         val albumId = parseAlbumId(bookUrl) ?: throw SourceErrors.ParseFailed("无法解析 albumId：" + bookUrl)
-        val detailRoot = getJson(OpenRoutes.albumSimple(albumId), OpenRoutes.desktopHeaders())
+        val detailRoot = getJson(OpenRoutes.albumSimple(albumId), headersWithCookie())
         val data = detailRoot["data"]?.asObj() ?: throw SourceErrors.NotFound(bookUrl)
         val main = data["albumPageMainInfo"]?.asObj() ?: data
 
@@ -190,7 +190,7 @@ class XimalayaOpenSource(
         //   ② 剩下的页**并发取**（最多 3 个在飞，起始间隔仍受 1 秒节流约束）。
         // mobwsa 实测对 3 并发无风控反应（一轮测过 open+login 双通道并发也正常）。
         // 40 页上限不变 —— 那是「不值得再等」的产品边界，不是性能参数。
-        val first = getJsonBulk(OpenRoutes.tracksMobile(albumId, 1), OpenRoutes.desktopHeaders())
+        val first = getJsonBulk(OpenRoutes.tracksMobile(albumId, 1), headersWithCookie())
         val firstList = first["list"]?.asArr()
             ?: first["data"]?.asObj()?.get("list")?.asArr()
             ?: JsonArray(emptyList())
@@ -215,7 +215,7 @@ class XimalayaOpenSource(
                     async {
                         if (cancel.isCancelled) return@async null
                         val tr = runCatching {
-                            getJsonBulk(OpenRoutes.tracksMobile(albumId, p), OpenRoutes.desktopHeaders())
+                            getJsonBulk(OpenRoutes.tracksMobile(albumId, p), headersWithCookie())
                         }.getOrNull() ?: return@async null
                         val list = tr["list"]?.asArr()
                             ?: tr["data"]?.asObj()?.get("list")?.asArr()
@@ -314,6 +314,20 @@ class XimalayaOpenSource(
             // 有 trackId 就走客户端通道试一次；没权限时由 extractor 给出「需要会员」文案。
             eps.add(TrackNormalizer.allowRetry(ep))
         }
+    }
+
+    /**
+     * 带登录态的请求头。
+     *
+     * 【2026-11-27 P0 破局】以前整个类都用 `OpenRoutes.desktopHeaders()`，**不带 Cookie** ——
+     * 于是 mobwsa 永远是匿名视角：会员集的 playUrl64 全是空串，
+     * 而我们已经知道服务器认可登录态（baseInfo 返回 isAuth=true）。
+     * 把 Cookie 带上之后，mobwsa 很可能直接给会员集的直链 —— 这是最省事的一条路。
+     */
+    private suspend fun headersWithCookie(): Map<String, String> {
+        val base = OpenRoutes.desktopHeaders()
+        val c = cookieProvider.cookie() ?: return base
+        return base + mapOf("Cookie" to c)
     }
 
     /** 翻页专用：起始间隔仍是 1 秒，但允许 3 个在飞（大书详情从 80 秒降到 ~40 秒） */

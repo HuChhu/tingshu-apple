@@ -253,13 +253,20 @@ class XimalayaOpenSource(
     override fun audioExtractor(): com.local.audiobook.core.AudioExtractor =
         object : com.local.audiobook.core.AudioExtractor {
             override suspend fun extract(url: String, timeoutMs: Int): ExtractedAudio {
-                // 【2026-11-25】纯数字输入 = trackId。VIP 集的 playUrl64 在 mobwsa 里是空串，
-                // 只有客户端通道 mobile/v1/track/baseInfo 能换到 redirect 链（免费集匿名也能拿到）。
-                // 所以这里不再直接判「不是直链」失败，而是先当 trackId 去问一次。
+                // 【2026-11-27】三条输入形态都要能换到地址：
+                //   ① 纯数字         = trackId（VIP 集的 playUrl64 在 mobwsa 里是空串，只留了 id）
+                //   ② 喜马拉雅网页   = https://www.ximalaya.com/sound/{id}，从路径里抠 trackId
+                //   ③ 其它直链       = 原样校验后返回
+                // 以前 ② 会被 requirePlayable 拦下抛「只给了网页地址」——
+                // 但那本来就是我们自己塞进去的占位地址，不是上游给的坏数据。
                 if (!url.startsWith("http")) {
                     val id = url.trim().toLongOrNull()
                         ?: throw SourceErrors.ParseFailed("不是直链：" + url)
                     return clientExtractor().extract(id.toString(), timeoutMs)
+                }
+                val pageTrack = XimalayaLinkParser.parse(url).trackId
+                if (pageTrack != null && pageTrack > 0L) {
+                    return clientExtractor().extract(pageTrack.toString(), timeoutMs)
                 }
                 // 【P0 2026-11-24】这里原来是把输入原样返回，于是
                 // https://www.ximalaya.com/sound/{trackId}（专辑详情阶段 TrackNormalizer 给出的**网页**地址）

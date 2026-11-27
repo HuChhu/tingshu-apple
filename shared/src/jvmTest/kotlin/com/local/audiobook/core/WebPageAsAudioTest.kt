@@ -78,9 +78,16 @@ class WebPageAsAudioTest {
 
     // ---------- 2. 提取器出口 ----------
 
-    /** XimalayaOpenSource 曾经把输入原样返回 —— 这条是那次事故的直接回归 */
+    /**
+     * XimalayaOpenSource 曾经把输入原样返回 —— 这条是那次事故的直接回归。
+     *
+     * 【2026-11-27 语义更新】现在输入喜马网页时，提取器既不「原样返回」也不直接报错，
+     * 而是从路径里抠出 trackId 去走客户端通道换真实地址（那才是能播的东西）。
+     * 所以断言从「必须抛 ParseFailed」改成「**绝不把网页地址当音频返回**」：
+     * 要么抛 SourceErrors，要么返回一个不等于输入的、能过出口闸的地址。
+     */
     @Test
-    fun ximalayaOpenExtractorRejectsWebPage() = runBlocking {
+    fun ximalayaOpenExtractorNeverReturnsWebPageAsAudio() = runBlocking {
         val pageUrl = "https://www.ximalaya.com/sound/1011694179"
         val fetcher = object : JsonFetcher {
             override suspend fun get(url: String, headers: Map<String, String>) =
@@ -90,12 +97,18 @@ class WebPageAsAudioTest {
             fetcher = fetcher,
             throttle = RequestThrottle(minIntervalMs = 0L, clock = { 0L }),
         )
-        val err = assertFailsWith<SourceErrors.ParseFailed>("网页地址必须被挡在出口") {
-            src.audioExtractor().extract(pageUrl, 5_000)
-        }
-        assertTrue(
-            err.reason.contains("网页地址") || err.reason.contains("音频直链"),
-            "错误文案要能看懂，实际=" + err.reason
+        val got = runCatching { src.audioExtractor().extract(pageUrl, 5_000) }
+        got.fold(
+            { ok ->
+                assertTrue(ok.url != pageUrl, "绝不允许把输入的网页地址原样当音频返回：" + ok.url)
+                assertTrue(
+                    com.local.audiobook.core.engine.AudioUrlHeaders.isPlayableAudioOrRelay(ok.url),
+                    "返回的地址必须过出口闸：" + ok.url
+                )
+            },
+            { err ->
+                assertTrue(err is SourceErrors, "失败必须是 SourceErrors（K/N 桥才不会崩），实际=" + err::class.simpleName)
+            }
         )
     }
 

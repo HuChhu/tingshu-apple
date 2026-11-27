@@ -179,16 +179,32 @@ enum SharedBridge {
     /// 这两种都拿去给 extract() 就会被判「不是直链」。这里拿 trackId 反向补真直链：
     /// 先用免登录源的 track 接口换一次 playUrl，换不到再让 Player 走 WebView 嗅探。
 
-    /// 视作「需要重新解析」的地址：网页详情页，不是媒体文件
+    /// 视作「需要重新解析」的地址：网页详情页，不是媒体文件。
+    ///
+    /// 【2026-11-27 P0 真机复现】原来的实现是「只要是 ximalaya.com 就判网页」，
+    /// 于是客户端通道返回的 `http://mobile.ximalaya.com/mobile/redirect/free/play/{id}/1`
+    /// 被判成网页，Player 的第二道闸直接拒播，报「源站只给了网页地址」——
+    /// 而那个地址 302 之后就是 audiopay CDN 的 .m4a，是真正的音频。
+    ///
+    /// 现在改成**正向判定页面路径**（/sound/ /album/ /track/ /show/），而不是「是这个域就算页面」。
+    /// 另外把中转型路径（/redirect /play/ /stream/ /get-source/）显式放行。
     static func looksLikeWebPage(_ url: String) -> Bool {
         guard url.hasPrefix("http") else { return false }
         let l = url.lowercased()
-        if l.contains("/sound/") || l.contains("/album/") || l.contains("/track/") { return true }
-        let media = [".mp3", ".m4a", ".aac", ".m4b", ".flac", ".wav", ".ogg"]
+        // 中转型直链：无扩展名但 302 到音频，必须先放行（否则蜻蜓/酷我/喜马 redirect 全挂）
+        let relayMarks = ["/redirect", "/play/", "/stream/", "/get-source/", "/meting/",
+                          "/audiostream/", "/program/get-source/"]
+        if relayMarks.contains(where: { l.contains($0) }) { return false }
+        // 音频扩展名：直接判音频
+        let media = [".mp3", ".m4a", ".m4s", ".m4b", ".aac", ".flac", ".wav", ".ogg", ".opus"]
         if media.contains(where: { l.contains($0) }) { return false }
-        return l.contains("ximalaya.com")
+        // 只有这些**页面路径**才是网页
+        let pagePaths = ["/sound/", "/album/", "/track/", "/show/", "/xiangqing/", "/zhubo/"]
+        if pagePaths.contains(where: { l.contains($0) }) { return true }
+        // 其余 http 地址一律不当网页：宁可让 AVPlayer 去试，也别把真音频拦掉。
+        // （真错了会得到 -12847，那时再针对性加规则，而不是提前一刀切。）
+        return false
     }
-
     /// 曲目列表转换（供壳内视图调用，避免视图层直接 import shared）
     static func rows(from detail: BookDetail) -> [EpisodeRow] {
         (detail.episodes as? [Episode])?.map(row(from:)) ?? []

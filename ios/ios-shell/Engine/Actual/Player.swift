@@ -891,6 +891,27 @@ final class Player: NSObject, ObservableObject {
         }
     }
 
+    /// 面板里要显示的当前跳过设置（专辑值或全局值，取决于 useGlobalSkip）
+    var currentSkip: (intro: Int, outro: Int) {
+        (effectivePlayback.skipIntroSec, effectivePlayback.skipOutroSec)
+    }
+
+    /// 当前是否用全局跳过
+    var isUseGlobalSkip: Bool { LocalStore.loadPlayPrefs().useGlobalSkip }
+
+    /// 保存播放设置面板的结果。
+    /// - useGlobal=true：写全局默认，之后所有书都按这个来
+    /// - useGlobal=false：只写当前这本书（摸鱼听书同款逻辑）
+    func saveSkipSettings(intro: Int, outro: Int, useGlobal: Bool) {
+        LocalStore.setUseGlobalSkip(useGlobal)
+        if useGlobal {
+            LocalStore.setGlobalSkip(intro: intro, outro: outro)
+        } else {
+            setSkip(intro: intro, outro: outro)
+        }
+        objectWillChange.send()
+    }
+
     /// 倒序播放
     func setReverseOrder(_ on: Bool) {
         persistPlayback { $0.reverseOrder = on }
@@ -983,13 +1004,20 @@ final class Player: NSObject, ObservableObject {
             var audio = first.audio
             var addressReason = first.reason
 
-            // 引擎拿不到：三种兜底依次试，任何一条成功就能播
+            // 【2026-11-28 提速】引擎已经明确说「要会员 / 上游没给地址」时，
+            // ① ② 两条注定失败（它们打的是同一条 baseInfo 通道），直接跳去网页兜底，
+            // 省掉两次网络往返 —— 这条路径每次能快 3~5 秒。
+            let memberLike = (first.reason ?? "").contains("会员")
+                || (first.reason ?? "").contains("上游没给")
+                || (first.reason ?? "").contains("需要登录")
+
+            // 引擎拿不到：兜底依次试，任何一条成功就能播
             // ① 登录版引擎按 trackId 直取（Cookie 已注入时通常最快）
-            if audio == nil, ep.trackId > 0 {
+            if audio == nil, ep.trackId > 0, !memberLike {
                 audio = await SharedBridge.extract(url: String(ep.trackId))
             }
             // ② 换免登录源再试一次（登录版被风控时这条常能过）
-            if audio == nil, src != "ximalaya-open" {
+            if audio == nil, src != "ximalaya-open", !memberLike {
                 let second = await SharedBridge.audioEx(sourceId: "ximalaya-open", url: input)
                 audio = second.audio
                 if let r = second.reason { addressReason = r }
@@ -1009,7 +1037,7 @@ final class Player: NSObject, ObservableObject {
             if audio == nil, ep.trackId > 0, src.hasPrefix("ximalaya") {
                 let page = "https://www.ximalaya.com/sound/\(ep.trackId)"
                 CrashLog.write("PLAY", "webview fallback for vip track=\(ep.trackId)")
-                if let sniffed = await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: 30_000) {
+                if let sniffed = await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: 18_000) {
                     audio = SharedBridge.makeAudio(url: sniffed)
                     if audio != nil { addressReason = nil }
                     CrashLog.write("PLAY", "webview got url=\(sniffed.prefix(90))")

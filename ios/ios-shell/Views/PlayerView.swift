@@ -12,10 +12,14 @@ struct PlayerView: View {
     @State private var sleepChapters = 3
     @State private var speedDraft = 1.0
     @State private var volumeDraft = 0.0
+    // 播放设置（跳过片头片尾）
+    @State private var skipIntroDraft = 0
+    @State private var skipOutroDraft = 0
+    @State private var skipUseGlobal = true
     @State private var isFavorite = false
 
     private enum PlayerSheet: Identifiable {
-        case chapters, sleep, speed, volume, sources, login
+        case chapters, sleep, speed, volume, sources, login, setup
         var id: Int {
             switch self {
             case .chapters: return 0
@@ -283,6 +287,13 @@ struct PlayerView: View {
                 speedDraft = player.currentSpeed
                 activeSheet = .speed
             }
+            utilityButton(icon: "gearshape", title: "设置", label: "播放设置：跳过片头片尾") {
+                let cur = player.currentSkip
+                skipIntroDraft = cur.intro
+                skipOutroDraft = cur.outro
+                skipUseGlobal = player.isUseGlobalSkip
+                activeSheet = .setup
+            }
             utilityButton(icon: "speaker.wave.2", title: "音量", label: "音量增强减弱") {
                 volumeDraft = player.currentVolumeGainDb
                 activeSheet = .volume
@@ -401,6 +412,8 @@ struct PlayerView: View {
             speedSheet
         case .volume:
             volumeSheet
+        case .setup:
+            setupSheet
         case .sources:
             sourceSwitcher
         case .login:
@@ -637,6 +650,87 @@ struct PlayerView: View {
             stepButton(icon: "plus", label: "提高倍速") {
                 speedDraft = min(3.0, speedDraft + 0.05)
             }
+        }
+    }
+
+    /// 播放设置：跳过片头 / 跳尾 + 倒序（对标摸鱼听书的「播放设置」面板）
+    private var setupSheet: some View {
+        SheetContainer {
+            HStack {
+                SheetTitle(icon: "gearshape.fill", title: "播放设置")
+                Spacer()
+                Button("清空数值") {
+                    skipIntroDraft = 0
+                    skipOutroDraft = 0
+                }
+                .font(.subheadline)
+                .frame(minHeight: 44)
+                .accessibilityLabel("清空数值")
+            }
+
+            // 全局开关
+            Toggle(isOn: $skipUseGlobal) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("应用全局跳过")
+                    Text("使用本专辑专属配置").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .tint(.blue)
+            .accessibilityLabel("应用全局跳过")
+
+            // 倒序播放（和章节面板里的开关同一个状态）
+            Toggle(isOn: Binding(get: { player.isReverseOrder },
+                                set: { player.setReverseOrder($0) })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("倒序播放")
+                    Text("下一章/上一章互换").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .tint(.blue)
+            .accessibilityLabel("倒序播放")
+
+            skipRow(title: "单本跳过片头（秒）", icon: "forward.end", value: $skipIntroDraft)
+            skipRow(title: "单本跳过片尾（秒）", icon: "backward.end", value: $skipOutroDraft)
+
+            Text("跳过片头：起播后自动跳到第 N 秒；跳过片尾：剩下 N 秒时直接进下一集。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                Button("取消") { activeSheet = nil }
+                    .buttonStyle(SheetSecondaryButtonStyle())
+                Button("保存配置") {
+                    player.saveSkipSettings(intro: skipIntroDraft,
+                                            outro: skipOutroDraft,
+                                            useGlobal: skipUseGlobal)
+                    activeSheet = nil
+                }
+                .buttonStyle(SheetPrimaryButtonStyle())
+            }
+        }
+    }
+
+    /// 一行「减 数值 加」，步进 5 秒，上限 600 秒（10 分钟，够长音频用）
+    private func skipRow(title: String, icon: String, value: Binding<Int>) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title, systemImage: icon)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack {
+                stepButton(icon: "minus", label: "减少 5 秒") {
+                    value.wrappedValue = max(0, value.wrappedValue - 5)
+                }
+                Text("\(value.wrappedValue)")
+                    .font(.title3.monospacedDigit().weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel("\(value.wrappedValue) 秒")
+                stepButton(icon: "plus", label: "增加 5 秒") {
+                    value.wrappedValue = min(600, value.wrappedValue + 5)
+                }
+            }
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
         }
     }
 

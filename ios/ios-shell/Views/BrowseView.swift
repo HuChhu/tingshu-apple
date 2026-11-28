@@ -272,7 +272,7 @@ struct BookRow: View {
             AlbumView(card: card, sourceId: sourceId)
         } label: {
             HStack(spacing: 12) {
-                AsyncImage(url: Layout.coverURL(card.coverUrl)) { img in
+                AsyncImage(url: Layout.coverURL(card.coverUrl), transaction: Transaction(animation: .easeOut(duration: 0.16))) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     RoundedRectangle(cornerRadius: Layout.radiusThumb)

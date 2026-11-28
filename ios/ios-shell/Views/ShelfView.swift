@@ -209,7 +209,7 @@ struct ShelfView: View {
     }
 
     private func cover(_ url: String, w: CGFloat, h: CGFloat) -> some View {
-        AsyncImage(url: Layout.coverURL(url)) { img in
+        AsyncImage(url: Layout.coverURL(url), transaction: Transaction(animation: .easeOut(duration: 0.16))) { img in
             img.resizable().scaledToFill()
         } placeholder: {
             RoundedRectangle(cornerRadius: Layout.radiusThumb).fill(Layout.cardFill)
@@ -534,7 +534,7 @@ struct AlbumView: View {
         VStack(alignment: .leading, spacing: 12) {
             // 封面 + 标题 + 主播
             HStack(alignment: .top, spacing: 14) {
-                AsyncImage(url: Layout.coverURL(shown.coverUrl)) { img in
+                AsyncImage(url: Layout.coverURL(shown.coverUrl), transaction: Transaction(animation: .easeOut(duration: 0.16))) { img in
                     img.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     RoundedRectangle(cornerRadius: Layout.radiusImage)

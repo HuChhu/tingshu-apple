@@ -510,6 +510,20 @@ enum LocalStore {
         return p
     }
 
+    /// 跳过片头/片尾是否走全局（true=用全局默认值，false=用本专辑专属配置）
+    static func setUseGlobalSkip(_ on: Bool) {
+        var p = loadPlayPrefs()
+        p.useGlobalSkip = on
+        savePlayPrefs(p)
+    }
+
+    /// 写全局跳过秒数（面板里勾了「应用全局跳过」时生效）
+    static func setGlobalSkip(intro: Int, outro: Int) {
+        var p = loadPlayPrefs()
+        p.defaultSkipIntroSec = max(0, min(600, intro))
+        p.defaultSkipOutroSec = max(0, min(600, outro))
+        savePlayPrefs(p)
+    }
     static func savePlayPrefs(_ p: PlayPrefs) {
         if let data = try? encoder.encode(p) {
             UserDefaults.standard.set(data, forKey: playPrefsKey)

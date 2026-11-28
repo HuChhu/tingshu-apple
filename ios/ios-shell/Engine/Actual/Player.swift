@@ -1027,6 +1027,68 @@ final class Player: NSObject, ObservableObject {
         defer { sniffSlots -= 1 }
         return await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: timeoutMs)
     }
+
+    /// 把「接下来几集、在轮到它们之前会不够用的地址」依次重解析进缓存。
+    ///
+    /// 【2026-11-28 重写】上一版这里三个错叠在一起，等于预取从来没跑过：
+    ///   ① 入口在 startItem 里，那时 state 还是 .loading，`guard state == .playing` 直接返回；
+    ///   ② 三集同时起 Task 去抢单例 WebViewSniffer，后两个立刻 busy；
+    ///   ③ 有效期 8 分钟 < 一集 13 分钟，备好了也会在用之前过期。
+    /// 现在：起播时 + 真正开始播放时各触发一次；串行；按「轮到它之前够不够用」决定要不要重解析
+    /// （否则第 2 集的地址存进去时还有效、轮到它时刚好过期 1 分钟，第二次连播必失败）。
+    ///
+    /// 只对喜马拉雅源做：别的源引擎当场就能给直链，不需要提前备。
+    private func prefetchUpcoming(count: Int) {
+        guard !prefetchInFlight, let cur = current else { return }
+        let src = currentSourceId
+        guard src.hasPrefix("ximalaya") else { return }
+        // 「轮到它」大概还有多久：本集剩余 + 前面那几集的时长。在那之前就会过期的，重解析。
+        let dur = queue.currentItem?.duration.seconds ?? 0
+        let pos = queue.currentTime().seconds
+        let remaining = (dur.isFinite && dur > pos) ? dur - pos : 0
+        let epLen = (dur.isFinite && dur > 0) ? dur : 780
+        let now = Date()
+        var neededIn = max(0, remaining)
+        var todo: [SharedBridge.EpisodeRow] = []
+        var cursor = cur
+        for _ in 0..<max(1, count) {
+            guard let n = nextEpisode(after: cursor, forward: !effectivePlayback.reverseOrder) else { break }
+            cursor = n
+            if n.trackId > 0 {
+                let left = resolvedURLs[n.trackId].map { $0.expires.timeIntervalSince(now) } ?? -1
+                if left < neededIn + 120 { todo.append(n) }
+            }
+            neededIn += epLen
+        }
+        guard !todo.isEmpty else { return }
+        prefetchInFlight = true
+        Task { @MainActor in
+            defer { prefetchInFlight = false }
+            for ep in todo {
+                // 旧地址先留着，取到新的才替换
+                if let u = await resolveAddress(ep, src: src) { storeURL(u, for: ep.trackId) }
+            }
+        }
+    }
+
+    /// 临结束前把下一集的地址刷新一遍（开头备的，到结尾可能已经不新鲜）。
+    /// 旧地址先留着，新地址取到了才替换 —— 取不到也不会把还能用的那条弄丢。
+    /// 不和预取同时跑（二者都要用单例嗅探器）。
+    private func refreshNextIfStale() {
+        guard !prefetchInFlight, let cur = current, jitRefreshedTrack != cur.trackId else { return }
+        jitRefreshedTrack = cur.trackId
+        guard let n = nextEpisode(after: cur, forward: !effectivePlayback.reverseOrder),
+              n.trackId > 0 else { return }
+        // 4 分钟内刚解析过的不折腾
+        if let e = resolvedURLs[n.trackId], Date().timeIntervalSince(e.storedAt) < 240 { return }
+        let src = currentSourceId
+        prefetchInFlight = true
+        Task { @MainActor in
+            defer { prefetchInFlight = false }
+            if let u = await resolveAddress(n, src: src) { storeURL(u, for: n.trackId) }
+        }
+    }
+
     /// 解析一集的地址（不写缓存，由调用方决定存不存）：引擎优先，喜马会员集再走网页兜底。
     /// 预取**不申请**后台任务：那份时间留给真正要播的那一集的取地址，别被预取花掉。
     private func resolveAddress(_ ep: SharedBridge.EpisodeRow, src: String) async -> String? {

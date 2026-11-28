@@ -924,13 +924,27 @@ final class Player: NSObject, ObservableObject {
     /// 补章节时的取消令牌（换书要能中止）
     private var episodesCancel: SharedBridge.CancelFlag?
 
-    /// 已解析出来的播放地址缓存：trackId → (url, 过期时间)。
+    /// 已解析出来的播放地址缓存：trackId → (url, 存入时间, 过期时间)。
     ///
-    /// 为什么必须有它：会员集的地址要靠网页兜底去换，而网页兜底在 App 进后台后会被系统挂起。
-    /// 有了缓存，前台预取过的下一集在后台也能直接播 —— 这是「后台能连播」的关键。
-    /// 有效期给 8 分钟：redirect 链的 buy_key/sign 有时效，放久了会 403。
-    private var resolvedURLs: [Int64: (url: String, expires: Date)] = [:]
-    private static let resolvedTTL: TimeInterval = 8 * 60
+    /// 会员集的地址要靠网页兜底去换。把接下来几集提前备好，切到下一集时就不必现取。
+    private var resolvedURLs: [Int64: (url: String, storedAt: Date, expires: Date)] = [:]
+    /// 有一轮预取在跑。**必须串行**：WebViewSniffer 是单例，并发时第二次直接 busy。
+    private var prefetchInFlight = false
+    /// 后台切集没取到地址时挂起的那一集：回到前台自动接着播，而不是报「需要会员」。
+    private var pendingAutoResume: SharedBridge.EpisodeRow?
+    /// 本集是否已经做过「临结束刷新下一集」
+    private var jitRefreshedTrack: Int64 = -1
+
+    /// 一个地址能放心用多久。
+    ///
+    /// 【2026-11-28 修正】原来写死 8 分钟 —— 而一集 13 分钟：第 N 集开头备好的 N+1，
+    /// 到真正要用时已经过期 5 分钟，缓存永远在要用它的时候失效。
+    /// 实测带签名的链（sign= / buy_key=，duration=1800）有效期 30 分钟，这里留 5 分钟余量；
+    /// 不带签名的（free 跳转口、普通直链）本身不带时效，给 6 小时。
+    static func urlValidity(_ url: String) -> TimeInterval {
+        let signed = url.contains("sign=") || url.contains("buy_key=")
+        return signed ? 25 * 60 : 6 * 3600
+    }
 
     private func cachedURL(for trackId: Int64) -> String? {
         guard let e = resolvedURLs[trackId] else { return nil }
@@ -940,10 +954,11 @@ final class Player: NSObject, ObservableObject {
 
     private func storeURL(_ url: String, for trackId: Int64) {
         guard trackId > 0, url.hasPrefix("http") else { return }
-        resolvedURLs[trackId] = (url, Date().addingTimeInterval(Self.resolvedTTL))
-        // 简单上限：超 40 条丢最早的一半，避免长播几小时无限涨
-        if resolvedURLs.count > 40 {
-            let keep = resolvedURLs.sorted { $0.value.expires > $1.value.expires }.prefix(20)
+        let now = Date()
+        resolvedURLs[trackId] = (url, now, now.addingTimeInterval(Self.urlValidity(url)))
+        // 简单上限：超 60 条丢最早的，避免长播几小时无限涨
+        if resolvedURLs.count > 60 {
+            let keep = resolvedURLs.sorted { $0.value.expires > $1.value.expires }.prefix(30)
             resolvedURLs = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
         }
     }
@@ -966,47 +981,72 @@ final class Player: NSObject, ObservableObject {
         UIApplication.shared.endBackgroundTask(id)
     }
 
-    /// 前台预取「下一集」的地址，让后台连播命中缓存。
-    /// 只在正在播放、且没有缓存时才发，避免白耗流量。
-    private func prefetchNextIfNeeded() {
-        guard state == .playing, let cur = current else { return }
+    /// 把「接下来还没备好地址的几集」依次解析进缓存。
+    ///
+    /// 【2026-11-28 重写】上一版这里三个错叠在一起，等于预取从来没跑过：
+    ///   ① 入口在 startItem 里，那时 state 还是 .loading，`guard state == .playing` 直接返回；
+    ///   ② 三集同时起 Task 去抢单例 WebViewSniffer，后两个立刻 busy；
+    ///   ③ 有效期 8 分钟 < 一集 13 分钟，备好了也会在用之前过期。
+    /// 现在改成：由「真正开始播放」触发、串行解析、有效期按地址形态算。
+    private func prefetchUpcoming(count: Int) {
+        guard !prefetchInFlight, let cur = current else { return }
         let src = currentSourceId
-        // 【2026-11-28】后台连播失败的根因：只预取 1 集，而且预取要在前台完成。
-        // 用户锁屏/切后台后网页兜底会被系统挂起，没预取到就必然失败。
-        // 改成一次预取接下来 3 集，给后台留出缓冲。
+        var todo: [SharedBridge.EpisodeRow] = []
         var cursor = cur
-        for _ in 0..<3 {
-            guard let next = nextEpisode(after: cursor, forward: !effectivePlayback.reverseOrder) else { return }
-            cursor = next
-            guard next.trackId > 0, cachedURL(for: next.trackId) == nil else { continue }
-            prefetchOne(next, src: src)
+        for _ in 0..<max(1, count) {
+            guard let n = nextEpisode(after: cursor, forward: !effectivePlayback.reverseOrder) else { break }
+            cursor = n
+            if n.trackId > 0, cachedURL(for: n.trackId) == nil { todo.append(n) }
+        }
+        guard !todo.isEmpty else { return }
+        prefetchInFlight = true
+        Task { @MainActor in
+            defer { prefetchInFlight = false }
+            for ep in todo {
+                if let u = await resolveAddress(ep, src: src) { storeURL(u, for: ep.trackId) }
+            }
         }
     }
 
-    private func prefetchOne(_ next: SharedBridge.EpisodeRow, src: String) {
+    /// 临结束前把下一集的地址刷新一遍（开头备的，到结尾可能已经不新鲜）。
+    /// 旧地址先留着，新地址取到了才替换 —— 取不到也不会把还能用的那条弄丢。
+    private func refreshNextIfStale() {
+        guard let cur = current, jitRefreshedTrack != cur.trackId else { return }
+        jitRefreshedTrack = cur.trackId
+        guard let n = nextEpisode(after: cur, forward: !effectivePlayback.reverseOrder),
+              n.trackId > 0 else { return }
+        // 4 分钟内刚解析过的不折腾
+        if let e = resolvedURLs[n.trackId], Date().timeIntervalSince(e.storedAt) < 240 { return }
+        let src = currentSourceId
+        prefetchInFlight = true
         Task { @MainActor in
-            let bg = beginResolveTask()
-            defer { endResolveTask(bg) }
-            var input = next.url
-            if SharedBridge.looksLikeWebPage(input), next.trackId > 0 {
-                input = "https://www.ximalaya.com/sound/\(next.trackId)"
-            }
-            if input.isEmpty { input = String(next.trackId) }
-            let r = await SharedBridge.audioEx(sourceId: src, url: input)
-            if let a = r.audio {
-                storeURL(a.url, for: next.trackId)
-                CrashLog.write("PLAY", "prefetch ok track=\(next.trackId)")
-                return
-            }
-            // 会员集：走网页兜底（前台才有把握成功）
-            if next.trackId > 0, src.hasPrefix("ximalaya") {
-                let page = "https://www.ximalaya.com/sound/\(next.trackId)"
-                if let sniffed = await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: 15_000) {
-                    storeURL(sniffed, for: next.trackId)
-                    CrashLog.write("PLAY", "prefetch web ok track=\(next.trackId)")
-                }
-            }
+            defer { prefetchInFlight = false }
+            if let u = await resolveAddress(n, src: src) { storeURL(u, for: n.trackId) }
         }
+    }
+
+    /// 解析一集的地址（不写缓存，由调用方决定存不存）：引擎优先，喜马会员集再走网页兜底。
+    private func resolveAddress(_ ep: SharedBridge.EpisodeRow, src: String) async -> String? {
+        let bg = beginResolveTask()
+        defer { endResolveTask(bg) }
+        var input = ep.url
+        if SharedBridge.looksLikeWebPage(input), ep.trackId > 0 {
+            input = "https://www.ximalaya.com/sound/\(ep.trackId)"
+        }
+        if input.isEmpty { input = String(ep.trackId) }
+        let r = await SharedBridge.audioEx(sourceId: src, url: input)
+        if let a = r.audio {
+            CrashLog.write("PLAY", "prefetch engine ok track=\(ep.trackId)")
+            return a.url
+        }
+        guard ep.trackId > 0, src.hasPrefix("ximalaya") else { return nil }
+        let page = "https://www.ximalaya.com/sound/\(ep.trackId)"
+        if let sniffed = await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: 12_000) {
+            CrashLog.write("PLAY", "prefetch web ok track=\(ep.trackId) signed=\(Self.urlValidity(sniffed) < 3600)")
+            return sniffed
+        }
+        CrashLog.write("PLAY", "prefetch web miss track=\(ep.trackId) active=\(UIApplication.shared.applicationState == .active)")
+        return nil
     }
 
     /// 面板里要显示的当前跳过设置（专辑值或全局值，取决于 useGlobalSkip）
@@ -1079,6 +1119,7 @@ final class Player: NSObject, ObservableObject {
         // 现在开始的是新一次播放：是不是连播由调用方（advanceAfterEnding）标记，默认不是。
         autoAdvancing = isAutoAdvancePending
         isAutoAdvancePending = false
+        if !autoAdvancing { pendingAutoResume = nil }   // 手动点了别的集，之前挂起的那集不再自动续播
         currentSourceId = sourceId
         // 关键：把整本集列表存进 currentEpisodes，否则自动连播/倒序永远拿不到"下一集"
         // nil 也要清空：否则首页续播（不传 episodes）会沿用上一本书的列表，
@@ -1208,6 +1249,21 @@ final class Player: NSObject, ObservableObject {
                 self.requestingEpisode = false
                 // P0-3：显示真实原因（登录失效/网络异常/触发限流），不再一律「取不到」
                 let reason = addressReason ?? SharedBridge.lastAudioError ?? Player.fallbackAddressReason(src)
+                // 【2026-11-28】自动连播时在**后台**没取到地址：不报错，先挂起，
+                // 回到前台自动接着播这一集。对会员用户来说，旧的报错文案（「需要会员」）本身就是错的 ——
+                // 他就是会员，只是这一刻在后台取不到。这也把「后台到底行不行」变成可观察的事实：
+                // 行，就直接播了；不行，也能自己恢复，而不是停在一句误导人的话上。
+                if self.autoAdvancing, UIApplication.shared.applicationState != .active {
+                    self.autoAdvancing = false
+                    self.pendingAutoResume = ep
+                    self.pause()
+                    self.setNowPlayingTitle("第\(ep.index)集：\(ep.title)")
+                    self.stageHint = .idle
+                    self.errorText = "第\(ep.index)集在后台没能加载，回到 App 会自动继续播放"
+                    self.updateNowPlayingInfo()
+                    CrashLog.write("PLAY", "auto-advance blocked in background, will resume on foreground track=\(ep.trackId) reason=\(reason.prefix(80))")
+                    return
+                }
                 // 【2026-11-26】自动连播走到「需要会员」的集时，这是**正常的产品边界**，不是故障：
                 // 该停下来说清楚，而不是把整个播放页打成错误态（那档次低一档，用户以为坏了）。
                 if self.autoAdvancing, reason.contains("会员") || reason.contains("登录") {
@@ -1382,8 +1438,7 @@ final class Player: NSObject, ObservableObject {
         if sleepDeadline == nil, sleepChaptersLeft <= 0 { restoreSleepTimerIfNeeded() }
         requestingEpisode = false
         BackgroundSession.activateForPlayback()
-        // 前台预取下一集地址，给后台连播铺路
-        prefetchNextIfNeeded()
+        // （预取不在这里触发：此刻 state 还是 .loading。改在「真正开始播放」那一处触发。）
 
         // 缓存优先：已缓存的集直接播本地文件（离线可用）。
         // 本地文件同样要挂 status 观察 —— 以前走 startItemWithLocalFile 时状态停在 .playing，
@@ -1584,17 +1639,11 @@ final class Player: NSObject, ObservableObject {
             updateNowPlayingInfo()
             return
         }
-        // 【2026-11-26】playable 现在对「带 trackId 但没有直链」的集也放行（要让 extractor 有机会换地址），
-        // 所以不能再只靠 playable 判断「这一集是不是要会员」。带 hint 的集就是有明确原因的 ——
-        // 自动连播到这种集时不要硬试（会白等一次网络往返再弹错），直接停下说清楚。
-        if !next.hint.isEmpty && next.url.isEmpty {
-            CrashLog.write("PLAY", "auto stop at locked track=\(next.trackId)")
-            setNowPlayingTitle("第\(next.index)集：\(next.title)")
-            pause()
-            failAddress("本专辑第 \(next.index) 集起需要会员。\(next.hint)")
-            updateNowPlayingInfo()
-            return
-        }
+        // 【2026-11-28 删除】这里曾有一道「凭 hint 提前判死」的闸：next.hint 非空且 url 为空就
+        // 直接停，连试都不试，报「本专辑第 N 集起需要会员」。
+        // 但 hint 来自曲目列表，那一层根本不知道当前账号是不是会员：会员用户每一集都是这个形状，
+        // 于是「后台连播一直失败」—— 其实前台自然结束也过不去，只有手动点下一集才行。
+        // 地址到底拿不拿得到，只有真去取了才知道：交给 playEpisode（缓存 → 引擎 → 网页兜底）。
         guard next.playable else {
             let first = firstSkipped ?? next
             CrashLog.write("PLAY", "auto skip unplayable track=\(next.trackId) skipped=\(skipped + 1)")
@@ -1805,6 +1854,9 @@ final class Player: NSObject, ObservableObject {
                 // .playing 也走一次：beginPlayback 是乐观置 playing 的，这里确认后才刷锁屏时长
                 if state == .loading { apply(.playing) }
                 updateNowPlayingInfo()
+                // 【2026-11-28】到这一步才是真的在播。预取接下来 3 集的地址必须在这里触发 ——
+                // 之前放在 startItem 里，那时 state 还是 .loading，guard 直接返回，预取从没跑过。
+                prefetchUpcoming(count: 3)
             }
         case .failed:
             // 先判取消：换台/清队列时系统会对被摘掉的 item 补一次 .failed(-999)，
@@ -2065,6 +2117,8 @@ final class Player: NSObject, ObservableObject {
             Task { @MainActor in
                 guard let self, self.isLive else { return }
                 self.saveProgress(force: true)     // 进后台：系统随时可能挂起，先落地
+                // 【2026-11-28】趁系统还给宽限时间，把接下来几集的地址备好（已有就跳过）。
+                self.prefetchUpcoming(count: 3)
             }
         }
         n.addObserver(
@@ -2085,6 +2139,18 @@ final class Player: NSObject, ObservableObject {
                 if self.state == .playing || self.state == .paused {
                     BackgroundSession.activateForPlayback(force: true)
                     if self.state == .playing { self.queue.play() }
+                }
+                // 【2026-11-28】后台切集没取到地址而挂起的那一集：回前台自动接着播。
+                if let p = self.pendingAutoResume {
+                    self.pendingAutoResume = nil
+                    self.errorText = nil
+                    CrashLog.write("PLAY", "resume pending episode on foreground track=\(p.trackId)")
+                    self.isAutoAdvancePending = true
+                    self.playEpisode(p, book: self.currentBook, sourceId: self.currentSourceId,
+                                     episodes: self.currentEpisodes)
+                } else {
+                    // 没有挂起的也顺手把接下来几集的地址刷新一遍（后台做不了网页兜底，前台可以）
+                    self.prefetchUpcoming(count: 3)
                 }
             }
         }
@@ -2223,6 +2289,8 @@ final class Player: NSObject, ObservableObject {
                 if d.isNumeric, d.seconds > 0 {
                     self.position = min(1.0, max(0, t.seconds / d.seconds))
                     self.elapsedText = self.fmt(Int64(t.seconds * 1000))
+                    // 快结束时把下一集的地址刷新一遍：开头备的可能已经不新鲜
+                    if d.seconds - t.seconds <= 120 { self.refreshNextIfStale() }
                     // 跳过片尾：到达「总长 - skipOutro」就主动结束本集
                     let outro = Double(self.effectivePlayback.skipOutroSec)
                     if outro > 0, d.seconds - t.seconds <= outro, d.seconds - t.seconds > 0 {

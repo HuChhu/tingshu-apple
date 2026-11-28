@@ -891,6 +891,82 @@ final class Player: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - 地址缓存与后台取地址（2026-11-28）
+
+    /// 已解析出来的播放地址缓存：trackId → (url, 过期时间)。
+    ///
+    /// 为什么必须有它：会员集的地址要靠网页兜底去换，而网页兜底在 App 进后台后会被系统挂起。
+    /// 有了缓存，前台预取过的下一集在后台也能直接播 —— 这是「后台能连播」的关键。
+    /// 有效期给 8 分钟：redirect 链的 buy_key/sign 有时效，放久了会 403。
+    private var resolvedURLs: [Int64: (url: String, expires: Date)] = [:]
+    private static let resolvedTTL: TimeInterval = 8 * 60
+
+    private func cachedURL(for trackId: Int64) -> String? {
+        guard let e = resolvedURLs[trackId] else { return nil }
+        if e.expires < Date() { resolvedURLs.removeValue(forKey: trackId); return nil }
+        return e.url
+    }
+
+    private func storeURL(_ url: String, for trackId: Int64) {
+        guard trackId > 0, url.hasPrefix("http") else { return }
+        resolvedURLs[trackId] = (url, Date().addingTimeInterval(Self.resolvedTTL))
+        // 简单上限：超 40 条丢最早的一半，避免长播几小时无限涨
+        if resolvedURLs.count > 40 {
+            let keep = resolvedURLs.sorted { $0.value.expires > $1.value.expires }.prefix(20)
+            resolvedURLs = Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) })
+        }
+    }
+
+    /// 申请一个后台任务，让「取地址」这段时间不被系统挂起。
+    /// 后台额度约 30 秒，足够一次网页兜底（18 秒超时）。
+    private func beginResolveTask() -> UIBackgroundTaskIdentifier {
+        var id: UIBackgroundTaskIdentifier = .invalid
+        id = UIApplication.shared.beginBackgroundTask(withName: "resolve-audio") { [weak self] in
+            // 到期回调：必须主动 end，否则 App 会被强杀
+            if id != .invalid { UIApplication.shared.endBackgroundTask(id) }
+            CrashLog.write("PLAY", "bg resolve task expired")
+            _ = self
+        }
+        return id
+    }
+
+    private func endResolveTask(_ id: UIBackgroundTaskIdentifier) {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+    }
+
+    /// 前台预取「下一集」的地址，让后台连播命中缓存。
+    /// 只在正在播放、且没有缓存时才发，避免白耗流量。
+    private func prefetchNextIfNeeded() {
+        guard state == .playing, let cur = current else { return }
+        guard let next = nextEpisode(after: cur, forward: !effectivePlayback.reverseOrder) else { return }
+        guard next.trackId > 0, cachedURL(for: next.trackId) == nil else { return }
+        let src = currentSourceId
+        Task { @MainActor in
+            let bg = beginResolveTask()
+            defer { endResolveTask(bg) }
+            var input = next.url
+            if SharedBridge.looksLikeWebPage(input), next.trackId > 0 {
+                input = "https://www.ximalaya.com/sound/\(next.trackId)"
+            }
+            if input.isEmpty { input = String(next.trackId) }
+            let r = await SharedBridge.audioEx(sourceId: src, url: input)
+            if let a = r.audio {
+                storeURL(a.url, for: next.trackId)
+                CrashLog.write("PLAY", "prefetch ok track=\(next.trackId)")
+                return
+            }
+            // 会员集：走网页兜底（前台才有把握成功）
+            if next.trackId > 0, src.hasPrefix("ximalaya") {
+                let page = "https://www.ximalaya.com/sound/\(next.trackId)"
+                if let sniffed = await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: 15_000) {
+                    storeURL(sniffed, for: next.trackId)
+                    CrashLog.write("PLAY", "prefetch web ok track=\(next.trackId)")
+                }
+            }
+        }
+    }
+
     /// 面板里要显示的当前跳过设置（专辑值或全局值，取决于 useGlobalSkip）
     var currentSkip: (intro: Int, outro: Int) {
         (effectivePlayback.skipIntroSec, effectivePlayback.skipOutroSec)
@@ -999,10 +1075,31 @@ final class Player: NSObject, ObservableObject {
             //   cookie= 引擎侧看到的 Cookie 长度（0 就是登录态没灌进去，不是会员问题）
             //   login= 壳侧认为是否已登录
             CrashLog.write("PLAY", "resolve src=\(src) cookie=\(SharedBridge.engineCookieLength) login=\(SharedBridge.loggedIn) track=\(ep.trackId)")
+
+            // 【2026-11-28】缓存优先：前台预取过的地址，后台直接拿来播。
+            // 后台播放失败（App 被挂起 → 网页兜底发不出请求）就靠这一条活着。
+            var audio: SharedBridge.ExtractedAudio?
+            var addressReason: String?
+            if let hit = self.cachedURL(for: ep.trackId) {
+                audio = SharedBridge.makeAudio(url: hit)
+                addressReason = nil
+                CrashLog.write("PLAY", "resolve from cache track=\(ep.trackId)")
+            } else {
+                addressReason = nil
+            }
+
+            // 整个取地址流程包在后台任务里：进后台那一刻开始的解析能跑完，
+            // 不会被系统在 1 秒内挂起（这正是「前台能播、后台取不到」的根因）。
+            let bgTask = self.beginResolveTask()
+            defer { self.endResolveTask(bgTask) }
+
             // 用 audioEx：失败原因随返回值带出来，不再依赖会被别的调用清空的静态字段
-            let first = await SharedBridge.audioEx(sourceId: src, url: input)
-            var audio = first.audio
-            var addressReason = first.reason
+            var first: (audio: SharedBridge.ExtractedAudio?, reason: String?) = (nil, nil)
+            if audio == nil {
+                first = await SharedBridge.audioEx(sourceId: src, url: input)
+                audio = first.audio
+                addressReason = first.reason
+            }
 
             // 【2026-11-28 提速】引擎已经明确说「要会员 / 上游没给地址」时，
             // ① ② 两条注定失败（它们打的是同一条 baseInfo 通道），直接跳去网页兜底，
@@ -1054,6 +1151,8 @@ final class Player: NSObject, ObservableObject {
             // （实测 xmcdn 系：不带 UA 直接 deny by rule engine）。
             if let a = audio {
                 audio = SharedBridge.audioWithDefaultUA(a)
+                // 记住这次拿到的地址：后台连播 / 重试都直接命中
+                self.storeURL(a.url, for: ep.trackId)
             }
             
             guard let audio = audio else {
@@ -1235,6 +1334,8 @@ final class Player: NSObject, ObservableObject {
         if sleepDeadline == nil, sleepChaptersLeft <= 0 { restoreSleepTimerIfNeeded() }
         requestingEpisode = false
         BackgroundSession.activateForPlayback()
+        // 前台预取下一集地址，给后台连播铺路
+        prefetchNextIfNeeded()
 
         // 缓存优先：已缓存的集直接播本地文件（离线可用）。
         // 本地文件同样要挂 status 观察 —— 以前走 startItemWithLocalFile 时状态停在 .playing，

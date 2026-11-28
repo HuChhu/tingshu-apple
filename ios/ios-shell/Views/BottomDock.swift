@@ -122,7 +122,7 @@ struct BottomDock: View {
                     // 幽灵热区防线：透明度 0 的条不许吃触摸
                     .allowsHitTesting(hasMiniPlayer)
                     .accessibilityHidden(!hasMiniPlayer)
-                    .animation(.easeInOut(duration: 0.2), value: hasMiniPlayer)
+                    .animation(.easeInOut(duration: 0.15), value: hasMiniPlayer)
             }
             // 【v1.5.6 第三次修缝隙 —— 前两次都没修在点上，这次说清楚】
             //
@@ -408,7 +408,7 @@ struct BottomDock: View {
             withAnimation(.easeOut(duration: 0.18)) { showEmptyHint = true }
             CrashLog.write("UI", "dock play tap with no content")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-                withAnimation(.easeIn(duration: 0.2)) { showEmptyHint = false }
+                withAnimation(.easeIn(duration: 0.15)) { showEmptyHint = false }
             }
             return
         }

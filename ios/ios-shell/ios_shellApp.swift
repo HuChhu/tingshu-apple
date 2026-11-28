@@ -166,7 +166,7 @@ struct RootTabView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .animation(.easeInOut(duration: 0.22), value: player.nowPlaying.isEmpty)
+            .animation(.easeInOut(duration: 0.15), value: player.nowPlaying.isEmpty)
     }
 
     // MARK: - 内容（三档共用，Tab 结构一处维护）

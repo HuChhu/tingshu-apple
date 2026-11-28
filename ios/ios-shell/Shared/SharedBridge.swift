@@ -761,9 +761,10 @@ enum SharedBridge {
     }
 
     static func bookDetail(sourceId: String, bookUrl: String,
+                           loadFullPages: Bool = true,
                            cancel: CancelFlag? = nil) async -> BookDetail? {
         lastDetailError = nil
-        if let d = await rawBookDetail(sourceId: sourceId, bookUrl: bookUrl, cancel: cancel) {
+        if let d = await rawBookDetail(sourceId: sourceId, bookUrl: bookUrl, loadFullPages: loadFullPages, cancel: cancel) {
             // 【2026-11-25 修语义】上一版这里直接 return，于是「详情取到了但一条都播不了」
             // 的免登录结果被当成成功返回，1b 那段永远跑不到（它的触发条件是「取详情失败」）。
             // 现在：免登录通道成功但**全不可播**且用户已登录时，换登录通道再取一次；
@@ -796,9 +797,10 @@ enum SharedBridge {
     }
 
     private static func rawBookDetail(sourceId: String, bookUrl: String,
+                                     loadFullPages: Bool = true,
                                      cancel: CancelFlag? = nil) async -> BookDetail? {
         let r = await bridge { done in
-            registry.bookDetail(sourceId: sourceId, bookUrl: bookUrl, loadEpisodes: true, loadFullPages: true,
+            registry.bookDetail(sourceId: sourceId, bookUrl: bookUrl, loadEpisodes: true, loadFullPages: loadFullPages,
                                cancel: cancel ?? CancelFlag(),
                                 completionHandler: { res, e in done(res, e) })
         }

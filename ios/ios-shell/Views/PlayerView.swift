@@ -246,6 +246,13 @@ struct PlayerView: View {
                     .foregroundStyle(.black)
                     .frame(width: 72, height: 72)
                     .background(Color.white, in: Circle())
+                    // 【2026-11-28 修「播放/暂停重影」】
+                    // 两帧状态切换时，如果有隐式动画在作用域里，SF Symbol 会做交叉淡入，
+                    // 中间那几帧两个图标同时可见 —— 就是用户看到的重影。
+                    // 这里明确禁掉过渡与动画，让它瞬间替换。
+                    .contentTransition(.identity)
+                    .animation(nil, value: player.state)
+                    .transaction { $0.animation = nil }
             }
             .frame(maxWidth: .infinity, minHeight: 72)
             .disabled(player.state == .stopped || player.state == .loading)
@@ -269,9 +276,20 @@ struct PlayerView: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: grayCircle ? 20 : 23, weight: .medium))
-                .frame(width: grayCircle ? 36 : 40, height: 44)
-                .background(grayCircle ? Color.white.opacity(0.13) : .clear,
-                            in: Circle())
+                .frame(width: grayCircle ? 38 : 40, height: 46)
+                .background {
+                    if grayCircle {
+                        // 液态玻璃圆钮：材质 + 顶部高光 + 细描边（和底部 dock 同一套语言）
+                        Circle().fill(.ultraThinMaterial)
+                            .overlay(
+                                Circle().fill(
+                                    LinearGradient(colors: [.white.opacity(0.30), .clear],
+                                                   startPoint: .top, endPoint: .bottom)
+                                ).blendMode(.plusLighter)
+                            )
+                            .overlay(Circle().stroke(.white.opacity(0.20), lineWidth: 0.6))
+                    }
+                }
         }
         .frame(width: 44, height: 44)
         .disabled(!enabled)
@@ -314,7 +332,21 @@ struct PlayerView: View {
                 toggleFavorite()
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
+        .background {
+            // 工具条整条玻璃化：之前只有图标，浮在虚化背景上看不出层次
+            Capsule(style: .continuous).fill(.ultraThinMaterial)
+                .overlay(
+                    Capsule(style: .continuous).fill(
+                        LinearGradient(colors: [.white.opacity(0.22), .clear],
+                                       startPoint: .top, endPoint: .bottom)
+                    ).blendMode(.plusLighter)
+                )
+                .overlay(
+                    Capsule(style: .continuous).stroke(.white.opacity(0.16), lineWidth: 0.6)
+                )
+        }
     }
 
     private func utilityButton(icon: String, title: String, label: String,

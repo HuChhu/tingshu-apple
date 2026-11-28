@@ -160,7 +160,16 @@ class XimalayaOpenSource(
             title = main["albumTitle"]?.asStr() ?: main["title"]?.asStr() ?: ("专辑 " + albumId),
             author = main["anchorName"]?.asStr() ?: "",
             coverUrl = normalizeCover(main["cover"]?.asStr() ?: ""),
-            intro = main["richIntro"]?.asStr()?.replace(Regex("<[^>]+>"), "")?.take(500) ?: "",
+            // 【2026-11-28 简介为空】richIntro 是一大段带 style 的 HTML，某些专辑里它只有占位内容，
+            // strip 完就剩 "..." —— 界面只剩一排点。shortIntro 是官方提炼好的纯文本，优先用它。
+            intro = run {
+                val short = main["shortIntro"]?.asStr()?.trim().orEmpty()
+                if (short.length >= 8 && short.any { it != '.' && it != '。' }) return@run short
+                val rich = main["richIntro"]?.asStr()
+                    ?.replace(Regex("<[^>]+>"), "")?.replace("&nbsp;", " ")?.trim().orEmpty()
+                if (rich.length >= 8 && rich.any { it != '.' && it != '。' }) return@run rich.take(500)
+                main["intro"]?.asStr()?.trim().orEmpty().take(500)
+            },
             albumId = albumId,
             trackCount = main["trackCount"]?.asLong() ?: 0L,
             playCount = main["playCount"]?.asLong() ?: 0L,
@@ -332,7 +341,7 @@ class XimalayaOpenSource(
 
     /** 翻页专用：起始间隔仍是 1 秒，但允许 3 个在飞（大书详情从 80 秒降到 ~40 秒） */
     private suspend fun getJsonBulk(target: String, headers: Map<String, String>): JsonObject {
-        val resp = throttle.runBulk(concurrency = 3) { fetcher.get(target, headers) }
+        val resp = throttle.runBulk(concurrency = 4) { fetcher.get(target, headers) }
         if (resp !is FetchOutcome.Ok) throw SourceErrors.Network((resp as FetchOutcome.Failed).kind)
         return runCatching { Json.parseToJsonElement(resp.text).jsonObject }.getOrNull()
             ?: throw SourceErrors.ParseFailed("响应非 JSON：" + target.take(80))

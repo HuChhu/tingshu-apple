@@ -41,18 +41,43 @@ struct MiniPlayerBar: View {
                 // 用户截图明确反馈「重复」。播放/暂停统一由 dock 中间键承担。
                 // 条内只保留「快进」——它和中间键不是同一动作。
 
-                // 图标与实际动作对齐：画的是快进步数，不是"下一集"
+                // 【2026-11-28】用户反馈：条里只有「+10 秒」，没有「-10 秒」也没有播放/暂停，
+                // 想暂停还得点进去。现在补全成「-10 / 播放暂停 / +10」三键，
+                // 点空白区域仍然进播放页。
                 Button {
-                    player.skip(true)
+                    player.skip(false)
                 } label: {
-                    Image(systemName: "goforward.\(skipSeconds)")
-                        .font(.system(size: 18))
-                        .frame(width: Layout.hitTarget, height: Layout.hitTarget)
+                    Image(systemName: "gobackward.\(skipSeconds)")
+                        .font(.system(size: 17))
+                        .frame(width: 34, height: Layout.hitTarget)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(!player.canSeek)
-                // 禁用态要看得出来：disabled 不会自动变灰，用户会以为坏了
+                .opacity(player.canSeek ? 1 : 0.35)
+                .accessibilityLabel("后退 \(skipSeconds) 秒")
+
+                Button {
+                    if player.state == .playing { player.pause() } else { player.resume() }
+                } label: {
+                    Image(systemName: player.state == .playing ? "pause.fill" : "play.fill")
+                        .font(.system(size: 19, weight: .semibold))
+                        .frame(width: 38, height: Layout.hitTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(player.state == .playing ? "暂停" : "播放")
+
+                Button {
+                    player.skip(true)
+                } label: {
+                    Image(systemName: "goforward.\(skipSeconds)")
+                        .font(.system(size: 17))
+                        .frame(width: 34, height: Layout.hitTarget)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!player.canSeek)
                 .opacity(player.canSeek ? 1 : 0.35)
                 .accessibilityLabel("快进 \(skipSeconds) 秒")
             }

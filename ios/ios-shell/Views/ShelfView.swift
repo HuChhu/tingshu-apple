@@ -195,7 +195,13 @@ struct ShelfView: View {
     }
 
     private func sourceName(_ id: String) -> String {
-        SharedBridge.allSources().first { $0.id == id }?.name ?? id
+        // 【2026-11-28】历史记录里存的是旧 sourceId（ximalaya-open），
+        // 而源列表已经合并成单个 ximalaya —— 直接查表查不到，界面就露出英文 id。
+        // 这里做一次归一化：ximalaya-open / ximalaya 都显示成「喜马拉雅」。
+        let norm = (id == "ximalaya-open") ? "ximalaya" : id
+        if let hit = SharedBridge.allSources().first(where: { $0.id == norm }) { return hit.name }
+        if norm.hasPrefix("ximalaya") { return "喜马拉雅" }
+        return id
     }
 
     private func favRow(_ f: LocalStore.Favorite, width: CGFloat) -> some View {
@@ -677,23 +683,13 @@ struct AlbumView: View {
         let flag = SharedBridge.CancelFlag()
         await MainActor.run { detailCancel = flag }
 
-        // 【2026-11-28 目录流式加载】
-        // 以前一次性翻完 40 页才返回：5546 集的书要等约 40 秒才看到列表。
-        // 现在两阶段：先只要第 1 页（20 条，约 1-2 秒就出列表），再把完整列表补上。
-        // 只在喜马系源这样做 —— 模板站本身就是 1 个请求，重复调用纯属浪费。
-        let isXimalaya = sourceId.hasPrefix("ximalaya")
-        var quick: SharedBridge.Detail?
-        if isXimalaya {
-            quick = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl,
-                                                 loadFullPages: false, cancel: flag)
-            if let q = quick, q.episodes.isEmpty == false {
-                applyDetail(q, saved: saved)
-                CrashLog.write("UI", "album quick ok album=\(card.albumId) eps=\(q.episodes.count)")
-            }
-        }
+        // 【2026-11-28 撤回两阶段】上一版试过「先出 20 条再补全」，实测更糟：
+        //   ① 集数从 67 跳成 20 再跳回来，用户看到数字乱跳；
+        //   ② 小书（67 集 4 页）反而多打一轮请求，慢了近一倍；
+        //   ③ 两阶段之间 loading 一直为 true，骨架屏把已到的内容盖住。
+        // 结论：单次调用 + 并发翻页才是对的，回到这一条。
         guard let d = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl,
                                                    loadFullPages: true, cancel: flag) else {
-            if quick != nil { return }   // 第一阶段已经有内容，第二阶段失败就别把页面打成错误
             let why = SharedBridge.lastDetailError ?? ""
             errorText = why.isEmpty ? "专辑加载失败（该源可能已下架或需要登录）" : why
             CrashLog.write("UI", "album load failed album=\(card.albumId) reason=\(errorText ?? "")")

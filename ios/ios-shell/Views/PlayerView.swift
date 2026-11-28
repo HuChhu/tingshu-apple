@@ -54,7 +54,7 @@ struct PlayerView: View {
                     // posterSize = 303，叠上标题/进度/按钮 ≈ 620pt，一屏放得下（iPhone SE 667pt）。
                     // 560/528 上限是给 iPad 的，避免大屏海报拉满。
                     let contentWidth = min(max(0, geo.size.width - 40), 560)
-                    let posterSize = min(max(0, min(geo.size.width - 72, geo.size.height * 0.42)), 528)
+                    let posterSize = min(max(0, min(geo.size.width - 64, geo.size.height * 0.38)), 520)
 
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(spacing: 0) {
@@ -69,11 +69,16 @@ struct PlayerView: View {
                             titleBlock
                                 .padding(.horizontal, 24)
                                 .frame(width: contentWidth)
-                                .padding(.top, 24)
+                                .padding(.top, 20)
+
+                            // 【2026-11-28 布局】用户反馈「下面那么空旷、中间又太挤」。
+                            // 原因是整块内容顶部对齐后全挤在上半屏。这里用弹性空白把
+                            // 「进度 + 播放键 + 工具条」这组控制统一下压到底部，视觉重心变稳。
+                            Spacer(minLength: 12)
 
                             progressBlock
                                 .frame(width: contentWidth)
-                                .padding(.top, 24)
+                                .padding(.top, 8)
 
                             transportControls
                                 .frame(width: contentWidth)
@@ -81,7 +86,8 @@ struct PlayerView: View {
 
                             utilityControls
                                 .frame(width: contentWidth)
-                                .padding(.top, 24)
+                                .padding(.top, 22)
+                                .padding(.bottom, 18)
 
                             if let error = player.errorText {
                                 errorBlock(error)

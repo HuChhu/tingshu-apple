@@ -891,7 +891,38 @@ final class Player: NSObject, ObservableObject {
         }
     }
 
+    /// 补章节列表（从最近/首页进播放页时用）。
+    /// 只补一次：同一本书已经有 currentEpisodes 就不再请求。
+    private func loadEpisodesIfNeeded(book: SharedBridge.BookCard, sourceId: String, aroundTrackId: Int64) {
+        guard currentEpisodes.isEmpty else { return }
+        guard loadingEpisodesFor != book.bookUrl else { return }
+        loadingEpisodesFor = book.bookUrl
+        let flag = SharedBridge.CancelFlag()
+        episodesCancel = flag
+        Task { @MainActor in
+            defer { self.loadingEpisodesFor = nil }
+            guard let d = await SharedBridge.bookDetail(sourceId: sourceId,
+                                                        bookUrl: book.bookUrl,
+                                                        loadFullPages: true,
+                                                        cancel: flag) else {
+                CrashLog.write("PLAY", "episodes load failed book=\(book.bookUrl)")
+                return
+            }
+            let rows = SharedBridge.rows(from: d)
+            guard !rows.isEmpty else { return }
+            // 用户可能已经切书 / 切集：只在这本书仍是当前书时才写回
+            guard self.currentBook?.bookUrl == book.bookUrl else { return }
+            self.currentEpisodes = rows
+            CrashLog.write("PLAY", "episodes loaded book=\(book.bookUrl) n=\(rows.count)")
+        }
+    }
+
     // MARK: - 地址缓存与后台取地址（2026-11-28）
+
+    /// 正在补章节列表的那本书（防止重复请求）
+    private var loadingEpisodesFor: String?
+    /// 补章节时的取消令牌（换书要能中止）
+    private var episodesCancel: SharedBridge.CancelFlag?
 
     /// 已解析出来的播放地址缓存：trackId → (url, 过期时间)。
     ///
@@ -939,9 +970,20 @@ final class Player: NSObject, ObservableObject {
     /// 只在正在播放、且没有缓存时才发，避免白耗流量。
     private func prefetchNextIfNeeded() {
         guard state == .playing, let cur = current else { return }
-        guard let next = nextEpisode(after: cur, forward: !effectivePlayback.reverseOrder) else { return }
-        guard next.trackId > 0, cachedURL(for: next.trackId) == nil else { return }
         let src = currentSourceId
+        // 【2026-11-28】后台连播失败的根因：只预取 1 集，而且预取要在前台完成。
+        // 用户锁屏/切后台后网页兜底会被系统挂起，没预取到就必然失败。
+        // 改成一次预取接下来 3 集，给后台留出缓冲。
+        var cursor = cur
+        for _ in 0..<3 {
+            guard let next = nextEpisode(after: cursor, forward: !effectivePlayback.reverseOrder) else { return }
+            cursor = next
+            guard next.trackId > 0, cachedURL(for: next.trackId) == nil else { continue }
+            prefetchOne(next, src: src)
+        }
+    }
+
+    private func prefetchOne(_ next: SharedBridge.EpisodeRow, src: String) {
         Task { @MainActor in
             let bg = beginResolveTask()
             defer { endResolveTask(bg) }
@@ -1042,6 +1084,12 @@ final class Player: NSObject, ObservableObject {
         // nil 也要清空：否则首页续播（不传 episodes）会沿用上一本书的列表，
         // trackId 撞号时自动连播跳到完全不相关的书
         currentEpisodes = episodes ?? []
+        // 【2026-11-28】从「最近」/首页续播进来时调用方不传 episodes，
+        // 于是章节列表 0 章、上一集/下一集点不动（用户实测）。
+        // 这里按 book 异步把整本章节拉回来，拉完 currentEpisodes 就有内容了。
+        if currentEpisodes.isEmpty, let b = book, !b.bookUrl.isEmpty {
+            loadEpisodesIfNeeded(book: b, sourceId: sourceId, aroundTrackId: ep.trackId)
+        }
         beginRequest(ep, book: book)
 
         // 【2026-11-25 P0】引擎已经明确告诉我们这集有没有直链了。

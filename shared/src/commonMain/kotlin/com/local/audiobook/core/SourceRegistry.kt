@@ -42,6 +42,25 @@ class SourceRegistry(
     // 实测 3 路并发 × 300ms 网络：共用一个 2318ms，各自一个 303ms，差 7.7 倍。
     // 现在按源分桶：**同一个源仍然 1 请求/秒**（防风控不能松），跨源互不阻塞。
     private val throttles = mutableMapOf<String, RequestThrottle>()
+    /**
+     * 已登录用户的专辑详情：主路走 XimalayaOpenSource（并发翻页 + 250ms 批量闸 + 带 Cookie），
+     * 失败或一条曲目都没有时再退回登录版 SearchEngine。
+     *
+     * 协程取消必须透传：runCatching 会把 CancellationException 也吞掉，
+     * 不单独放行的话，用户返回上一页后旧请求会继续跑完整本书。
+     */
+    private suspend fun ximalayaDetail(bookUrl: String, loadEpisodes: Boolean,
+                                       loadFullPages: Boolean, cancel: CancelToken): BookDetail {
+        val primary = runCatching {
+            ximalayaOpen.bookDetail(bookUrl, loadEpisodes, loadFullPages, cancel)
+        }
+        primary.fold(
+            onSuccess = { d -> if (!loadEpisodes || d.episodes.isNotEmpty()) return d },
+            onFailure = { e -> if (e is kotlinx.coroutines.CancellationException) throw e },
+        )
+        return ximalayaLogin.bookDetail(bookUrl, loadEpisodes, loadFullPages, cancel)
+    }
+
     private fun throttleFor(sourceId: String): RequestThrottle =
         throttles.getOrPut(sourceId) { RequestThrottle(minIntervalMs = 1_000L, clock = nowMs) }
     private val clock = nowMs
@@ -144,7 +163,15 @@ class SourceRegistry(
             "bilibili" -> bilibili.search(keywords, page)
             "qingting" -> qingting.search(keywords, page)
             "netease" -> netease.search(keywords, page)
-            "ximalaya" -> ximalayaLogin.search(keywords, page)
+            // 【2026-11-28 「什么都慢」的真凶】已登录用户走的是 id="ximalaya"，
+            // 而它一直指向登录版 SearchEngine —— 那边每个请求都是 `throttle.run`（1 次/秒、单飞）。
+            // 于是首页 3 个分区要排 3 秒、67 集的详情要翻 5 秒；之前给 XimalayaOpenSource 做的
+            // 所有提速（250ms 批量闸、并发翻页）对已登录用户**一点都没生效**。
+            // 现在主路走快的那个，拿不到结果再退回登录版（它多一条网页搜索兜底）。
+            "ximalaya" -> {
+                val fast = ximalayaOpen.search(keywords, page)
+                if (fast.books.isNotEmpty()) fast else ximalayaLogin.search(keywords, page)
+            }
             else -> templates[sourceId]?.search(keywords, page)
                 ?: SearchResult(emptyList(), 0, sourceId, page, unknownSource(sourceId))
         }
@@ -175,7 +202,7 @@ class SourceRegistry(
             "bilibili" -> bilibili.bookDetail(bookUrl, loadEpisodes, loadFullPages)
             "qingting" -> qingting.bookDetail(bookUrl, loadEpisodes, loadFullPages)
             "netease" -> netease.bookDetail(bookUrl, loadEpisodes, loadFullPages)
-            "ximalaya" -> ximalayaLogin.bookDetail(bookUrl, loadEpisodes, loadFullPages, cancel)
+            "ximalaya" -> ximalayaDetail(bookUrl, loadEpisodes, loadFullPages, cancel)
             else -> templates[sourceId]?.bookDetail(bookUrl, loadEpisodes, loadFullPages)
                 ?: return BookDetailResult(reason = unknownSource(sourceId))
         }

@@ -61,7 +61,9 @@ class XimalayaOpenSource(
     )
 
     override suspend fun search(keywords: String, page: Int): SearchResult {
-        val root = getJson(OpenRoutes.search(keywords, page), headersWithCookie())
+        // 首页/搜索的两次请求（front + suggest）走批量闸：250ms 间隔而不是 1 秒，
+        // 否则「3 个分区 × 2 次请求」光间隔就要 6 秒 —— 那正是发现页骨架屏卡那么久的原因。
+        val root = getJsonFast(OpenRoutes.search(keywords, page), headersWithCookie(), page == 1)
         val docs = root["response"]?.asObj()?.get("docs")?.asArr() ?: JsonArray(emptyList())
         val books = docs.mapNotNull { d -> d.asObj()?.let { docToBook(it) } }.toMutableList()
 
@@ -95,7 +97,10 @@ class XimalayaOpenSource(
         !cookieProvider.cookie().isNullOrBlank()
 
     private suspend fun fetchOfficialPick(keywords: String): Book? = try {
-        val r = throttle.run {
+        // 【2026-11-28 死锁修复】这里曾经是 throttle.run { throttle.runBulk { ... } } ——
+        // run() 在整个函数体期间都持有 mutex，runBulk 再去拿同一把不可重入的 mutex，
+        // 于是永远等下去：**所有第一页搜索都会卡死**。runBulk 自己就是一道闸，外面不能再套 run。
+        val r = throttle.runBulk(concurrency = 2) {
             fetcher.get(OpenRoutes.suggest(keywords), headersWithCookie())
         }
         val ok = (r as? FetchOutcome.Ok)?.text
@@ -150,7 +155,7 @@ class XimalayaOpenSource(
     override suspend fun bookDetail(bookUrl: String, loadEpisodes: Boolean, loadFullPages: Boolean,
                                 cancel: com.local.audiobook.core.CancelToken): BookDetail {
         val albumId = parseAlbumId(bookUrl) ?: throw SourceErrors.ParseFailed("无法解析 albumId：" + bookUrl)
-        val detailRoot = getJson(OpenRoutes.albumSimple(albumId), headersWithCookie())
+        val detailRoot = getJsonFast(OpenRoutes.albumSimple(albumId), headersWithCookie(), true)
         val data = detailRoot["data"]?.asObj() ?: throw SourceErrors.NotFound(bookUrl)
         val main = data["albumPageMainInfo"]?.asObj() ?: data
 
@@ -339,13 +344,41 @@ class XimalayaOpenSource(
         return base + mapOf("Cookie" to c)
     }
 
-    /** 翻页专用：起始间隔仍是 1 秒，但允许 3 个在飞（大书详情从 80 秒降到 ~40 秒） */
-    private suspend fun getJsonBulk(target: String, headers: Map<String, String>): JsonObject {
-        val resp = throttle.runBulk(concurrency = 4) { fetcher.get(target, headers) }
-        if (resp !is FetchOutcome.Ok) throw SourceErrors.Network((resp as FetchOutcome.Failed).kind)
-        return runCatching { Json.parseToJsonElement(resp.text).jsonObject }.getOrNull()
+
+    /**
+     * 取一份 JSON，并识别风控信号。
+     *
+     * 快闸 = runBulk（150ms 起始间隔，允许并发在飞）；慢闸 = run（1 次/秒、单飞）。
+     * 两者**不能嵌套**：run() 全程持有 mutex，里面再 runBulk 会自己等自己（2026-11-28 真死锁）。
+     *
+     * 风控信号：HTTP 403/429，或响应体 ret=999（限流）/ 1001（风控校验）。
+     * 命中就调 throttle.riskBackoff() —— 批量间隔自动退回 1 秒并保持 60 秒，之后自己恢复。
+     */
+    private suspend fun fetchJson(target: String, headers: Map<String, String>,
+                                  concurrency: Int, fast: Boolean): JsonObject {
+        val resp = if (fast) throttle.runBulk(concurrency = concurrency) { fetcher.get(target, headers) }
+                   else throttle.run { fetcher.get(target, headers) }
+        if (resp !is FetchOutcome.Ok) {
+            val f = resp as FetchOutcome.Failed
+            if (f.kind.contains("403") || f.kind.contains("429")) throttle.riskBackoff()
+            throw SourceErrors.Network(f.kind)
+        }
+        val root = runCatching { Json.parseToJsonElement(resp.text).jsonObject }.getOrNull()
             ?: throw SourceErrors.ParseFailed("响应非 JSON：" + target.take(80))
+        val ret = (root["ret"] as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content
+        if (ret == "999" || ret == "1001") throttle.riskBackoff()
+        return root
     }
+
+    /** 翻页专用：最多 4 个在飞、150ms 起始间隔（大书详情从 ~52 秒降到 ~7 秒） */
+    private suspend fun getJsonBulk(target: String, headers: Map<String, String>): JsonObject =
+        fetchJson(target, headers, concurrency = 4, fast = true)
+
+    /**
+     * 搜索/详情首跳专用：fast=true 走批量闸（150ms），false 退回普通闸（1 秒）。
+     */
+    private suspend fun getJsonFast(target: String, headers: Map<String, String>, fast: Boolean): JsonObject =
+        fetchJson(target, headers, concurrency = 2, fast = fast)
 
     private suspend fun getJson(target: String, headers: Map<String, String>): JsonObject {
         val resp = throttle.run { fetcher.get(target, headers) }

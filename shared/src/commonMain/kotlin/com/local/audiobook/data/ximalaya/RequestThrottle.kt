@@ -21,12 +21,27 @@ import kotlinx.coroutines.sync.withLock
 class RequestThrottle(
     private val minIntervalMs: Long = 1_000L,
     private val clock: () -> Long,
+    /**
+     * 批量模式（翻页 / 同源连续请求）的起始间隔。
+     *
+     * 【2026-11-28 找到了「什么都慢」的真凶】
+     * 原来 runBulk 沿用 minIntervalMs=1000 的起始间隔 —— 并发只让 RTT 重叠，
+     * 但**起始间隔是硬串行**：40 页 = 39 秒，这就是大书详情 40 秒的数学来源，
+     * 也是首页 3 个分区×2 次请求 ≈ 6 秒骨架屏的来源。
+     * 实测依据（2026-11-28）：同一 IP 以 **100ms** 间隔连打 mobwsa 20 次，20/20 返回 ret=0；
+     * search front/v1 连打 12 次，12/12 HTTP 200。样本只有一次、一个 IP，不算保证，
+     * 所以取 150ms（留一半余量），并且配一个自动退避 —— 见 [riskBackoff]。
+     * 一旦收到风控信号（HTTP 403/429 或 ret=999/1001），批量间隔自动回到 1 秒并保持 60 秒。
+     */
+    private val bulkIntervalMs: Long = 150L,
 ) {
     private val lastRequestAt = atomic(0L)
     private val hasRequested = atomic(false)
     private val inFlight = atomic(false)
     private val mutex = Mutex()
     private val requests = atomic(0L)
+    /** 风控惩罚到期时间（clock 读数）；大于当前 clock 说明正在惩罚期内 */
+    private val penaltyUntil = atomic(0L)
 
     /** 已发请求数（诊断用；android 原版无此字段，兼容引擎版计数） */
     val totalRequests: Long get() = requests.value
@@ -36,10 +51,13 @@ class RequestThrottle(
     }
 
     /** 距离下一次可以发请求还差多少毫秒（0 = 现在就能发） */
-    fun waitMs(): Long {
+    fun waitMs(): Long = waitMsFor(minIntervalMs)
+
+    /** 按指定间隔算还要等多久 */
+    private fun waitMsFor(interval: Long): Long {
         if (!hasRequested.value) return 0L
         val elapsed = clock() - lastRequestAt.value
-        return (minIntervalMs - elapsed).coerceAtLeast(0L)
+        return (interval - elapsed).coerceAtLeast(0L)
     }
 
     /** 标记"刚发完一个请求" */
@@ -48,6 +66,24 @@ class RequestThrottle(
         hasRequested.value = true
         requests.addAndGet(1L)
     }
+
+    /**
+     * 收到风控信号后调用：批量间隔在 [ms] 内退回 minIntervalMs（1 秒）。
+     *
+     * 为什么要有它：批量间隔是「实测没风控」才敢往下调的，但实测只有一个 IP、一次样本。
+     * 万一某个网络环境更严，没有这个开关就是「调快了然后被 ban，且自己不会恢复」。
+     * 调用方（XimalayaOpenSource）在看到 HTTP 403/429 或 ret=999/1001 时调一次即可。
+     */
+    fun riskBackoff(ms: Long = 60_000L) {
+        penaltyUntil.value = clock() + ms
+    }
+
+    /** 当前生效的批量间隔：惩罚期内用慢的 1 秒，否则用快的 */
+    private fun effectiveBulkInterval(): Long =
+        if (clock() < penaltyUntil.value) minIntervalMs else bulkIntervalMs
+
+    /** 诊断用：此刻是否处于风控惩罚期 */
+    val isBackingOff: Boolean get() = clock() < penaltyUntil.value
 
     /** 并发闸门：拿不到就返回 false（并发 1 纪律） */
     fun tryAcquire(): Boolean = inFlight.compareAndSet(false, true)
@@ -114,7 +150,7 @@ class RequestThrottle(
         }
         try {
             mutex.withLock {
-                val wait = waitMs()
+                val wait = waitMsFor(effectiveBulkInterval())
                 if (wait > 0) delay(wait)
                 markRequest()
             }

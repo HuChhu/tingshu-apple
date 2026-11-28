@@ -1182,7 +1182,7 @@ final class Player: NSObject, ObservableObject {
             if audio == nil, ep.trackId > 0, src.hasPrefix("ximalaya") {
                 let page = "https://www.ximalaya.com/sound/\(ep.trackId)"
                 CrashLog.write("PLAY", "webview fallback for vip track=\(ep.trackId)")
-                if let sniffed = await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: 12_000) {
+                if let sniffed = await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: 8_000) {
                     audio = SharedBridge.makeAudio(url: sniffed)
                     if audio != nil { addressReason = nil }
                     CrashLog.write("PLAY", "webview got url=\(sniffed.prefix(90))")

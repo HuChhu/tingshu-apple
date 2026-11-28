@@ -71,7 +71,17 @@ struct HomeView: View {
                 }
             }
             .refreshable { await load(force: true) }
-            .task { await load(force: false) }
+            .task {
+                // 先把上次缓存的推荐铺出来（瞬时），再联网刷新。冷启动不再看骨架屏。
+                if sections.isEmpty {
+                    let cached = HomeFeedCache.load()
+                    if !cached.isEmpty {
+                        sections = cached
+                        loading = false
+                    }
+                }
+                await load(force: true)
+            }
             .onAppear {
                 CrashLog.write("UI", "home appear")
                 recent = LocalStore.loadRecent()
@@ -292,7 +302,9 @@ struct HomeView: View {
         generation += 1
         let gen = generation
         await MainActor.run {
-            loading = true
+            // 【2026-11-28】只有「手上一点内容都没有」才显示骨架屏。
+            // 已经有缓存/旧数据时静默刷新，用户看到的是内容原地更新，而不是整页灰条。
+            loading = self.sections.isEmpty
             errorText = nil
         }
 
@@ -345,10 +357,53 @@ struct HomeView: View {
 
         await MainActor.run {
             guard gen == self.generation else { return }
-            sections = built
             loading = false
+            if built.isEmpty && !sections.isEmpty {
+                // 后台刷新全部失败，但手上还有缓存：保留缓存内容，不打成整页错误。
+                return
+            }
+            sections = built
+            HomeFeedCache.save(built)
             // 全空才用整页错误；有任何一个分区成功就不打扰用户
             errorText = built.isEmpty ? (firstError ?? "推荐加载失败，下拉重试") : nil
+        }
+    }
+}
+
+/// 首页推荐的磁盘缓存（2026-11-28）。
+///
+/// 「发现」页每次冷启动都要等 3 个分区 × 2 次搜索请求才出内容，骨架屏要转好几秒。
+/// 把上次成功的结果落盘，下次进来先铺屏、再后台刷新 —— 用户看到的是瞬时出现。
+/// 只缓存**成功组装过**的结果（全部失败不落盘，避免把空页固化）。
+enum HomeFeedCache {
+    private struct Row: Codable {
+        let id: String, title: String, subtitle: String
+        let books: [SharedBridge.BookCard]
+    }
+    private struct Blob: Codable {
+        let savedAt: Date
+        let rows: [Row]
+    }
+
+    private static let key = "homeFeedCache.v1"
+    /// 超过这个时长就不再当「新鲜数据」用（仍会先铺出来，只是随后一定刷新）
+    static let maxAge: TimeInterval = 6 * 60 * 60
+
+    static func save(_ sections: [HomeView.FeedSection]) {
+        guard !sections.isEmpty else { return }
+        let blob = Blob(savedAt: Date(), rows: sections.map {
+            Row(id: $0.id, title: $0.title, subtitle: $0.subtitle, books: $0.books)
+        })
+        if let data = try? JSONEncoder().encode(blob) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    static func load() -> [HomeView.FeedSection] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let blob = try? JSONDecoder().decode(Blob.self, from: data) else { return [] }
+        return blob.rows.map {
+            HomeView.FeedSection(id: $0.id, title: $0.title, subtitle: $0.subtitle, books: $0.books)
         }
     }
 }

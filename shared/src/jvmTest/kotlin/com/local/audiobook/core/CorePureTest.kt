@@ -54,7 +54,10 @@ class CorePureTest {
 
     // ---- 2026-11-26 P0：runBulk 必须真并发（上一版 mutex 把 block 也锁住了） ----
     @Test fun runBulkAllowsConcurrentBlocks() = kotlinx.coroutines.runBlocking {
-        val t = com.local.audiobook.data.ximalaya.RequestThrottle(0L) { 0L }
+        // 间隔也归零：这条测的是「mutex 没把 block 锁住」，不是间隔行为。
+        // （2026-11-28 教训：加了 250ms 批量间隔后，120ms 的 block 被间隔排队，峰值掉到 1 —— 测试误报）
+        val t = com.local.audiobook.data.ximalaya.RequestThrottle(
+            minIntervalMs = 0L, clock = { 0L }, bulkIntervalMs = 0L)
         val running = java.util.concurrent.atomic.AtomicInteger(0)
         val peak = java.util.concurrent.atomic.AtomicInteger(0)
         kotlinx.coroutines.coroutineScope {
@@ -532,4 +535,61 @@ class AuthPrecheckTest {
         Unit
     }
 
+}
+
+/**
+ * 【2026-11-28 回归】「已登录 = 一切都慢」的真凶是路由：登录用户用 id="ximalaya"，
+ * 而它一直指向登录版 SearchEngine（每个请求 throttle.run：1 次/秒 + 单飞）。
+ * 给 XimalayaOpenSource 做的所有提速对已登录用户完全没生效。
+ * 这两条测试把路由钉住：主路必须是快的那个，拿不到再退回登录版。
+ */
+class LoggedInRoutingTest {
+    private class RecordingFetcher(val answer: (String) -> FetchOutcome?) : JsonFetcher {
+        val seen = java.util.concurrent.CopyOnWriteArrayList<String>()
+        override suspend fun get(url: String, headers: Map<String, String>): FetchOutcome {
+            seen.add(url)
+            return answer(url) ?: FetchOutcome.Failed("NoRoute", url)
+        }
+    }
+
+    private val frontJson = """
+    {"response":{"docs":[
+      {"id":88990011,"title":"在暴雪时分","nickname":"边江工作室",
+       "cover_path":"http://imagev2.xmcdn.com/a.jpeg","intro":"","play":12000,"tracks":67,"is_finished":2}
+    ],"numFound":1,"totalPage":1,"start":1}}
+    """.trimIndent()
+
+    ///
+    /// 这条测试第一次跑就抓到一个真死锁：fetchOfficialPick 里写成了
+    /// `throttle.run { throttle.runBulk { ... } }`，run() 全程持有 mutex、runBulk 再去拿同一把，
+    /// 永远等下去 —— 所有第一页搜索都会卡死。所以这里套 10 秒超时：
+    /// 再出这种问题要在 10 秒内红掉，而不是把 CI 挂死。
+    @Test fun loggedInSearchGoesThroughFastPath() = runBlocking {
+        kotlinx.coroutines.withTimeout(10_000L) {        val f = RecordingFetcher { u ->
+            if (u.contains("search.ximalaya.com/front/v1")) FetchOutcome.Ok(200, frontJson) else null
+        }
+        val reg = com.local.audiobook.core.SourceRegistry(fetcher = f, nowMs = { 0L })
+        val r = reg.search(sourceId = "ximalaya", keywords = "在暴雪时分", page = 1)
+        assertTrue(r.books.isNotEmpty(), "登录态搜索必须有结果，hint=" + r.hint)
+        assertTrue(f.seen.any { it.contains("search.ximalaya.com/suggest") },
+                   "必须走快路（front + suggest 的官方主推合并）")
+        assertTrue(f.seen.all { it.contains("search.ximalaya.com") },
+                   "不得落到登录版的慢路，实际请求=" + f.seen)
+        }
+        Unit
+    }
+
+    @Test fun detailFallsBackToLoginEngineWhenFastPathHasNothing() = runBlocking {
+        kotlinx.coroutines.withTimeout(20_000L) {        // 快路（albumSimple / mobwsa）全部没路由 → 必须退回登录版的 albumPage
+        val f = RecordingFetcher { u ->
+            if (u.contains("mobile-album/album/page")) FetchOutcome.Ok(200, "{}") else null
+        }
+        val reg = com.local.audiobook.core.SourceRegistry(fetcher = f, nowMs = { 0L })
+        reg.bookDetail(sourceId = "ximalaya",
+                       bookUrl = "https://www.ximalaya.com/album/77615573", loadEpisodes = true)
+        assertTrue(f.seen.any { it.contains("mobile-album/album/page") },
+                   "快路拿不到时必须退回登录版，实际请求=" + f.seen)
+        }
+        Unit
+    }
 }

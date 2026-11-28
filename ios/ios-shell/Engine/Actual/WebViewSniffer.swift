@@ -209,10 +209,10 @@ extension WebViewSniffer {
               if (!txt || txt.length > 200000) return;
               // 只看播放类响应，避免误捡普通接口里的封面/头像地址
               if (ru.indexOf("/play/") < 0 && txt.indexOf("playUrl") < 0 && txt.indexOf("playPath") < 0) return;
-              var re = /"(src|playUrl64|playPathAacv164|playPathAacv224|playUrl32)"\s*:\s*"([^"]{8,})"/;
+              var re = /"(src|playUrl64|playPathAacv164|playPathAacv224|playUrl32)"\\s*:\\s*"([^"]{8,})"/;
               var m = re.exec(txt);
               if (m && m[2]) {
-                var u2 = m[2].replace(/\\\//g, "/");
+                var u2 = ""; try { u2 = JSON.parse(String.fromCharCode(34) + m[2] + String.fromCharCode(34)); } catch(e) { u2 = m[2]; }
                 if (u2.indexOf("//") === 0) u2 = "https:" + u2;
                 if (u2.indexOf("http") === 0) post("direct|" + u2);
               }

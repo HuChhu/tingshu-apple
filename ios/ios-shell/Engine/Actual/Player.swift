@@ -1014,7 +1014,12 @@ final class Player: NSObject, ObservableObject {
                     if audio != nil { addressReason = nil }
                     CrashLog.write("PLAY", "webview got url=\(sniffed.prefix(90))")
                 } else {
-                    CrashLog.write("PLAY", "webview found nothing track=\(ep.trackId)")
+                    // 网页也没给地址时，把网页播放接口的 ret 码带进错误文案 ——
+                    // 用户截一张图就能判断是「网页端也没权限」还是「我们没截到」。
+                    let ret = WebViewSniffer.lastPageRet
+                    let tag = ret.isEmpty ? "page=none" : "page ret=\(ret)"
+                    addressReason = (addressReason ?? "") + "（网页：\(tag)）"
+                    CrashLog.write("PLAY", "webview found nothing track=\(ep.trackId) \(tag)")
                 }
             }
             // 兜底 UA：模板站/嗅探出来的直链常常「裸请求 403、带 UA 就过」

@@ -33,6 +33,7 @@ final class WebViewSniffer: NSObject {
         return try await withCheckedThrowingContinuation { cont in
             pending = cont
             candidates = []
+            Self.lastPageRet = ""
             let view = makeWebView()
             webView = view                       // 强引用保命：嗅探期间不得释放
             attachToWindow(view)                 // 挂进视图层，否则 JS 定时器被节流
@@ -80,6 +81,9 @@ final class WebViewSniffer: NSObject {
         return view
     }
 
+    /// 网页播放接口最后一次返回的 ret 码（诊断用：判断网页端到底有没有权限）
+    static private(set) var lastPageRet: String = ""
+
     private func finish(_ result: Result<String, Error>) {
         guard let cont = pending else { return } // continuation 只 resume 一次
         pending = nil
@@ -122,6 +126,10 @@ extension WebViewSniffer: WKScriptMessageHandler {
         guard message.name == "tingshuSniffer", let body = message.body as? String else { return }
         // 【2026-11-28】direct| = 播放接口响应体里直接挖出来的音频地址（喜马 VIP 走这条）
         // 不做扩展名校验：xmcdn 的 redirect 链末尾可能是 /1、/0 这种数字
+        if body.hasPrefix("pageret|") {
+            Self.lastPageRet = String(body.dropFirst("pageret|".count))
+            return
+        }
         if body.hasPrefix("direct|") {
             let u = String(body.dropFirst("direct|".count))
             guard u.hasPrefix("http://") || u.hasPrefix("https://") else { return }
@@ -211,6 +219,10 @@ extension WebViewSniffer {
               if (ru.indexOf("/play/") < 0 && txt.indexOf("playUrl") < 0 && txt.indexOf("playPath") < 0) return;
               var re = /"(src|playUrl64|playPathAacv164|playPathAacv224|playUrl32)"\\s*:\\s*"([^"]{8,})"/;
               var m = re.exec(txt);
+              if (!m || !m[2]) {
+                var rr = /"ret"\\s*:\\s*(-?[0-9]+)/.exec(txt);
+                if (rr) post("pageret|" + rr[1]);
+              }
               if (m && m[2]) {
                 var u2 = ""; try { u2 = JSON.parse(String.fromCharCode(34) + m[2] + String.fromCharCode(34)); } catch(e) { u2 = m[2]; }
                 if (u2.indexOf("//") === 0) u2 = "https:" + u2;

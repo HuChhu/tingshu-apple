@@ -1078,7 +1078,7 @@ final class Player: NSObject, ObservableObject {
 
             // 【2026-11-28】缓存优先：前台预取过的地址，后台直接拿来播。
             // 后台播放失败（App 被挂起 → 网页兜底发不出请求）就靠这一条活着。
-            var audio: SharedBridge.ExtractedAudio?
+            var audio: SharedBridge.Audio?
             var addressReason: String?
             if let hit = self.cachedURL(for: ep.trackId) {
                 audio = SharedBridge.makeAudio(url: hit)
@@ -1094,7 +1094,7 @@ final class Player: NSObject, ObservableObject {
             defer { self.endResolveTask(bgTask) }
 
             // 用 audioEx：失败原因随返回值带出来，不再依赖会被别的调用清空的静态字段
-            var first: (audio: SharedBridge.ExtractedAudio?, reason: String?) = (nil, nil)
+            var first: (audio: SharedBridge.Audio?, reason: String?) = (nil, nil)
             if audio == nil {
                 first = await SharedBridge.audioEx(sourceId: src, url: input)
                 audio = first.audio

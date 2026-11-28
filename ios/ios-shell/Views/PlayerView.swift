@@ -28,6 +28,7 @@ struct PlayerView: View {
             case .volume: return 3
             case .sources: return 4
             case .login: return 5
+            case .setup: return 6
             }
         }
     }

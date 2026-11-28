@@ -2205,7 +2205,8 @@ final class Player: NSObject, ObservableObject {
                 // didBecomeActive 关个弹窗都会触发，不该反复 setActive。
                 self.onReturnToForeground(reactivateSession: false)
             }
-        }        n.addObserver(
+        }
+        n.addObserver(
             forName: UIApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in

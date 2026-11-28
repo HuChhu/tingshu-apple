@@ -92,7 +92,7 @@ struct CategoryView: View {
                                         // 选中态：主色浅底 + 主色字（方案 §3.2-4，不用多个彩色按钮）。
                                         // buttonStyle 的三目类型是基类 ButtonStyle，会让点击区缩小，所以用 tint。
                                         .buttonStyle(.bordered)
-                                        .tint(on ? Color.accentColor : Color.secondary)
+                                        .tint(on ? Theme.accent : Color.secondary)
                                         .font(.footnote)
                                         .lineLimit(1)
                                     }

@@ -143,7 +143,16 @@ struct PlayerView: View {
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: 44, height: 44)
-                .background(.ultraThinMaterial, in: Circle())
+                .background {
+                    Circle().fill(.ultraThinMaterial)
+                        .overlay(
+                            Circle().fill(
+                                LinearGradient(colors: [.white.opacity(0.26), .clear],
+                                               startPoint: .top, endPoint: .bottom)
+                            ).blendMode(.plusLighter)
+                        )
+                        .overlay(Circle().stroke(.white.opacity(0.22), lineWidth: 0.6))
+                }
         }
         .accessibilityLabel("收起播放页")
     }
@@ -243,9 +252,21 @@ struct PlayerView: View {
             } label: {
                 Image(systemName: mainIcon)
                     .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(.black)
-                    .frame(width: 72, height: 72)
-                    .background(Color.white, in: Circle())
+                    .foregroundStyle(.white)
+                    .frame(width: 74, height: 74)
+                    // 【2026-11-28】主键也改成液态玻璃（用户要求「所有按键都要有玻璃效果」）。
+                    // 纯白实心在深色海报上太抢眼，玻璃材质 + 白色描边既统一又保持可点性。
+                    .background {
+                        Circle().fill(.ultraThinMaterial)
+                            .overlay(
+                                Circle().fill(
+                                    LinearGradient(colors: [.white.opacity(0.30), .white.opacity(0.04), .clear],
+                                                   startPoint: .top, endPoint: .bottom)
+                                ).blendMode(.plusLighter)
+                            )
+                            .overlay(Circle().stroke(.white.opacity(0.34), lineWidth: 0.8))
+                            .shadow(color: .black.opacity(0.28), radius: 14, y: 5)
+                    }
                     // 【2026-11-28 修「播放/暂停重影」】
                     // 两帧状态切换时，如果有隐式动画在作用域里，SF Symbol 会做交叉淡入，
                     // 中间那几帧两个图标同时可见 —— 就是用户看到的重影。
@@ -275,10 +296,10 @@ struct PlayerView: View {
                                  action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: grayCircle ? 20 : 23, weight: .medium))
-                .frame(width: grayCircle ? 38 : 40, height: 46)
+                .font(.system(size: 21, weight: .medium))
+                .frame(width: 42, height: 42)
                 .background {
-                    if grayCircle {
+                    {
                         // 液态玻璃圆钮：材质 + 顶部高光 + 细描边（和底部 dock 同一套语言）
                         Circle().fill(.ultraThinMaterial)
                             .overlay(
@@ -288,10 +309,10 @@ struct PlayerView: View {
                                 ).blendMode(.plusLighter)
                             )
                             .overlay(Circle().stroke(.white.opacity(0.20), lineWidth: 0.6))
-                    }
+                    }()
                 }
         }
-        .frame(width: 44, height: 44)
+        .frame(width: 46, height: 46)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.32)
         .accessibilityLabel(label)
@@ -853,7 +874,7 @@ private struct ImmersivePosterBackground: View {
 
     var body: some View {
         ZStack {
-            LinearGradient(colors: [Color.accentColor.opacity(0.7), .black],
+            LinearGradient(colors: [Theme.accent.opacity(0.7), .black],
                            startPoint: .topLeading, endPoint: .bottomTrailing)
             // 背景图必须被父级尺寸约束：只用 maxWidth/.infinity 会让 AsyncImage 按
             // 图片原始比例算出超大 ideal 尺寸，把整个 ZStack 撑到宽于屏幕。
@@ -894,7 +915,7 @@ private struct PlayerPosterImage: View {
     }
 
     private var placeholder: some View {
-        LinearGradient(colors: [Color.accentColor, Color.indigo, Color.black],
+        LinearGradient(colors: [Theme.accent, Color.indigo, Color.black],
                        startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 }

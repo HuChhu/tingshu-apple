@@ -234,7 +234,7 @@ struct BottomDock: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            .foregroundStyle(on ? Color.accentColor : Color.secondary)
+            .foregroundStyle(on ? Theme.accent : Color.secondary)
             .frame(maxWidth: .infinity)
             .frame(height: Layout.dockHeight)
             .contentShape(Rectangle())
@@ -287,7 +287,7 @@ struct BottomDock: View {
                 .frame(width: size, height: size)
             Circle()
                 .trim(from: 0, to: CGFloat(progress))
-                .stroke(Color.accentColor,
+                .stroke(Theme.accent,
                         style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .frame(width: size + 5, height: size + 5)
@@ -342,7 +342,7 @@ struct BottomDock: View {
 
     private func coverPlaceholder(side: CGFloat) -> some View {
         ZStack {
-            LinearGradient(colors: [Color.accentColor, Color.black],
+            LinearGradient(colors: [Theme.accent, Color.black],
                            startPoint: .topLeading, endPoint: .bottomTrailing)
             Image(systemName: "music.note")
                 .font(.system(size: side * 0.4))

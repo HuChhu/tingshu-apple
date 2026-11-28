@@ -21,7 +21,10 @@ struct TingshuRootApp: App {
     }
 
     var body: some Scene {
-        WindowGroup { RootTabView() }
+        WindowGroup {
+            RootTabView()
+                .tint(Theme.accent)
+        }
     }
 }
 
@@ -38,6 +41,8 @@ struct RootTabView: View {
     @AppStorage("selectedTab") private var tab = 0
     /// 必须订阅 Player，否则 showFullScreen 变化不会驱动 fullScreenCover
     @ObservedObject private var player = Player.shared
+    /// 观察主题：切换配色后整棵树重算，Theme.accent 才会跟着变
+    @ObservedObject private var themeStore = ThemeStore.shared
     /// iPhone 竖屏 = compact；iPad / 横屏 = regular → 走系统 TabView，不自绘
     @Environment(\.horizontalSizeClass) private var hSizeClass
 

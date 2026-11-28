@@ -172,7 +172,7 @@ struct ShelfView: View {
         HStack(spacing: 12) {
             Image(systemName: "play.circle.fill")
                 .font(.title3)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(Theme.accent)
             VStack(alignment: .leading, spacing: 4) {
                 Text(r.episodeTitle).font(.subheadline).lineLimit(1)
                 Text(r.bookTitle).font(.caption).foregroundStyle(.secondary)
@@ -498,7 +498,7 @@ struct AlbumView: View {
                 } label: {
                     Image(systemName: favorited ? "heart.fill" : "heart")
                         // 收藏态用主色：Color.pink 在深色模式下与背景对比不足
-                        .foregroundStyle(favorited ? Color.accentColor : Color.secondary)
+                        .foregroundStyle(favorited ? Theme.accent : Color.secondary)
                 }
             }
         }
@@ -627,15 +627,15 @@ struct AlbumView: View {
                 Text(ep.title)
                     .lineLimit(2)
                     .foregroundStyle(!ep.playable ? Color.secondary
-                        : (isCurrent || isLast ? Color.accentColor : Color.primary))
+                        : (isCurrent || isLast ? Theme.accent : Color.primary))
                 if isCurrent {
                     Text("播放中")
                         .font(.caption2)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Theme.accent)
                 } else if isLast {
                     Text("上次播放到")
                         .font(.caption2)
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Theme.accent)
                 }
             }
             Spacer()

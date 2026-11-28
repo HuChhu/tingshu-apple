@@ -102,7 +102,7 @@ struct HomeView: View {
                     if let p = LocalStore.progress(for: r.bookUrl), p.durationMs > 0 {
                         // 默认 track 在浅色卡片上几乎不可见，显式给一条底
                         ProgressView(value: p.fraction)
-                            .tint(.accentColor)
+                            .tint(Theme.accent)
                             .background(Capsule().fill(Color.secondary.opacity(0.18)).frame(height: 3))
                             .padding(.top, 2)
                         Text("已听 \(Int(p.fraction * 100))%")
@@ -116,7 +116,7 @@ struct HomeView: View {
                 } label: {
                     Image(systemName: "play.circle.fill")
                         .font(.system(size: 30))
-                        .foregroundStyle(Color.accentColor)
+                        .foregroundStyle(Theme.accent)
                         .frame(width: Layout.hitTarget, height: Layout.hitTarget)
                 }
                 .buttonStyle(.plain)

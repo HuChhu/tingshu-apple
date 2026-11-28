@@ -68,6 +68,17 @@ struct MineView: View {
                     } label: {
                         Label("播放设置", systemImage: "slider.horizontal.3")
                     }
+                    NavigationLink {
+                        ThemePage()
+                    } label: {
+                        HStack {
+                            Label("外观配色", systemImage: "paintpalette")
+                            Spacer()
+                            Text(Theme.current.name)
+                                .foregroundStyle(.secondary)
+                                .font(.caption)
+                        }
+                    }
                 }
 
                 Section {
@@ -289,7 +300,7 @@ struct HistoryPage: View {
                             } label: {
                                 Image(systemName: "play.circle")
                                     .font(.title3)
-                                    .foregroundStyle(Color.accentColor)
+                                    .foregroundStyle(Theme.accent)
                                     .frame(width: Layout.hitTarget, height: Layout.hitTarget)
                             }
                             .buttonStyle(.plain)
@@ -543,4 +554,45 @@ struct ShareSheet: UIViewControllerRepresentable {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+/// 外观配色：四套方案即时切换（选中即生效，不需要保存按钮）
+struct ThemePage: View {
+    @ObservedObject private var store = ThemeStore.shared
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(AppTheme.allCases) { t in
+                    Button {
+                        store.key_ = t.rawValue
+                    } label: {
+                        HStack(spacing: 14) {
+                            // 色块预览：直接用该主题的自适应色
+                            Circle()
+                                .fill(t.color)
+                                .frame(width: 28, height: 28)
+                                .overlay(Circle().stroke(Color.secondary.opacity(0.25), lineWidth: 0.5))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(t.name).foregroundStyle(.primary)
+                                Text(t.subtitle).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if store.theme == t {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(Theme.accent)
+                            }
+                        }
+                    }
+                    .accessibilityLabel(t.name)
+                }
+            } header: {
+                Text("强调色")
+            } footer: {
+                Text("播放页是深色界面，配色会自动换成浅色版本，保证图标清晰。")
+            }
+        }
+        .navigationTitle("外观配色")
+        .navigationBarTitleDisplayMode(.inline)
+    }
 }

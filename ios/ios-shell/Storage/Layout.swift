@@ -113,3 +113,72 @@ enum Layout {
         customBottomBar ? barHeight + 24 : dockBaseline
     }
 }
+
+// MARK: - 主题配色（2026-11-28）
+
+/// 四套配色，全部是「深色下自动变浅」的自适应色 ——
+/// 播放页强制深色，如果只给一个固定色，深色背景上的图标会糊掉。
+enum AppTheme: String, CaseIterable, Identifiable {
+    case graphite, slate, walnut, teal
+
+    var id: String { rawValue }
+
+    var name: String {
+        switch self {
+        case .graphite: return "石墨黑"
+        case .slate:    return "石墨蓝"
+        case .walnut:   return "暖棕"
+        case .teal:     return "深青"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .graphite: return "黑白配，最克制"
+        case .slate:    return "冷调偏蓝，稳重"
+        case .walnut:   return "像纸质书，温和"
+        case .teal:     return "安静偏绿，不刺眼"
+        }
+    }
+
+    /// 浅色 / 深色两套 RGB（0-255），交给动态色生成
+    var rgb: (light: (Int, Int, Int), dark: (Int, Int, Int)) {
+        switch self {
+        case .graphite: return ((28, 28, 30),   (242, 242, 247))
+        case .slate:    return ((58, 74, 90),   (159, 179, 200))
+        case .walnut:   return ((107, 79, 58),  (211, 180, 154))
+        case .teal:     return ((47, 93, 90),   (134, 197, 190))
+        }
+    }
+
+    var color: Color {
+        Color(uiColor: UIColor { trait in
+            let t = trait.userInterfaceStyle == .dark ? rgb.dark : rgb.light
+            return UIColor(red: CGFloat(t.0) / 255, green: CGFloat(t.1) / 255,
+                           blue: CGFloat(t.2) / 255, alpha: 1)
+        })
+    }
+}
+
+/// 主题存取：切换后靠 @Published 让根视图重算，子视图跟着刷新
+final class ThemeStore: ObservableObject {
+    static let shared = ThemeStore()
+    private static let key = "appThemeKey"
+
+    @Published var key_: String {
+        didSet { UserDefaults.standard.set(key_, forKey: Self.key) }
+    }
+
+    init() {
+        key_ = UserDefaults.standard.string(forKey: Self.key) ?? AppTheme.graphite.rawValue
+    }
+
+    var theme: AppTheme { AppTheme(rawValue: key_) ?? .graphite }
+}
+
+/// 全局取色入口。视图里用 `Theme.accent`，不要再写 Color.accentColor ——
+/// 那样写死之后用户在设置里换方案是不生效的。
+enum Theme {
+    static var accent: Color { ThemeStore.shared.theme.color }
+    static var current: AppTheme { ThemeStore.shared.theme }
+}

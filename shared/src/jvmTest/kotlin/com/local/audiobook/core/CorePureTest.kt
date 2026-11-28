@@ -579,6 +579,41 @@ class LoggedInRoutingTest {
         Unit
     }
 
+    /**
+     * 【2026-11-28 P0 回归】引擎出口闸曾把喜马的中转口判成「网页」：先看域名（ximalaya.com 一票否决），
+     * 根本轮不到中转口放行。结果是引擎连免费集都交不出地址，每一集只能靠网页嗅探。
+     * 这条直接走 SourceRegistry.audio —— 钉的是「引擎真的能把免费集的地址交出来」。
+     */
+    @Test fun engineHandsOutFreeTrackThroughXimalayaRedirect() = runBlocking {
+        val redirect = "http://mobile.ximalaya.com/mobile/redirect/free/play/665497021/1"
+        val f = FakeFetcher().queue(
+            "mobile.ximalaya.com/mobile/v1/track/baseInfo",
+            """{"ret":0,"isFree":true,"isAuthorized":true,"playUrl64":"$redirect"}""",
+        )
+        val reg = com.local.audiobook.core.SourceRegistry(fetcher = f, nowMs = { 0L })
+        val r = kotlinx.coroutines.withTimeout(10_000L) {
+            reg.audio(sourceId = "ximalaya", url = "665497021")
+        }
+        assertTrue(r.reason == null, "免费集应当由引擎直接给出地址，实际 reason=" + r.reason)
+        assertEquals(redirect, r.audio?.url, "必须原样交出中转口地址（由播放器去跟 302）")
+
+        // 闸本身：中转口放行；真正的页面地址、接口地址仍然拦。
+        assertTrue(com.local.audiobook.core.engine.AudioUrlHeaders.isPlayableAudioOrRelay(redirect), "中转口要放行")
+        assertFalse(
+            com.local.audiobook.core.engine.AudioUrlHeaders.isPlayableAudioOrRelay("https://www.ximalaya.com/sound/665497021"),
+            "真正的页面地址仍然要拦",
+        )
+        assertFalse(
+            com.local.audiobook.core.engine.AudioUrlHeaders.isPlayableAudioOrRelay(
+                "https://mobile.ximalaya.com/mobile-playpage/track/v3/baseInfo/1?device=android&trackId=1"),
+            "接口地址不是音频，要拦",
+        )
+        assertFalse(
+            com.local.audiobook.core.engine.AudioUrlHeaders.isPlayableAudioOrRelay(
+                "https://www.ximalaya.com/sound/665497021?next=/mobile/redirect/free/play/1/1"),
+            "页面地址不能靠查询串里带个中转路径混过去",
+        )
+    }
     @Test fun detailFallsBackToLoginEngineWhenFastPathHasNothing() = runBlocking {
         kotlinx.coroutines.withTimeout(20_000L) {        // 快路（albumSimple / mobwsa）全部没路由 → 必须退回登录版的 albumPage
         val f = RecordingFetcher { u ->

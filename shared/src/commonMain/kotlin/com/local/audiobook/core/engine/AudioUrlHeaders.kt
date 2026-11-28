@@ -66,6 +66,7 @@ object AudioUrlHeaders {
         "/meting/",               // netease：音乐代理，302 到 126.net
         "/get-source/",           // 同类中转口
         "/audiostream/redirect/", // 蜻蜓 FM：audio.qtfm.cn/audiostream/redirect/...，302 到 *.m4a
+        "/mobile/redirect/",       // 喜马拉雅：mobile.ximalaya.com/mobile/redirect/free/play/{id}/{q}，302 到 audiopay CDN 的 m4a
     )
 
     /**
@@ -80,10 +81,16 @@ object AudioUrlHeaders {
     fun isPlayableAudioOrRelay(url: String): Boolean {
         val ok = url.trim()
         if (!ok.startsWith("http://") && !ok.startsWith("https://")) return false
+        // 【2026-11-28 P0 顺序修正】中转口必须**先于**「门户域名一票否决」来判断。
+        // 原来的顺序是先看域名：喜马的中转口 mobile.ximalaya.com/mobile/redirect/... 落在 ximalaya.com 下，
+        // 直接连否，根本轮不到下面的放行表 —— 于是引擎连免费集都交不出地址（baseInfo 给的就是这种中转口），
+        // 那种专辑的每一集都只能靠网页嗅探，前台也慢、后台更没保证。
+        // 只拿「路径部分」比对（去掉 query 和 fragment），避免页面地址靠查询串里带个关键词混过去。
+        val path = ok.substringBefore('?').substringBefore('#')
+        if (RELAY_PATH.any { path.contains(it) }) return true
         val fact = pageHost(ok)
         if (fact != null && PAGE_HOSTS.any { fact == it || fact.endsWith("." + it) }) return false
-        if (isPlayableAudio(ok)) return true
-        return RELAY_PATH.any { ok.contains(it) }
+        return isPlayableAudio(ok)
     }
 
     /**

@@ -844,6 +844,20 @@ enum SharedBridge {
         return (r.audio, nil)
     }
 
+    /// 带超时的取地址。
+    ///
+    /// 【2026-11-28】引擎单个请求最长能等 45 秒（HttpClient 的超时），而且 `RequestThrottle.run`
+    /// 在整个请求期间都持锁 —— 网络差的时候，切下一集会被它挡住将近一分钟，预取还会挡住手动点播。
+    /// search 早就套了 9 秒上限，audio 一直没有。到点就当引擎没给，让调用方直接走网页兜底。
+    /// 注意它**一定有返回值**（超时也返回一份带原因的结果），不是可选类型。
+    static func audioExCapped(sourceId: String, url: String,
+                              seconds: Double) async -> (audio: ExtractedAudio?, reason: String?) {
+        let r: (audio: ExtractedAudio?, reason: String?)? = await withTimeout(seconds: seconds) {
+            await audioEx(sourceId: sourceId, url: url)
+        }
+        if let r = r { return r }
+        return (audio: nil, reason: "引擎 \(Int(seconds)) 秒没有返回（网络很差）")
+    }
     static func audio(sourceId: String, url: String) async -> ExtractedAudio? {
         lastAudioError = nil
         let r = await bridge { done in

@@ -496,7 +496,7 @@ final class Player: NSObject, ObservableObject {
     /// 播放页「重试」按钮入口：地址过期/网络恢复后重新取地址起播
     func retry() {
         guard let ep = current else { return }
-        playEpisode(ep, book: currentBook, sourceId: currentSourceId)
+        playEpisode(ep, book: currentBook, sourceId: currentSourceId, episodes: currentEpisodes)
     }
 
     // ---------- 锁屏/控制中心/耳机线控 ----------
@@ -893,9 +893,11 @@ final class Player: NSObject, ObservableObject {
 
     /// 补章节列表（从最近/首页进播放页时用）。
     /// 只补一次：同一本书已经有 currentEpisodes 就不再请求。
-    private func loadEpisodesIfNeeded(book: SharedBridge.BookCard, sourceId: String, aroundTrackId: Int64) {
-        guard currentEpisodes.isEmpty else { return }
-        guard loadingEpisodesFor != book.bookUrl else { return }
+    /// 返回 true = 已经有一份加载在跑（这次发起的，或之前就在跑的）
+    @discardableResult
+    private func loadEpisodesIfNeeded(book: SharedBridge.BookCard, sourceId: String, aroundTrackId: Int64) -> Bool {
+        guard currentEpisodes.isEmpty else { return false }
+        guard loadingEpisodesFor != book.bookUrl else { return true }
         loadingEpisodesFor = book.bookUrl
         let flag = SharedBridge.CancelFlag()
         episodesCancel = flag
@@ -906,15 +908,33 @@ final class Player: NSObject, ObservableObject {
                                                         loadFullPages: true,
                                                         cancel: flag) else {
                 CrashLog.write("PLAY", "episodes load failed book=\(book.bookUrl)")
+                self.episodesLoadGaveUp()
                 return
             }
             let rows = SharedBridge.rows(from: d)
-            guard !rows.isEmpty else { return }
+            guard !rows.isEmpty else {
+                self.episodesLoadGaveUp()
+                return
+            }
             // 用户可能已经切书 / 切集：只在这本书仍是当前书时才写回
             guard self.currentBook?.bookUrl == book.bookUrl else { return }
             self.currentEpisodes = rows
             CrashLog.write("PLAY", "episodes loaded book=\(book.bookUrl) n=\(rows.count)")
+            // 之前因为「列表是空的」才停下、等着连播的那一次：现在有列表了，接着来
+            if let waiting = self.awaitingAdvanceAfterLoad {
+                self.awaitingAdvanceAfterLoad = nil
+                self.advanceAfterEnding(from: waiting, skipped: 0)
+            }
         }
+        return true
+    }
+
+    /// 章节列表没拉到：如果有一集正等着它来连播，就别让用户干等
+    private func episodesLoadGaveUp() {
+        guard let waiting = awaitingAdvanceAfterLoad else { return }
+        awaitingAdvanceAfterLoad = nil
+        errorText = "章节列表没拉到，暂时没法自动连播（点「重试」或从专辑页进入）"
+        CrashLog.write("PLAY", "episodes load gave up while waiting to advance track=\(waiting.trackId)")
     }
 
     // MARK: - 地址缓存与后台取地址（2026-11-28）
@@ -934,16 +954,26 @@ final class Player: NSObject, ObservableObject {
     private var pendingAutoResume: SharedBridge.EpisodeRow?
     /// 本集是否已经做过「临结束刷新下一集」
     private var jitRefreshedTrack: Int64 = -1
+    /// 队列里当前那个 AVPlayerItem 对应的那一集（trackId, title）。
+    /// 进度必须按「它」记，不能按 current：切集时 current 已经是下一集，而队列里还是刚播完的旧 item。
+    private var queuedTrack: (trackId: Int64, title: String)?
+    /// 「播完」是否已经为当前这个 item 处理过（按 AVPlayerItem 身份）
+    private var endHandledItem: ObjectIdentifier?
+    /// 正在嗅探的页面数。WebViewSniffer 是单例、同时只接一个，由这里在 Player 内部串行排队。
+    private var sniffSlots = 0
+    /// 播完后发现章节列表是空的（从「最近 / 首页」进来不传列表）：先补拉，拉回来再接着连播
+    private var awaitingAdvanceAfterLoad: SharedBridge.EpisodeRow?
 
     /// 一个地址能放心用多久。
     ///
     /// 【2026-11-28 修正】原来写死 8 分钟 —— 而一集 13 分钟：第 N 集开头备好的 N+1，
     /// 到真正要用时已经过期 5 分钟，缓存永远在要用它的时候失效。
-    /// 实测带签名的链（sign= / buy_key=，duration=1800）有效期 30 分钟，这里留 5 分钟余量；
+    /// 实测带签名的链（sign= / buy_key=，duration=1800）有效期 30 分钟，这里只留 2 分钟余量 ——
+    /// 留多了会扔掉还能用的地址：两集 13 分钟的连播，第二个地址要在第 26 分钟用。
     /// 不带签名的（free 跳转口、普通直链）本身不带时效，给 6 小时。
     static func urlValidity(_ url: String) -> TimeInterval {
         let signed = url.contains("sign=") || url.contains("buy_key=")
-        return signed ? 25 * 60 : 6 * 3600
+        return signed ? 28 * 60 : 6 * 3600
     }
 
     private func cachedURL(for trackId: Int64) -> String? {
@@ -963,85 +993,56 @@ final class Player: NSObject, ObservableObject {
         }
     }
 
-    /// 申请一个后台任务，让「取地址」这段时间不被系统挂起。
-    /// 后台额度约 30 秒，足够一次网页兜底（18 秒超时）。
-    private func beginResolveTask() -> UIBackgroundTaskIdentifier {
+    /// 后台任务句柄。到期回调和正常收尾都会来 end，必须保证**只 end 一次** ——
+    /// 对同一个标识调两次 endBackgroundTask 是没定义的行为。
+    private final class BgTask {
         var id: UIBackgroundTaskIdentifier = .invalid
-        id = UIApplication.shared.beginBackgroundTask(withName: "resolve-audio") { [weak self] in
-            // 到期回调：必须主动 end，否则 App 会被强杀
+        private var ended = false
+        func end() {
+            guard !ended else { return }
+            ended = true
             if id != .invalid { UIApplication.shared.endBackgroundTask(id) }
+            id = .invalid
+        }
+    }
+
+    /// 申请一个后台任务，让「取地址」这段时间不被系统挂起。后台额度约 30 秒。
+    /// 用在**切集那一集**的取地址上：一停播 App 就暂时失去后台特权，这几秒最危险。
+    private func beginResolveTask() -> BgTask {
+        let t = BgTask()
+        t.id = UIApplication.shared.beginBackgroundTask(withName: "resolve-audio") {
             CrashLog.write("PLAY", "bg resolve task expired")
-            _ = self
+            t.end()
         }
-        return id
+        return t
     }
 
-    private func endResolveTask(_ id: UIBackgroundTaskIdentifier) {
-        guard id != .invalid else { return }
-        UIApplication.shared.endBackgroundTask(id)
-    }
+    private func endResolveTask(_ t: BgTask) { t.end() }
 
-    /// 把「接下来还没备好地址的几集」依次解析进缓存。
-    ///
-    /// 【2026-11-28 重写】上一版这里三个错叠在一起，等于预取从来没跑过：
-    ///   ① 入口在 startItem 里，那时 state 还是 .loading，`guard state == .playing` 直接返回；
-    ///   ② 三集同时起 Task 去抢单例 WebViewSniffer，后两个立刻 busy；
-    ///   ③ 有效期 8 分钟 < 一集 13 分钟，备好了也会在用之前过期。
-    /// 现在改成：由「真正开始播放」触发、串行解析、有效期按地址形态算。
-    private func prefetchUpcoming(count: Int) {
-        guard !prefetchInFlight, let cur = current else { return }
-        let src = currentSourceId
-        var todo: [SharedBridge.EpisodeRow] = []
-        var cursor = cur
-        for _ in 0..<max(1, count) {
-            guard let n = nextEpisode(after: cursor, forward: !effectivePlayback.reverseOrder) else { break }
-            cursor = n
-            if n.trackId > 0, cachedURL(for: n.trackId) == nil { todo.append(n) }
-        }
-        guard !todo.isEmpty else { return }
-        prefetchInFlight = true
-        Task { @MainActor in
-            defer { prefetchInFlight = false }
-            for ep in todo {
-                if let u = await resolveAddress(ep, src: src) { storeURL(u, for: ep.trackId) }
-            }
-        }
+    /// 串行嗅探：WebViewSniffer 是单例，同时只接一个；这里让 Player 内部的所有嗅探排队，
+    /// 而不是让后来的那个直接 busy 失败（预取和真正要播的那一集会撞）。
+    private func sniffSerialized(page: String, timeoutMs: Int) async -> String? {
+        while sniffSlots > 0 { try? await Task.sleep(nanoseconds: 300_000_000) }
+        sniffSlots += 1
+        defer { sniffSlots -= 1 }
+        return await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: timeoutMs)
     }
-
-    /// 临结束前把下一集的地址刷新一遍（开头备的，到结尾可能已经不新鲜）。
-    /// 旧地址先留着，新地址取到了才替换 —— 取不到也不会把还能用的那条弄丢。
-    private func refreshNextIfStale() {
-        guard let cur = current, jitRefreshedTrack != cur.trackId else { return }
-        jitRefreshedTrack = cur.trackId
-        guard let n = nextEpisode(after: cur, forward: !effectivePlayback.reverseOrder),
-              n.trackId > 0 else { return }
-        // 4 分钟内刚解析过的不折腾
-        if let e = resolvedURLs[n.trackId], Date().timeIntervalSince(e.storedAt) < 240 { return }
-        let src = currentSourceId
-        prefetchInFlight = true
-        Task { @MainActor in
-            defer { prefetchInFlight = false }
-            if let u = await resolveAddress(n, src: src) { storeURL(u, for: n.trackId) }
-        }
-    }
-
     /// 解析一集的地址（不写缓存，由调用方决定存不存）：引擎优先，喜马会员集再走网页兜底。
+    /// 预取**不申请**后台任务：那份时间留给真正要播的那一集的取地址，别被预取花掉。
     private func resolveAddress(_ ep: SharedBridge.EpisodeRow, src: String) async -> String? {
-        let bg = beginResolveTask()
-        defer { endResolveTask(bg) }
         var input = ep.url
         if SharedBridge.looksLikeWebPage(input), ep.trackId > 0 {
             input = "https://www.ximalaya.com/sound/\(ep.trackId)"
         }
         if input.isEmpty { input = String(ep.trackId) }
-        let r = await SharedBridge.audioEx(sourceId: src, url: input)
+        let r = await SharedBridge.audioExCapped(sourceId: src, url: input, seconds: 8)
         if let a = r.audio {
             CrashLog.write("PLAY", "prefetch engine ok track=\(ep.trackId)")
             return a.url
         }
         guard ep.trackId > 0, src.hasPrefix("ximalaya") else { return nil }
         let page = "https://www.ximalaya.com/sound/\(ep.trackId)"
-        if let sniffed = await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: 12_000) {
+        if let sniffed = await sniffSerialized(page: page, timeoutMs: 12_000) {
             CrashLog.write("PLAY", "prefetch web ok track=\(ep.trackId) signed=\(Self.urlValidity(sniffed) < 3600)")
             return sniffed
         }
@@ -1176,6 +1177,8 @@ final class Player: NSObject, ObservableObject {
             } else {
                 addressReason = nil
             }
+            // 缓存命中的话不能再续期：那条地址的真实有效期是从它签发时算的，续期只会把过期的当地址用
+            let cameFromCache = audio != nil
 
             // 整个取地址流程包在后台任务里：进后台那一刻开始的解析能跑完，
             // 不会被系统在 1 秒内挂起（这正是「前台能播、后台取不到」的根因）。
@@ -1185,7 +1188,7 @@ final class Player: NSObject, ObservableObject {
             // 用 audioEx：失败原因随返回值带出来，不再依赖会被别的调用清空的静态字段
             var first: (audio: SharedBridge.Audio?, reason: String?) = (nil, nil)
             if audio == nil {
-                first = await SharedBridge.audioEx(sourceId: src, url: input)
+                first = await SharedBridge.audioExCapped(sourceId: src, url: input, seconds: 12)
                 audio = first.audio
                 addressReason = first.reason
             }
@@ -1210,7 +1213,7 @@ final class Player: NSObject, ObservableObject {
             }
             // ③ WebView 嗅探（前端渲染的站、直链藏在 JS 里的站）
             if audio == nil, input.hasPrefix("http") {
-                if let sniffed = await SharedBridge.sniffAudio(pageUrl: input) {
+                if let sniffed = await self.sniffSerialized(page: input, timeoutMs: 8_000) {
                     audio = SharedBridge.makeAudio(url: sniffed)
                 }
             }
@@ -1223,7 +1226,7 @@ final class Player: NSObject, ObservableObject {
             if audio == nil, ep.trackId > 0, src.hasPrefix("ximalaya") {
                 let page = "https://www.ximalaya.com/sound/\(ep.trackId)"
                 CrashLog.write("PLAY", "webview fallback for vip track=\(ep.trackId)")
-                if let sniffed = await SharedBridge.sniffAudio(pageUrl: page, timeoutMs: 8_000) {
+                if let sniffed = await self.sniffSerialized(page: page, timeoutMs: 8_000) {
                     audio = SharedBridge.makeAudio(url: sniffed)
                     if audio != nil { addressReason = nil }
                     CrashLog.write("PLAY", "webview got url=\(sniffed.prefix(90))")
@@ -1240,8 +1243,8 @@ final class Player: NSObject, ObservableObject {
             // （实测 xmcdn 系：不带 UA 直接 deny by rule engine）。
             if let a = audio {
                 audio = SharedBridge.audioWithDefaultUA(a)
-                // 记住这次拿到的地址：后台连播 / 重试都直接命中
-                self.storeURL(a.url, for: ep.trackId)
+                // 记住这次拿到的地址：后台连播 / 重试都直接命中（缓存命中的不重复存，见上）
+                if !cameFromCache { self.storeURL(a.url, for: ep.trackId) }
             }
             
             guard let audio = audio else {
@@ -1253,10 +1256,12 @@ final class Player: NSObject, ObservableObject {
                 // 回到前台自动接着播这一集。对会员用户来说，旧的报错文案（「需要会员」）本身就是错的 ——
                 // 他就是会员，只是这一刻在后台取不到。这也把「后台到底行不行」变成可观察的事实：
                 // 行，就直接播了；不行，也能自己恢复，而不是停在一句误导人的话上。
-                if self.autoAdvancing, UIApplication.shared.applicationState != .active {
+                // 判据用 == .background：下拉通知中心、来电横幅这些只是 .inactive，不算后台，
+                // 那种瞬时的失败走下面的常规报错/降级，不该被挂成「等回前台」。
+                if self.autoAdvancing, UIApplication.shared.applicationState == .background {
                     self.autoAdvancing = false
+                    self.pause()                       // pause() 会清掉挂起项，所以要先暂停再挂
                     self.pendingAutoResume = ep
-                    self.pause()
                     self.setNowPlayingTitle("第\(ep.index)集：\(ep.title)")
                     self.stageHint = .idle
                     self.errorText = "第\(ep.index)集在后台没能加载，回到 App 会自动继续播放"
@@ -1438,7 +1443,10 @@ final class Player: NSObject, ObservableObject {
         if sleepDeadline == nil, sleepChaptersLeft <= 0 { restoreSleepTimerIfNeeded() }
         requestingEpisode = false
         BackgroundSession.activateForPlayback()
-        // （预取不在这里触发：此刻 state 还是 .loading。改在「真正开始播放」那一处触发。）
+        // 【2026-11-28】起播时就触发一次预取（不看 state）。到「真正开始播放」还会再触发一次，
+        // 那次多半因为已备好而被跳过。越早越好：用户常常是点完播放一秒内就锁屏，
+        // 只靠「真正开始播放」那一次，很可能已经是在后台里跑了。
+        prefetchUpcoming(count: 3)
 
         // 缓存优先：已缓存的集直接播本地文件（离线可用）。
         // 本地文件同样要挂 status 观察 —— 以前走 startItemWithLocalFile 时状态停在 .playing，
@@ -1563,6 +1571,7 @@ final class Player: NSObject, ObservableObject {
         // 实例级 observer 只在 init 装一次（无 item 时兜底显示）。
         // 每次起播都重装会导致两层 observer 并存：每秒双写进度、skipOutro 判定分裂。
         queue.insert(item, after: nil)
+        queuedTrack = (ep.trackId, ep.title)     // 从这一刻起，进度按这一集记（见 saveProgress）
         attachItem(item)
         installItemTimeObserver()
         queue.play()
@@ -1614,6 +1623,15 @@ final class Player: NSObject, ObservableObject {
     /// P0-01：自然播完 → 自动续下一集
     private func handleItemDidEnd() {
         guard let ep = current else { return }
+        // 【2026-11-28 防重入】跳过片尾是在每秒回调的 time observer 里判定的：
+        // 最后那 skipOutro 秒里，每一秒都会进到这里一次。没有闸的话 ——
+        //   一秒推进一集、每秒作废上一次取地址、按章睡眠每秒烧一章、把旧集的结束位置写成下一集进度。
+        // 同一个 AVPlayerItem 只处理一次；新一集装进队列后身份变了，自然放行。
+        if let it = observedItem {
+            let key = ObjectIdentifier(it)
+            guard endHandledItem != key else { return }
+            endHandledItem = key
+        }
         CrashLog.write("PLAY", "item ended track=\(ep.trackId) src=\(currentSourceId)")
         // 定时·按章节停：听完当前章就停，不再往下播
         if consumeSleepChapter() {
@@ -1631,6 +1649,17 @@ final class Player: NSObject, ObservableObject {
     private func advanceAfterEnding(from ep: SharedBridge.EpisodeRow, skipped: Int,
                                     firstSkipped: SharedBridge.EpisodeRow? = nil) {
         guard let next = nextEpisode(after: ep, forward: !effectivePlayback.reverseOrder) else {
+            // 【2026-11-28】没有「下一集」可找，先分清是「真的到末尾了」还是「章节列表根本没拉回来」。
+            // 从「最近 / 首页继续收听」进来不传列表，currentEpisodes 是空的 —— 那不是播完了，是没得找。
+            // 之前直接报「已播完」；现在补拉一次，拉回来再接着连播。
+            if currentEpisodes.isEmpty, let b = currentBook, !b.bookUrl.isEmpty {
+                apply(.paused)
+                if loadEpisodesIfNeeded(book: b, sourceId: currentSourceId, aroundTrackId: ep.trackId) {
+                    awaitingAdvanceAfterLoad = ep
+                    CrashLog.write("PLAY", "no next & episodes empty: loading list before giving up track=\(ep.trackId)")
+                    return
+                }
+            }
             // 播到全书末尾。以前这里静默 pause，用户分不清「播完了」还是「卡住了」。
             // 正常结束不能伪装成错误，所以只给一句提示，状态仍是 paused。
             stageHint = .idle
@@ -1880,7 +1909,7 @@ final class Player: NSObject, ObservableObject {
                     return
                 }
                 if let ep = current {
-                    playEpisode(ep, book: currentBook, sourceId: currentSourceId)
+                    playEpisode(ep, book: currentBook, sourceId: currentSourceId, episodes: currentEpisodes)
                     return
                 }
             }
@@ -2023,7 +2052,10 @@ final class Player: NSObject, ObservableObject {
                     continue
                 }
                 if Date().timeIntervalSince(lastMove) >= 30 {
-                    self.failPlayback("音频已就绪但播不动（30 秒没有前进：可能是解码失败或源站只给了开头一段）")
+                    // 【2026-11-28】音频会话没激活成功时，那个错误以前只写进 lastActivationError、没人读，
+                    // 用户看到的永远是 30 秒后的这句「播不动」，不知道真正原因。
+                    let sessionIssue = BackgroundSession.lastActivationError.map { "；另外：音频会话没激活成功（\($0)）" } ?? ""
+                    self.failPlayback("音频已就绪但播不动（30 秒没有前进：可能是解码失败或源站只给了开头一段）" + sessionIssue)
                     return
                 }
             }
@@ -2109,6 +2141,30 @@ final class Player: NSObject, ObservableObject {
 
     // MARK: - 前后台 / 生命周期
 
+    /// 回到前台 / 从 inactive 回到 active 时要做的事。
+    /// - reactivateSession: true 时顺带重新激活音频会话并确认 play()。
+    private func onReturnToForeground(reactivateSession: Bool) {
+        if reactivateSession {
+            // 后台期间 audio session 可能被系统回收（别的 App 抢过焦点），
+            // 回前台若仍在播放就重新激活+确认 play()，避免「界面在播但没声音」
+            if state == .playing || state == .paused {
+                BackgroundSession.activateForPlayback(force: true)
+                if state == .playing { queue.play() }
+            }
+        }
+        // 后台切集没取到地址而挂起的那一集：回前台自动接着播。
+        if let p = pendingAutoResume {
+            pendingAutoResume = nil
+            errorText = nil
+            CrashLog.write("PLAY", "resume pending episode on foreground track=\(p.trackId)")
+            isAutoAdvancePending = true
+            playEpisode(p, book: currentBook, sourceId: currentSourceId, episodes: currentEpisodes)
+            return
+        }
+        // 没有挂起的也顺手把接下来几集的地址刷新一遍（后台做不了网页兜底，前台可以）
+        prefetchUpcoming(count: 3)
+    }
+
     private func wireLifecycle() {
         let n = NotificationCenter.default
         n.addObserver(
@@ -2134,27 +2190,22 @@ final class Player: NSObject, ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isLive else { return }
-                // 后台期间 audio session 可能被系统回收（别的 App 抢过焦点），
-                // 回前台若仍在播放就重新激活+确认 play()，避免「界面在播但没声音」
-                if self.state == .playing || self.state == .paused {
-                    BackgroundSession.activateForPlayback(force: true)
-                    if self.state == .playing { self.queue.play() }
-                }
-                // 【2026-11-28】后台切集没取到地址而挂起的那一集：回前台自动接着播。
-                if let p = self.pendingAutoResume {
-                    self.pendingAutoResume = nil
-                    self.errorText = nil
-                    CrashLog.write("PLAY", "resume pending episode on foreground track=\(p.trackId)")
-                    self.isAutoAdvancePending = true
-                    self.playEpisode(p, book: self.currentBook, sourceId: self.currentSourceId,
-                                     episodes: self.currentEpisodes)
-                } else {
-                    // 没有挂起的也顺手把接下来几集的地址刷新一遍（后台做不了网页兜底，前台可以）
-                    self.prefetchUpcoming(count: 3)
-                }
+                self.onReturnToForeground(reactivateSession: true)
             }
         }
+        // 【2026-11-28】只挂 willEnterForeground 是不够的：失败判据是 applicationState == .background，
+        // 而从后台回来是 background → inactive → active，willEnterForeground 能覆盖这一段；
+        // 但如果那次失败恰好发生在 inactive 期间、App 没有真正进过后台，就只有 didBecomeActive 能把它接回来。
         n.addObserver(
+            forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isLive else { return }
+                // 只处理挂起项：音频会话的重新激活只在前一条里做，那条每次回前台只跑一遍；
+                // didBecomeActive 关个弹窗都会触发，不该反复 setActive。
+                self.onReturnToForeground(reactivateSession: false)
+            }
+        }        n.addObserver(
             forName: UIApplication.willTerminateNotification, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
@@ -2165,6 +2216,14 @@ final class Player: NSObject, ObservableObject {
     }
 
     func pause() {
+        // 【2026-11-28】正在取地址的那几秒里按了暂停（锁屏、控制中心、定时到点、蓝牙断开都会走到这里）：
+        // 让在途的取地址作废。否则地址一回来，beginPlayback 会无条件 queue.play()，把这次暂停盖掉 ——
+        // 定时停止被绕过、蓝牙断开后从外放接着响。
+        if requestingEpisode {
+            requestGeneration &+= 1
+            requestingEpisode = false
+        }
+        pendingAutoResume = nil      // 用户明确暂停：之前挂起的「回前台自动续播」不再执行
         queue.pause()
         // 暂停 = 用户不再等着听，30 秒无推进不该算卡死。
         // 旧版不取消：暂停着听到锁屏超时，回来就是一条「播不动」错误页。
@@ -2182,6 +2241,15 @@ final class Player: NSObject, ObservableObject {
         if state == .error { retry(); return }
         guard queue.currentItem != nil else {
             // 队列空了（播放失败后被清空）：重新取地址，别装着播
+            retry()
+            return
+        }
+        // 【2026-11-28】队列里装的是「别的集」（切集取地址途中被暂停，或后台没取到地址挂起了）：
+        // 不能把那个已经播完的旧 item 接着播 —— 播了也不出声，30 秒后报「播不动」。
+        // 改为重新解析 current 这一集。锁屏上直接按播放也一样：取得到就播，取不到继续挂着。
+        if pendingAutoResume != nil || (queuedTrack?.trackId ?? 0) != (current?.trackId ?? 0) {
+            CrashLog.write("PLAY", "resume re-resolves current track=\(current?.trackId ?? -1) pending=\(pendingAutoResume != nil)")
+            pendingAutoResume = nil
             retry()
             return
         }
@@ -2203,6 +2271,7 @@ final class Player: NSObject, ObservableObject {
         pendingStartSeekMs = nil
         requestGeneration &+= 1            // 让在途的取地址响应作废
         requestingEpisode = false
+        pendingAutoResume = nil            // 停止就是停止，回前台不要自己接着播
         cancelStartWatchdog(reachedReady: nil)
         resetPipeline()
         clearNowPlaying()
@@ -2325,11 +2394,15 @@ final class Player: NSObject, ObservableObject {
         detachItem()
         queue.pause()               // 先停速率再清，避免 AVQueuePlayer 在清空瞬间触发一次 -999
         queue.removeAllItems()
+        queuedTrack = nil                       // 队列空了，进度不再落任何一集
         // 不重装实例级 observer（init 已装且从未移除）
     }
 
     private func saveProgress(force: Bool) {
-        guard current != nil, currentBook != nil, queue.currentItem != nil else { return }
+        // 【2026-11-28】按「队列里实际在播的那个 item」记进度，不按 current。
+        // 切集时 current 已经是下一集，而队列里还是刚播完的旧 item —— 这时一暂停，
+        // 就会把旧集的结束位置（比如 13:16）记到下一集头上，回前台就从 13 分钟处开始播。
+        guard let playing = queuedTrack, currentBook != nil, queue.currentItem != nil else { return }
         guard !requestingEpisode else { return }   // 地址还没回来，currentTime 是旧集的
         let nowMs = Int64(queue.currentTime().seconds * 1000)
         guard nowMs > 0 else { return }
@@ -2340,12 +2413,12 @@ final class Player: NSObject, ObservableObject {
             if let d = queue.currentItem?.duration, d.isNumeric, d.seconds > 0 {
                 return Int64(d.seconds * 1000)
             }
-            return current?.durationMs ?? 0
+            return currentEpisodes.first(where: { $0.trackId == playing.trackId })?.durationMs ?? 0
         }()
-        guard let ep = current, let b = currentBook else { return }
+        guard let b = currentBook else { return }
         LocalStore.saveProgress(.init(
             bookUrl: b.bookUrl, title: b.title,
-            trackId: ep.trackId, episodeTitle: ep.title,
+            trackId: playing.trackId, episodeTitle: playing.title,
             positionMs: nowMs, durationMs: durMs, updatedAt: Date(),
             sourceId: currentSourceId, albumId: b.albumId))
     }

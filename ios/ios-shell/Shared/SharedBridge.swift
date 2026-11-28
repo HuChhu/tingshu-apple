@@ -206,6 +206,10 @@ enum SharedBridge {
         return false
     }
     /// 曲目列表转换（供壳内视图调用，避免视图层直接 import shared）
+    /// 视图层不许 import shared（白名单纪律），这里给个可引用的别名。
+    /// 目前只有「目录流式加载」需要在视图里声明这个中间态变量。
+    typealias Detail = BookDetail
+
     static func rows(from detail: BookDetail) -> [EpisodeRow] {
         (detail.episodes as? [Episode])?.map(row(from:)) ?? []
     }

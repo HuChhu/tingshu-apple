@@ -682,7 +682,7 @@ struct AlbumView: View {
         // 现在两阶段：先只要第 1 页（20 条，约 1-2 秒就出列表），再把完整列表补上。
         // 只在喜马系源这样做 —— 模板站本身就是 1 个请求，重复调用纯属浪费。
         let isXimalaya = sourceId.hasPrefix("ximalaya")
-        var quick: SharedBridge.BookDetail?
+        var quick: SharedBridge.Detail?
         if isXimalaya {
             quick = await SharedBridge.bookDetail(sourceId: sourceId, bookUrl: card.bookUrl,
                                                  loadFullPages: false, cancel: flag)
@@ -703,7 +703,7 @@ struct AlbumView: View {
     }
 
     /// 把一份详情铺到界面上（两阶段加载共用：第一阶段先出 20 条，第二阶段补全）。
-    private func applyDetail(_ d: SharedBridge.BookDetail, saved: LocalStore.Progress?) {
+    private func applyDetail(_ d: SharedBridge.Detail, saved: LocalStore.Progress?) {
         // 回填真实元信息（封面/简介/集数/播放量都在 d.book 里）
         if d.book.title != card.title {
             resolvedCard = SharedBridge.card(from: d.book)
